@@ -6,7 +6,7 @@
 .chat-app {
   display: grid;
   grid-template-columns: 300px 1fr;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -384,8 +384,8 @@
 
 /* 移动端响应式 */
 @media (max-width: 960px) {
-  .chat-app { grid-template-columns: 1fr; height: auto; min-height: 100%; }
-  .chat-app-mobile { height: calc(100vh - 56px - 64px); min-height: 0; }
+  .chat-app { grid-template-columns: 1fr; height: 100%; min-height: 0; }
+  .chat-app-mobile { height: calc(100dvh - 120px); min-height: 0; }
   .side, .side-mobile { display: none; }
   .mobile-side-trigger {
     display: flex; justify-content: flex-end;

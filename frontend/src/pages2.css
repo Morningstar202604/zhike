@@ -2,7 +2,7 @@
 .op-app {
   display: grid;
   grid-template-columns: 360px 1fr;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -105,7 +105,7 @@
 .set-app {
   display: grid;
   grid-template-columns: 240px 1fr;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 .set-side {
@@ -296,7 +296,7 @@
   top: 0; right: 0;
   width: 440px;
   max-width: 92vw;
-  height: 100vh;
+  height: 100dvh;
   background: var(--panel);
   box-shadow: var(--shadow-lg);
   z-index: 51;
@@ -362,6 +362,10 @@ table.dt th {
 table.dt tr:last-child td { border-bottom: none; }
 table.dt .raw { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+@media (hover: none) {
+  .kc-actions { opacity: 1; }
+}
+
 /* 保存条 */
 .save-bar {
   position: sticky;
@@ -385,8 +389,10 @@ table.dt .raw { max-width: 300px; overflow: hidden; text-overflow: ellipsis; whi
 /* ============ 移动端响应式（坐席 + 设置） ============ */
 @media (max-width: 960px) {
   /* 坐席工作台：堆叠，队列在上、对话在下 */
-  .op-app { grid-template-columns: 1fr; height: auto; min-height: 100%; }
-  .op-app-mobile { height: calc(100vh - 56px - 64px); min-height: 0; overflow: hidden; }
+  .op-app { grid-template-columns: 1fr; height: 100%; min-height: 0; }
+  .op-app-mobile { height: calc(100dvh - 120px); min-height: 0; overflow: hidden; display: grid; grid-template-rows: minmax(0, 42%) minmax(0, 1fr); }
+  .op-app-mobile .op-left { min-height: 0; border-right: none; border-bottom: 1px solid var(--line-2); }
+  .op-app-mobile .op-right { min-height: 0; background: var(--bg); }
   .op-app-mobile .op-pane { overflow: hidden; }
   .op-app-mobile .op-left {
     border-right: none;
@@ -401,7 +407,10 @@ table.dt .raw { max-width: 300px; overflow: hidden; text-overflow: ellipsis; whi
   .op-app-mobile .op-foot-mobile { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
 
   /* 设置中心：单栏，左侧菜单变顶部横向 Tab */
-  .set-app { grid-template-columns: 1fr; height: auto; min-height: 100%; }
+  .set-app { grid-template-columns: 1fr; height: 100%; min-height: 0; }
+  .set-app-mobile { height: calc(100dvh - 120px); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  .set-app-mobile .set-side { position: relative; top: 0; z-index: 30; background: var(--panel); }
+  .set-app-mobile .set-main { overflow-y: auto; padding-bottom: 72px; }
   .set-side {
     flex-direction: row;
     overflow-x: auto;

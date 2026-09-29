@@ -19,13 +19,14 @@ export default function ResponsiveShell({ children }) {
   const mobile = useMediaQuery('(max-width: 639px)')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const loc = useLocation()
+  const isApp = ['/', '/operator', '/settings'].includes(loc.pathname) || loc.pathname.startsWith('/settings/')
 
   // 切页自动关闭抽屉
   React.useEffect(() => setDrawerOpen(false), [loc.pathname])
 
   return (
     <Ctx.Provider value={{ drawerOpen, setDrawerOpen, mobile }}>
-      <div className="min-h-screen flex flex-col bg-bg text-ink">
+      <div className={`flex flex-col bg-bg text-ink ${isApp ? "h-[100dvh] overflow-hidden" : "min-h-[100dvh]"}`}>
         {mobile ? (
           <>
             {/* 移动端顶栏：可呼出侧滑抽屉 */}
@@ -69,7 +70,7 @@ export default function ResponsiveShell({ children }) {
               </div>
             )}
 
-            <main className="flex-1 min-h-0">{children}</main>
+            <main className={`flex-1 min-h-0 ${isApp ? "overflow-hidden" : ""}`}>{children}</main>
 
             {/* 底部 Tab（固定） */}
             <nav className="shrink-0 sticky bottom-0 bg-panel border-t border-line-2 z-40 grid grid-cols-6 pb-[env(safe-area-inset-bottom)]">
@@ -96,7 +97,7 @@ export default function ResponsiveShell({ children }) {
                 ))}
               </nav>
             </header>
-            <main className="flex-1 min-h-0">{children}</main>
+            <main className={`flex-1 min-h-0 ${isApp ? "overflow-hidden" : ""}`}>{children}</main>
           </>
         )}
       </div>

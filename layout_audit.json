@@ -1,0 +1,14 @@
+{
+ "desktop /dashboard": [],
+ "desktop /sessions": [],
+ "desktop /operator": [],
+ "desktop /logs": [],
+ "desktop /settings": [],
+ "desktop /": [],
+ "phone /dashboard": [],
+ "phone /sessions": [],
+ "phone /operator": [],
+ "phone /logs": [],
+ "phone /settings": [],
+ "phone /": []
+}

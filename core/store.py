@@ -5,6 +5,7 @@ DB 路径每次连接时读环境变量（CS_AGENT_DB），测试无需重载模
 import json
 import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -218,16 +219,29 @@ def set_status(session_id: str, status: str, assignee: str | None = None) -> Non
 
 
 def close_session(session_id: str) -> None:
+    now = _now()
     with get_conn() as conn:
         conn.execute(
             "UPDATE sessions SET status = 'closed', ended_at = ? WHERE id = ?",
-            (_now(), session_id),
+            (now, session_id),
+        )
+        conn.execute(
+            "UPDATE tickets SET status = 'resolved', resolved_at = ?, "
+            "duration_s = CAST((julianday(? ) - julianday(created_at)) * 86400 AS INTEGER) "
+            "WHERE session_id = ? AND status = 'pending'",
+            (now, now, session_id),
         )
 
 
 def create_ticket(session_id: str, priority: str = "normal") -> str:
-    ticket_id = f"T-{session_id[-8:]}"
     with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM tickets WHERE session_id = ? AND status = 'pending'",
+            (session_id,),
+        ).fetchone()
+        if row:
+            return row["id"]
+        ticket_id = f"T-{uuid.uuid4().hex[:8]}"
         conn.execute(
             "INSERT INTO tickets (id, session_id, priority, status, created_at) VALUES (?, ?, ?, 'pending', ?)",
             (ticket_id, session_id, priority, _now()),
@@ -241,7 +255,8 @@ def pending_queues() -> dict:
             "SELECT id, visitor_id, escalate_reason, started_at FROM sessions WHERE status = 'pending_agent'"
         ).fetchall()
         tickets = conn.execute(
-            "SELECT id, session_id, priority, status, assignee, created_at FROM tickets ORDER BY created_at"
+            "SELECT id, session_id, priority, status, assignee, created_at FROM tickets "
+            "WHERE status != 'resolved' ORDER BY created_at DESC LIMIT 100"
         ).fetchall()
     return {
         "sessions": [dict(r) for r in pending_sessions],
