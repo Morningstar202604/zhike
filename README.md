@@ -63,6 +63,7 @@ Docker 一键（NapCat + core + gateway）：见 `deploy/docker-compose.yml`。
 | `RATE_LIMIT_WINDOW / RATE_LIMIT_MAX` | 每身份滑动窗口限流（秒/条） | 60 / 20 |
 | `SESSION_IDLE_TTL` | 渠道会话空闲多少秒后新建 | 1800 |
 | `CS_AGENT_DB` | SQLite 路径 | cs_agent.db |
+| `LLM_HOSTS` | 域名解析覆盖（域=IP,域=IP）：校园/内网 DNS 解析不了自定义 API 域时使用 | 空 |
 | `CS_AGENT_STATIC_DIR` | 单端口模式：前端 dist 目录（空=纯 API） | 空 |
 | `CS_AGENT_CORS_ORIGINS` | CORS 白名单（逗号分隔；空=*） | 空 |
 | `ONEBOT_WS_URL` | NapCat 的 OneBot v11 WS 地址 | ws://127.0.0.1:3001 |

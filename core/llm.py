@@ -3,14 +3,29 @@ import json
 import os
 import re
 
+import logging
+
 import httpx
+
+from core import config as config_mod
+
+lg = logging.getLogger("cs.events")
+
+
+def _creds() -> tuple[str, str, str, str]:
+    cfg = config_mod.get_config()["llm"]
+    key = cfg.get("api_key") or ""
+    base = (cfg.get("base_url") or "").rstrip("/")
+    model = cfg.get("model") or ""
+    source = cfg.get("key_source") or "none"
+    return key, base, model, source
 
 
 async def react(query: str, ctx: dict, cfg: dict) -> dict | None:
     llm_cfg = cfg.get("llm", {})
     if not llm_cfg.get("has_key"):
         return None
-    api_key = os.environ.get("USER_LLM_API_KEY", "")
+    api_key = llm_cfg.get("api_key") or ""
     if not api_key:
         return None
     base = (llm_cfg.get("base_url") or "").rstrip("/")
@@ -56,37 +71,52 @@ async def react(query: str, ctx: dict, cfg: dict) -> dict | None:
         "top_p": llm_cfg.get("top_p", 1.0),
         "max_tokens": llm_cfg.get("max_tokens", 512),
     }
+    payload["response_format"] = {"type": "json_object"}
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{base}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
                 json=payload,
             )
+            if resp.status_code in (400, 422):
+                payload.pop("response_format", None)
+                resp = await client.post(
+                    f"{base}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=payload,
+                )
             resp.raise_for_status()
             raw = (resp.json()["choices"][0]["message"]["content"] or "").strip()
-    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
+        lg.warning("llm request failed: %s %s", type(e).__name__, str(e)[:120])
         return None
+    return _parse_llm_answer(raw)
+
+
+def _parse_llm_answer(raw: str) -> dict | None:
+    raw = (raw or "").strip()
     if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw).rstrip("`")
+        raw = re.sub(r"^```(?:json)?\s*", "", raw).rstrip("`").strip()
     try:
         data = json.loads(raw)
+        return data if isinstance(data, dict) else None
     except json.JSONDecodeError:
+        if raw:
+            lg.info("llm prose answer accepted: %s", raw[:120])
+            return {"answer": raw, "confidence": 0.62, "citations": [], "escalate": False}
         return None
-    return data if isinstance(data, dict) else None
 
 
 async def probe() -> dict:
     """LLM 连通性自检：小请求实测端点，返回 configured/ok/error/latency。"""
     import time as _time
 
-    api_key = os.environ.get("USER_LLM_API_KEY", "")
-    if not api_key or api_key == "your-api-key-here":
-        return {"configured": False, "ok": False, "error": "未配置 USER_LLM_API_KEY（环境变量）"}
-    base = (os.environ.get("USER_LLM_BASE_URL", "") or "").rstrip("/")
-    model = os.environ.get("USER_LLM_MODEL", "")
+    api_key, base, model, source = _creds()
+    if not api_key:
+        return {"configured": False, "ok": False, "error": "未配置 API Key（设置页或 USER_LLM_API_KEY）", "source": source}
     if not base:
-        return {"configured": True, "ok": False, "error": "未配置 USER_LLM_BASE_URL"}
+        return {"configured": True, "ok": False, "error": "未配置 Base URL", "source": source}
     start = _time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -99,6 +129,30 @@ async def probe() -> dict:
             reply = (resp.json()["choices"][0]["message"]["content"] or "")[:60]
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
         return {"configured": True, "ok": False, "error": f"{type(e).__name__}: {e}",
-                "base_url": base, "model": model}
+                "base_url": base, "model": model, "source": source}
     return {"configured": True, "ok": True, "error": None, "base_url": base, "model": model,
-            "latency_ms": int((_time.monotonic() - start) * 1000), "reply": reply}
+            "latency_ms": int((_time.monotonic() - start) * 1000), "reply": reply, "source": source}
+
+
+async def list_models() -> dict:
+    """拉取账号可用模型列表：GET {base}/models。"""
+    api_key, base, model, source = _creds()
+    if not api_key:
+        return {"configured": False, "ok": False, "models": [],
+                "error": "未配置 API Key（设置页或 USER_LLM_API_KEY）", "source": source}
+    if not base:
+        return {"configured": True, "ok": False, "models": [], "error": "未配置 Base URL", "source": source}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(
+                f"{base}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
+            models = sorted(m.get("id", "") for m in data if isinstance(m, dict) and m.get("id"))
+    except (httpx.HTTPError, ValueError) as e:
+        return {"configured": True, "ok": False, "models": [],
+                "error": f"{type(e).__name__}: {e}", "base_url": base, "source": source}
+    return {"configured": True, "ok": True, "models": models, "count": len(models),
+            "base_url": base, "model": model, "source": source}

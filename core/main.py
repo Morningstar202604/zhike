@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocke
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from core import config, events_log, guardrail, llm, memory as memory_mod, pipeline, retrieval, security, sessions, store, tools as tools_mod
+from core import config, events_log, guardrail, llm, memory as memory_mod, net, pipeline, retrieval, security, sessions, store, tools as tools_mod
 
 logger = logging.getLogger("core")
 ev = logging.getLogger("cs.events")
@@ -66,6 +66,8 @@ def require_admin(x_admin_token: str | None = Header(default=None, alias="X-Admi
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     store.init_db()
+    applied = net.apply()
+    logger.info("DNS overrides applied: %s (LLM_HOSTS set=%s)", applied, bool(os.environ.get("LLM_HOSTS")))
     events_log.attach()
     app.state.gateway_channels = {}
     if not security.admin_token():
@@ -326,17 +328,30 @@ def create_app() -> FastAPI:
             "memory_enable": cfg.get("memory", {}).get("enable"),
             "escalate_threshold": cfg.get("escalation", {}).get("confidence_threshold"),
             "react_steps": cfg.get("escalation", {}).get("react_steps"),
+            "dns_overrides": net.status(),
         }
 
     @app.get("/api/config")
     def get_config():
-        return {"config": config.get_config()}
+        import copy as _copy
+
+        cfg = config.get_config()
+        key = cfg["llm"].get("api_key") or ""
+        view = _copy.deepcopy(cfg)
+        view["llm"]["api_key"] = ("••••" + key[-4:]) if key else ""
+        return {"config": view}
 
     @app.put("/api/config", dependencies=[Depends(require_admin)])
     def update_config(body: ConfigIn):
+        import copy as _copy
+
         allowed = set(config.DEFAULTS.keys())
         patch = {k: v for k, v in (body.config or {}).items() if k in allowed}
-        return {"config": config.update_config(patch)}
+        cfg = config.update_config(patch)
+        key = cfg["llm"].get("api_key") or ""
+        view = _copy.deepcopy(cfg)
+        view["llm"]["api_key"] = ("••••" + key[-4:]) if key else ""
+        return {"config": view}
 
     def _validate_tool_args(args_json: dict) -> None:
         if not isinstance(args_json, dict):
@@ -508,6 +523,10 @@ def create_app() -> FastAPI:
     @app.post("/api/admin/llm-test", dependencies=[Depends(require_admin)])
     async def llm_test():
         return await llm.probe()
+
+    @app.get("/api/admin/llm-models", dependencies=[Depends(require_admin)])
+    async def llm_models():
+        return await llm.list_models()
 
     @app.get("/api/admin/injection-log", dependencies=[Depends(require_admin)])
     def admin_injection_log():

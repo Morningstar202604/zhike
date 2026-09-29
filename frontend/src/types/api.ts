@@ -7,6 +7,7 @@ export interface AgentConfig {
     max_tokens: number
     has_key: boolean
     api_key?: string
+    key_source?: string
   }
   retrieval: { kb_top_k: number; min_overlap: number }
   context: {
