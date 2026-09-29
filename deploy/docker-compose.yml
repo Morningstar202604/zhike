@@ -1,0 +1,46 @@
+services:
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: napcat
+    environment:
+      - ACCOUNT=${NAPCAT_QQ}
+    ports:
+      - "6099:6099"
+      - "3001:3001"
+    volumes:
+      - napcat_data:/app/napcat/config
+    restart: unless-stopped
+
+  core:
+    build: .
+    command: uvicorn core.main:app --host 0.0.0.0 --port 8000 --workers 1
+    environment:
+      - USER_LLM_API_KEY=${USER_LLM_API_KEY}
+      - USER_LLM_BASE_URL=${USER_LLM_BASE_URL:-https://api.deepseek.com/v1}
+      - USER_LLM_MODEL=${USER_LLM_MODEL:-deepseek-chat}
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      - CS_AGENT_DB=/data/cs_agent.db
+      - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60}
+      - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-20}
+      - SESSION_IDLE_TTL=${SESSION_IDLE_TTL:-1800}
+    volumes:
+      - core_data:/data
+    ports:
+      - "8000:8000"
+    depends_on: []
+    restart: unless-stopped
+
+  gateway:
+    build: .
+    command: python gateway/bot.py
+    environment:
+      - ONEBOT_WS_URL=ws://napcat:3001
+      - CORE_BASE_URL=http://core:8000
+    depends_on:
+      - core
+      - napcat
+    restart: unless-stopped
+
+volumes:
+  core_data:
+  napcat_data:

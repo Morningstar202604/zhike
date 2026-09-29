@@ -1,0 +1,7 @@
+INFO:     Started server process [23820]
+INFO:     Waiting for application startup.
+ADMIN_TOKEN 未设置：操作员/管理接口无需令牌（开发模式）。生产部署必须设置 ADMIN_TOKEN。
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('127.0.0.1', 8000): [winerror 10048] 通常每个套接字地址(协议/网络地址/端口)只允许使用一次。
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
