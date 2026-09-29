@@ -1,152 +1,116 @@
 import React, { createContext, useContext, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { MessageCircle, Headset, Settings, Menu, X, Sparkles, LayoutDashboard, MessagesSquare, ScrollText } from 'lucide-react'
+import {
+  MessageCircle, Headset, Settings, Menu, X,
+  LayoutDashboard, MessagesSquare, ScrollText,
+} from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 
 export const NAV = [
-  { to: '/dashboard', label: '总览', icon: <LayoutDashboard size={18} /> },
-  { to: '/sessions', label: '会话', icon: <MessagesSquare size={18} /> },
-  { to: '/operator', label: '坐席', icon: <Headset size={18} /> },
-  { to: '/logs', label: '日志', icon: <ScrollText size={18} /> },
-  { to: '/', label: '对话', icon: <MessageCircle size={18} />, end: true },
-  { to: '/settings', label: '管理', icon: <Settings size={18} /> },
+  { to: '/dashboard', label: '运行总览', icon: <LayoutDashboard size={17} /> },
+  { to: '/sessions', label: '会话中心', icon: <MessagesSquare size={17} /> },
+  { to: '/operator', label: '坐席工作台', icon: <Headset size={17} /> },
+  { to: '/logs', label: '日志中心', icon: <ScrollText size={17} /> },
+  { to: '/', label: '访客对话', icon: <MessageCircle size={17} />, end: true },
+  { to: '/settings', label: '管理中心', icon: <Settings size={17} /> },
 ]
 
 const Ctx = React.createContext({ drawerOpen: false, setDrawerOpen: () => {}, mobile: false })
 export const useShell = () => useContext(Ctx)
 
+function Brand() {
+  return (
+    <div className="shell-brand">
+      <span className="shell-brand-logo">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 2l2.1 6.2L20 10l-5.9 1.8L12 18l-2.1-6.2L4 10l5.9-1.8L12 2z" />
+        </svg>
+      </span>
+      <span>
+        <span className="shell-brand-name">知客 Zhike</span>
+        <span className="shell-brand-sub">在线客服 Agent 控制台</span>
+      </span>
+    </div>
+  )
+}
+
+function SideNav({ onNav }) {
+  const loc = useLocation()
+  return (
+    <nav className="shell-nav">
+      {NAV.map((n) => {
+        const active = n.end ? loc.pathname === n.to : loc.pathname.startsWith(n.to)
+        return (
+          <Link key={n.to} to={n.to} onClick={onNav} className={`shell-item ${active ? 'active' : ''}`}>
+            {n.icon}
+            <span>{n.label}</span>
+            <span className="si-dot" />
+          </Link>
+        )
+      })}
+    </nav>
+  )
+}
+
 export default function ResponsiveShell({ children }) {
-  const mobile = useMediaQuery('(max-width: 639px)')
+  const mobile = useMediaQuery('(max-width: 960px)')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const loc = useLocation()
   const isApp = ['/', '/operator', '/settings'].includes(loc.pathname) || loc.pathname.startsWith('/settings/')
 
-  // 切页自动关闭抽屉
   React.useEffect(() => setDrawerOpen(false), [loc.pathname])
 
+  const mainClass = `shell-main ${isApp ? 'is-app' : ''}`
+
+  if (mobile) {
+    return (
+      <Ctx.Provider value={{ drawerOpen, setDrawerOpen, mobile: true }}>
+        <div className={`app-shell ${isApp ? 'app-shell-fixed' : ''}`}>
+          <header className="shell-top">
+            <button className="shell-menu-btn" onClick={() => setDrawerOpen(true)} aria-label="打开菜单">
+              <Menu size={19} />
+            </button>
+            <div className="shell-top-brand">
+              <span className="shell-top-logo">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12 2l2.1 6.2L20 10l-5.9 1.8L12 18l-2.1-6.2L4 10l5.9-1.8L12 2z" />
+                </svg>
+              </span>
+              知客 Zhike
+            </div>
+            <span style={{ width: 36 }} />
+          </header>
+          {drawerOpen && (
+            <>
+              <div className="shell-drawer-mask" onClick={() => setDrawerOpen(false)} />
+              <div className="shell-drawer">
+                <button className="shell-drawer-close" onClick={() => setDrawerOpen(false)} aria-label="关闭菜单">
+                  <X size={16} />
+                </button>
+                <Brand />
+                <SideNav onNav={() => setDrawerOpen(false)} />
+                <div className="shell-foot">知客 Zhike · MIT</div>
+              </div>
+            </>
+          )}
+          <main className={mainClass}>{children}</main>
+        </div>
+      </Ctx.Provider>
+    )
+  }
+
   return (
-    <Ctx.Provider value={{ drawerOpen, setDrawerOpen, mobile }}>
-      <div className={`flex flex-col bg-bg text-ink ${isApp ? "h-[100dvh] overflow-hidden" : "min-h-[100dvh]"}`}>
-        {mobile ? (
-          <>
-            {/* 移动端顶栏：可呼出侧滑抽屉 */}
-            <header className="h-14 flex items-center justify-between px-4 bg-panel/80 backdrop-blur border-b border-line-2 sticky top-0 z-40">
-              <button
-                className="w-10 h-10 grid place-items-center rounded-md text-ink-2 active:bg-panel-2"
-                onClick={() => setDrawerOpen(true)}
-                aria-label="打开菜单"
-              >
-                <Menu size={20} />
-              </button>
-              <div className="flex items-center gap-2">
-                <span className="w-7 h-7 rounded-lg bg-brand-grad grid place-items-center text-white shadow-md">
-                  <Sparkles size={14} />
-                </span>
-                <span className="font-bold text-sm">知客 Agent</span>
-              </div>
-              <div className="w-10" />
-            </header>
-
-            {/* 侧滑抽屉 */}
-            {drawerOpen && (
-              <div className="fixed inset-0 z-50">
-                <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={() => setDrawerOpen(false)} />
-                <div className="absolute left-0 top-0 h-full w-[280px] max-w-[82vw] bg-panel shadow-lg flex flex-col animate-[drawerIn_.22s_cubic-bezier(.2,.8,.2,1)]">
-                  <div className="p-4 border-b border-line-2 flex items-center gap-2">
-                    <span className="w-8 h-8 rounded-lg bg-brand-grad grid place-items-center text-white">
-                      <Sparkles size={15} />
-                    </span>
-                    <div>
-                      <div className="font-bold text-sm">知客 Agent</div>
-                      <div className="text-[11px] text-muted">客服控制台</div>
-                    </div>
-                  </div>
-                  <nav className="p-3 flex flex-col gap-1">
-                    {NAV.map((n) => (
-                      <DrawerNav key={n.to} item={n} onNav={() => setDrawerOpen(false)} />
-                    ))}
-                  </nav>
-                </div>
-              </div>
-            )}
-
-            <main className={`flex-1 min-h-0 ${isApp ? "overflow-hidden" : ""}`}>{children}</main>
-
-            {/* 底部 Tab（固定） */}
-            <nav className="shrink-0 sticky bottom-0 bg-panel border-t border-line-2 z-40 grid grid-cols-6 pb-[env(safe-area-inset-bottom)]">
-              {NAV.map((n) => (
-                <BottomTab key={n.to} item={n} />
-              ))}
-            </nav>
-          </>
-        ) : (
-          <>
-            <header className="h-14 flex items-center justify-between px-6 bg-panel/80 backdrop-blur border-b border-line-2 sticky top-0 z-40">
-              <div className="flex items-center gap-2">
-                <span className="w-8 h-8 rounded-lg bg-brand-grad grid place-items-center text-white shadow-md">
-                  <Sparkles size={15} />
-                </span>
-                <div>
-                  <div className="font-bold text-sm leading-none">知客 Agent</div>
-                  <div className="text-[10px] text-muted mt-0.5">客服控制台</div>
-                </div>
-              </div>
-              <nav className="flex gap-1">
-                {NAV.map((n) => (
-                  <DesktopNav key={n.to} item={n} />
-                ))}
-              </nav>
-            </header>
-            <main className={`flex-1 min-h-0 ${isApp ? "overflow-hidden" : ""}`}>{children}</main>
-          </>
-        )}
+    <Ctx.Provider value={{ drawerOpen, setDrawerOpen, mobile: false }}>
+      <div className={`app-shell ${isApp ? 'app-shell-fixed' : ''}`}>
+        <aside className="shell-side">
+          <Brand />
+          <SideNav />
+          <div className="shell-foot">
+            知客 Zhike<br />在线客服 Agent · MIT
+          </div>
+        </aside>
+        <main className={mainClass}>{children}</main>
       </div>
     </Ctx.Provider>
-  )
-}
-
-function DrawerNav({ item, onNav }) {
-  const loc = useLocation()
-  const active = item.end ? loc.pathname === item.to : loc.pathname.startsWith(item.to)
-  return (
-    <Link
-      to={item.to}
-      onClick={onNav}
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition ${active ? 'bg-brand-soft text-brand font-semibold' : 'text-ink-2 hover:bg-panel-2'}`}
-    >
-      <span className={`w-8 h-8 grid place-items-center rounded-lg ${active ? 'bg-brand text-white' : 'bg-panel-2 text-muted'}`}>
-        {item.icon}
-      </span>
-      {item.label}
-    </Link>
-  )
-}
-
-function BottomTab({ item }) {
-  const loc = useLocation()
-  const active = item.end ? loc.pathname === item.to : loc.pathname.startsWith(item.to)
-  return (
-    <Link
-      to={item.to}
-      className={`flex flex-col items-center justify-center gap-1 py-2 text-[11px] font-medium transition ${active ? 'text-brand' : 'text-muted'}`}
-    >
-      <span className={`w-10 h-10 grid place-items-center rounded-full transition ${active ? 'bg-brand-soft text-brand' : 'text-ink-2'}`}>
-        {item.icon}
-      </span>
-      {item.label}
-    </Link>
-  )
-}
-
-function DesktopNav({ item }) {
-  const loc = useLocation()
-  const active = item.end ? loc.pathname === item.to : loc.pathname.startsWith(item.to)
-  return (
-    <Link
-      to={item.to}
-      className={`px-4 py-1.5 rounded-full text-sm font-medium transition ${active ? 'bg-brand text-white shadow-md' : 'text-ink-2 hover:bg-line-2'}`}
-    >
-      {item.label}
-    </Link>
   )
 }
