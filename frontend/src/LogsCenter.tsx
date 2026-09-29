@@ -71,7 +71,7 @@ export default function LogsCenter() {
       )}
 
       {entries.length > 0 && (
-        <div className="bg-panel border border-line-2 rounded-xl p-3 font-mono text-xs leading-6 overflow-auto md:max-h-[calc(100vh-200px)]">
+        <div className="bg-panel border border-line-2 rounded-xl p-3 font-mono text-xs leading-6 overflow-auto md:max-h-[calc(100dvh-200px)]">
           {entries.map((e) => (
             <div key={e.id} className="flex gap-3 border-b border-line-2 py-1 px-2 rounded hover:bg-panel-2">
               <span className="text-muted shrink-0">{fmtTime(e.time)}</span>

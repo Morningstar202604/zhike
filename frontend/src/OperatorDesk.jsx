@@ -115,7 +115,7 @@ export default function OperatorDesk() {
   // 移动端：堆叠 —— 先队列，再对话（active 时对话上移）
   return (
     <div className={`op-app ${isMobile ? 'op-app-mobile' : ''}`}>
-      <section className={`op-pane ${isMobile ? '' : 'op-left'}`}>
+      <section className="op-pane op-left">
         <div className={`op-left-head ${isMobile ? 'op-left-head-mobile' : ''}`}>
           <div className="op-conn">
             <Radio size={14} />
@@ -169,7 +169,7 @@ export default function OperatorDesk() {
         </div>
       </section>
 
-      <section className={`op-pane ${isMobile ? '' : 'op-right'}`}>
+      <section className="op-pane op-right">
         <div className="op-right-head">
           <h3>{active ? `会话 #${active.slice(0, 8)}` : '选择一个会话开始服务'}</h3>
           {active && (
