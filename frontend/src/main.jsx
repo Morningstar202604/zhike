@@ -29,6 +29,7 @@ export default function App() {
               <Route path="/logs" element={<LogsCenter />} />
               <Route path="/operator" element={<OperatorDesk />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/settings/:tab" element={<Settings />} />
             </Routes>
           </Suspense>
         </ResponsiveShell>

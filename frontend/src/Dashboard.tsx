@@ -192,7 +192,7 @@ export default function Dashboard() {
         <HealthChip ok={true} on={`知识库 ${h?.kb_entries ?? '…'} 条`} />
         <HealthChip ok={true} on={`工具 ${h?.tool_count ?? '…'} 个`} />
         <HealthChip ok={true} on={`护栏规则 ${h?.injection_rules ?? '…'} 条`} />
-        <Link to="/settings" className="text-xs text-brand hover:underline ml-auto">进入管理中心 →</Link>
+        <Link to="/settings/params" className="text-xs text-brand hover:underline ml-auto">进入管理中心 →</Link>
       </div>
 
       {ov && ov.pending > 0 && (

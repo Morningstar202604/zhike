@@ -12,6 +12,7 @@ def _defaults() -> dict:
             "temperature": 0.2,
             "top_p": 1.0,
             "max_tokens": 512,
+            "api_key": None,
             "has_key": False,
         },
         "retrieval": {
@@ -65,11 +66,6 @@ def _defaults() -> dict:
 DEFAULTS = _defaults()
 
 
-def _has_key() -> bool:
-    key = os.environ.get("USER_LLM_API_KEY", "")
-    return bool(key and key != "your-api-key-here")
-
-
 def _deep_merge(base: dict, override: dict) -> dict:
     out = json.loads(json.dumps(base))
     for k, v in (override or {}).items():
@@ -84,11 +80,21 @@ def get_config() -> dict:
     cfg = _defaults()
     stored = store.get_config() or {}
     cfg = _deep_merge(cfg, stored)
-    cfg["llm"]["has_key"] = _has_key()
-    cfg["llm"]["api_key"] = "configured" if cfg["llm"]["has_key"] else "missing"
+    stored_key = cfg["llm"].get("api_key") or ""
+    env_key = os.environ.get("USER_LLM_API_KEY", "")
+    if stored_key and stored_key != "your-api-key-here":
+        cfg["llm"]["key_source"] = "ui"
+    else:
+        cfg["llm"]["api_key"] = env_key
+        cfg["llm"]["key_source"] = "env" if env_key else "none"
+    cfg["llm"]["has_key"] = bool(cfg["llm"]["api_key"]) and cfg["llm"]["api_key"] != "your-api-key-here"
     return cfg
 
 
 def update_config(patch: dict) -> dict:
-    store.set_config(patch or {})
+    patch = json.loads(json.dumps(patch or {}))
+    llm_patch = patch.get("llm") or {}
+    if "api_key" in llm_patch and isinstance(llm_patch["api_key"], str) and llm_patch["api_key"].startswith("••"):
+        llm_patch["api_key"] = get_config()["llm"].get("api_key") or ""
+    store.set_config(patch)
     return get_config()

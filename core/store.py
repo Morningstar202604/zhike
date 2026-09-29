@@ -474,10 +474,16 @@ def get_config() -> dict:
 def set_config(patch: dict) -> None:
     with get_conn() as conn:
         for group, value in (patch or {}).items():
+            row = conn.execute("SELECT value FROM config WHERE key = ?", (group,)).fetchone()
+            current = json.loads(row["value"]) if row and row["value"] else {}
+            if isinstance(value, dict) and isinstance(current, dict):
+                merged = {**current, **value}
+            else:
+                merged = value
             conn.execute(
                 "INSERT INTO config (key, value, updated_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-                (group, json.dumps(value, ensure_ascii=False), _now()),
+                (group, json.dumps(merged, ensure_ascii=False), _now()),
             )
 
 

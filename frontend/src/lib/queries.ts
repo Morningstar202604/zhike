@@ -143,7 +143,12 @@ export function useCloseSession() {
 }
 export function useLlmTest() {
   return useMutation({
-    mutationFn: () => http.post<{ configured: boolean; ok: boolean; error?: string | null; latency_ms?: number; reply?: string }>('/api/admin/llm-test'),
+    mutationFn: () => http.post<{ configured: boolean; ok: boolean; error?: string | null; latency_ms?: number; reply?: string; base_url?: string; model?: string; source?: string }>('/api/admin/llm-test'),
+  })
+}
+export function useLlmModels() {
+  return useMutation({
+    mutationFn: () => http.get<{ configured: boolean; ok: boolean; models: string[]; count?: number; error?: string | null; base_url?: string; source?: string }>('/api/admin/llm-models'),
   })
 }
 export function useAdminInjection() {
