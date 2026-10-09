@@ -59,6 +59,27 @@ export function useKbMutations() {
   }
 }
 
+// ---- kb 批量导入/导出 ----
+export function useKbImport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (p: { text: string; replace: boolean }) =>
+      http.post<{ added: number; total: number }>('/api/kb/import', p),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.kb }),
+  })
+}
+
+export async function exportKb(): Promise<void> {
+  const r = await fetch('/api/kb/export', { headers: baseHeaders() })
+  if (!r.ok) throw new Error('导出失败')
+  const blob = await r.blob()
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = 'zhike-kb.md'
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 // ---- tools ----
 export function useTools() {
   return useQuery({ queryKey: qk.tools, queryFn: () => http.get<{ tools: ToolDef[] }>('/api/tools') })

@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -14,6 +15,45 @@ from core import config, events_log, guardrail, llm, memory as memory_mod, net, 
 
 logger = logging.getLogger("core")
 ev = logging.getLogger("cs.events")
+
+
+def _parse_kb_blocks(raw: str) -> list[tuple[str, str]]:
+    """批量导入文本 → [(标题, 答案)]，自动识别两种格式：
+
+    - 标题模式：以 ## / ### 开头的行为条目标题，其后所有内容（可含空行）为答案
+    - 分块模式：空行分隔的块，块内首行为标题，其余行为答案
+    """
+    raw = (raw or "").replace("\r\n", "\n").strip()
+    if not raw:
+        return []
+    lines = raw.split("\n")
+    blocks: list[tuple[str, str]] = []
+    if any(ln.lstrip().startswith(("## ", "### ")) for ln in lines):
+        title, body = None, []
+        for ln in lines:
+            ls = ln.strip()
+            if ls.startswith(("## ", "### ")):
+                if title is not None:
+                    blocks.append((title, "\n".join(body).strip()))
+                title, body = ls.lstrip("#").strip(), []
+            elif title is not None:
+                body.append(ln)
+        if title is not None:
+            blocks.append((title, "\n".join(body).strip()))
+    else:
+        title, body = None, []
+        for ln in lines:
+            if not ln.strip():
+                if title is not None:
+                    blocks.append((title, "\n".join(body).strip()))
+                    title, body = None, []
+            elif title is None:
+                title = ln.strip()
+            else:
+                body.append(ln)
+        if title is not None:
+            blocks.append((title, "\n".join(body).strip()))
+    return [(t, a) for t, a in blocks if t]
 
 
 class Hub:
@@ -133,6 +173,10 @@ def create_app() -> FastAPI:
         title: str = ""
         answer: str = ""
         tags: list[str] = []
+
+    class KbImportIn(BaseModel):
+        text: str
+        replace: bool = False
 
     class IngestIn(BaseModel):
         channel_type: str
@@ -475,6 +519,49 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "kb not found")
         _save_kb(new)
         return {"kb": new}
+
+    @app.post("/api/kb/import", dependencies=[Depends(require_admin)])
+    def import_kb(body: KbImportIn):
+        """批量导入知识库：自动识别「## 标题」或空行分块两种格式，条目 id 自动编号（KB101 起）。
+
+        replace=True 时清空现有条目后导入（整库重建）。答案里行首出现「## 」会破坏再导入，避免使用。
+        """
+        blocks = _parse_kb_blocks(body.text)
+        if not blocks:
+            raise HTTPException(400, "未能解析出任何条目：用「## 标题」开头，或用空行分隔「标题/正文」块")
+        items = [] if body.replace else retrieval.load_kb()
+        base = 100
+        for e in items:
+            m = re.match(r"^KB(\d+)$", e["id"])
+            if m:
+                base = max(base, int(m.group(1)))
+        for title, answer in blocks:
+            base += 1
+            items.append({
+                "id": f"KB{base}",
+                "title": title[:80],
+                "text": f"{title} {answer}"[:300],
+                "answer": answer or title,
+                "tags": [],
+            })
+        _save_kb(items)
+        return {"added": len(blocks), "total": len(items), "kb": items}
+
+    @app.get("/api/kb/export", dependencies=[Depends(require_admin)])
+    def export_kb():
+        """导出全部知识库为 Markdown（「## 标题」格式，可直接再导入，形成备份闭环）。"""
+        from fastapi.responses import PlainTextResponse
+
+        lines: list[str] = []
+        for e in retrieval.load_kb():
+            lines.append(f"## {e['title']}")
+            lines.append(e["answer"] or e["text"])
+            lines.append("")
+        return PlainTextResponse(
+            "\n".join(lines).strip() + "\n",
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=zhike-kb.md"},
+        )
 
     @app.get("/api/admin/overview", dependencies=[Depends(require_admin)])
     def admin_overview():
