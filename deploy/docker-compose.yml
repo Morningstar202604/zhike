@@ -1,44 +1,54 @@
 services:
   napcat:
     image: mlikiowa/napcat-docker:latest
-    container_name: napcat
+    container_name: zhike-napcat
     environment:
-      - ACCOUNT=${NAPCAT_QQ}
+      - ACCOUNT=${NAPCAT_QQ:-}
+      - TZ=Asia/Shanghai
+    # WebUI 仅绑本机：扫码登录用（SSH 隧道或本机浏览器访问）。
+    # 3001（OneBot WS）不对外发布——gateway 走 compose 内网直连，防公网裸奔。
     ports:
-      - "6099:6099"
-      - "3001:3001"
+      - "127.0.0.1:6099:6099"
     volumes:
-      - napcat_data:/app/napcat/config
+      - napcat_data:/app/napcat
     restart: unless-stopped
 
   core:
     build: .
-    command: uvicorn core.main:app --host 0.0.0.0 --port 8000 --workers 1
+    image: zhike-core:latest
+    container_name: zhike-core
+    command: python -m uvicorn core.main:app --host 0.0.0.0 --port 8010 --workers 1
+    env_file: .env
     environment:
-      - USER_LLM_API_KEY=${USER_LLM_API_KEY}
-      - USER_LLM_BASE_URL=${USER_LLM_BASE_URL:-https://api.deepseek.com/v1}
-      - USER_LLM_MODEL=${USER_LLM_MODEL:-deepseek-chat}
-      - ADMIN_TOKEN=${ADMIN_TOKEN}
       - CS_AGENT_DB=/data/cs_agent.db
-      - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60}
-      - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-20}
-      - SESSION_IDLE_TTL=${SESSION_IDLE_TTL:-1800}
+      - CS_AGENT_STATIC_DIR=/app/frontend/dist
+      - TZ=Asia/Shanghai
     volumes:
       - core_data:/data
     ports:
-      - "8000:8000"
-    depends_on: []
+      # ZHIKE_BIND=127.0.0.1 时仅本机可达（配合 CF Tunnel / 反代）；默认全网卡
+      - "${ZHIKE_BIND:-0.0.0.0}:8010:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8010/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   gateway:
     build: .
+    image: zhike-core:latest
+    container_name: zhike-gateway
     command: python gateway/bot.py
+    env_file: .env
     environment:
+      - CORE_BASE_URL=http://core:8010
       - ONEBOT_WS_URL=ws://napcat:3001
-      - CORE_BASE_URL=http://core:8000
+      - TZ=Asia/Shanghai
     depends_on:
-      - core
-      - napcat
+      core:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

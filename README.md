@@ -25,7 +25,7 @@ QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 
 - **全程可审计**：会话/工具/升级/拦截全量落库，控制台可回放
 - **零重依赖**：检索无向量库、存储用 SQLite、一条命令起服务
 
-架构与完整决策见 [docs/UPGRADE_PLAN.md](docs/UPGRADE_PLAN.md)。
+架构与完整决策见 [docs/UPGRADE_PLAN.md](docs/UPGRADE_PLAN.md)，**部署手册见 [DEPLOY.md](DEPLOY.md)**（Docker Compose 一键脚本 + CF Tunnel 矩阵 + 验收清单）。
 
 ## 架构
 
