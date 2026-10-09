@@ -99,3 +99,35 @@ def test_reply_segments_splits_long_text():
 
 def test_reply_segments_short_text_single():
     assert reply_segments("正常回复") == ["正常回复"]
+
+
+def test_image_url_extracted_from_segments():
+    ev = from_onebot_v11(
+        _group_event(
+            [
+                {"type": "at", "data": {"qq": "1000"}},
+                {"type": "text", "data": {"text": "帮我看下这个截图"}},
+                {"type": "image", "data": {"url": "https://example.com/a.jpg"}},
+            ]
+        )
+    )
+    assert ev is not None
+    assert "[图片]" in ev.text
+    assert ev.image_url == "https://example.com/a.jpg"
+
+
+def test_image_url_extracted_from_cq_string():
+    ev = from_onebot_v11(
+        _group_event(
+            "[CQ:at,qq=1000] 看图 [CQ:image,file=abc.jpg,url=https://gchat.qpic.cn/a?term=2&amp;is_origin=0]"
+        )
+    )
+    assert ev is not None
+    assert ev.image_url == "https://gchat.qpic.cn/a?term=2&is_origin=0", "CQ 码转义的 &amp; 必须还原"
+    assert ev.image_url not in ev.text
+
+
+def test_ingest_payload_has_no_image_field():
+    ev = from_onebot_v11(_group_event([{"type": "at", "data": {"qq": "1000"}}, {"type": "text", "data": {"text": "hi"}}]))
+    payload = ingest_payload(ev)
+    assert "image_b64" not in payload, "image_b64 由网关拉取后单独附加，映射层不携带"

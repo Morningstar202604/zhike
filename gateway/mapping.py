@@ -13,19 +13,26 @@ class GatewayEvent:
     text: str
     display_name: str = ""
     message_id: str | None = None
+    image_url: str = ""
 
     @property
     def should_reply(self) -> bool:
         return bool(self.text)
 
 
-def _extract_text(message, self_id: str) -> tuple[str, bool]:
+def _extract_text(message, self_id: str) -> tuple[str, bool, str]:
+    """提取纯文本 / 是否 @机器人 / 首个图片 URL（CQ 码字符串与分段两种格式统一处理）。"""
     if isinstance(message, str):
         at_self = f"[CQ:at,qq={self_id}]" in message
+        image_url = ""
+        m = re.search(r"\[CQ:image,[^\]]*url=([^,\]]+)\]", message)
+        if m:
+            image_url = m.group(1).replace("&amp;", "&")
         text = re.sub(r"\[CQ:[^\]]*\]", "", message)
-        return text, at_self
+        return text, at_self, image_url
     parts: list[str] = []
     at_self = False
+    image_url = ""
     for seg in message or []:
         seg_type = seg.get("type")
         data = seg.get("data") or {}
@@ -35,7 +42,9 @@ def _extract_text(message, self_id: str) -> tuple[str, bool]:
             at_self = True
         elif seg_type == "image":
             parts.append("[图片]")
-    return "".join(parts), at_self
+            if not image_url:
+                image_url = str(data.get("url") or "")
+    return "".join(parts), at_self, image_url
 
 
 def from_onebot_v11(event: dict) -> GatewayEvent | None:
@@ -48,7 +57,7 @@ def from_onebot_v11(event: dict) -> GatewayEvent | None:
     message_type = event.get("message_type")
     if message_type not in ("group", "private"):
         return None
-    text, at_self = _extract_text(event.get("message"), self_id)
+    text, at_self, image_url = _extract_text(event.get("message"), self_id)
     if message_type == "group" and not at_self:
         return None
     text = text.strip()
@@ -62,6 +71,7 @@ def from_onebot_v11(event: dict) -> GatewayEvent | None:
         text=text,
         display_name=str(event.get("sender", {}).get("nickname", "") or ""),
         message_id=str(event.get("message_id", "")) or None,
+        image_url=image_url,
     )
 
 
