@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
-import * as echarts from 'echarts'
+import { echarts } from '../lib/echarts'
+import type { EChartsInstance, EChartsOption } from '../lib/echarts'
 
-export default function EChart({ option, height = 260 }: { option: echarts.EChartsOption; height?: number }) {
+export default function EChart({ option, height = 260 }: { option: EChartsOption; height?: number }) {
   const ref = useRef<HTMLDivElement>(null)
-  const chart = useRef<echarts.ECharts | null>(null)
+  const chart = useRef<EChartsInstance | null>(null)
 
   useEffect(() => {
     if (!ref.current) return

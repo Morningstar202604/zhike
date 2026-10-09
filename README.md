@@ -1,6 +1,29 @@
-# 知客 Zhike · 在线客服 Agent（QQ 群 / 微信 / 控制台）
+# 知客 Zhike · 在线客服 Agent
 
-重做自 `badhope/online-cs-agent`（MIT）：把「Web 演示」升级为「渠道可接、可部署、可审计」的客服 Agent 底座。QQ 群走 NapCat(OneBot v11) + NoneBot2 网关，核心服务独立成 API，旧 React 坐席工作台原样复用。MIT 开源。
+<div align="center">
+
+**把任意渠道的咨询，交给一个可控、可审计、可降级的客服 Agent**
+
+QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 注入护栏
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
+![Tests](https://img.shields.io/badge/tests-77%20passed-brightgreen)
+
+</div>
+
+---
+
+重做自 `badhope/online-cs-agent`（MIT）：把「Web 演示」升级为「渠道可接、可部署、可审计」的客服 Agent 底座。QQ 走 NapCat(OneBot v11) + NoneBot2 网关，核心服务独立成 API，React 控制台单端口托管。MIT 开源。
+
+## 设计原则
+
+- **降级可用**：LLM 没配/挂了 → 规则+检索照样答；核心不可达 → 网关回兜底话术，用户不面对沉默
+- **安全默认**：注入护栏（内置规则+正则库）、ADMIN/CHANNEL 双令牌鉴权、每身份限流、静态服务防路径穿越
+- **全程可审计**：会话/工具/升级/拦截全量落库，控制台可回放
+- **零重依赖**：检索无向量库、存储用 SQLite、一条命令起服务
 
 架构与完整决策见 [docs/UPGRADE_PLAN.md](docs/UPGRADE_PLAN.md)。
 
@@ -60,6 +83,7 @@ Docker 一键（NapCat + core + gateway）：见 `deploy/docker-compose.yml`。
 |---|---|---|
 | `USER_LLM_API_KEY/BASE_URL/MODEL` | OpenAI 兼容端点（DeepSeek/GLM/Qwen 均可）；不配则规则模式 | 空/DeepSeek |
 | `ADMIN_TOKEN` | 操作员与管理接口令牌；**生产必须设置** | 空（开发模式，启动告警） |
+| `CHANNEL_TOKEN` | 渠道共享密钥：设置后 `/v1/ingest` 与网关心跳需 `X-Channel-Token` 头（网关与核心一致）；公网部署**必须设置**，防伪造消息与刷 LLM 成本 | 空（开发模式，启动告警） |
 | `RATE_LIMIT_WINDOW / RATE_LIMIT_MAX` | 每身份滑动窗口限流（秒/条） | 60 / 20 |
 | `SESSION_IDLE_TTL` | 渠道会话空闲多少秒后新建 | 1800 |
 | `CS_AGENT_DB` | SQLite 路径 | cs_agent.db |
@@ -86,7 +110,7 @@ LLM 配好后可用 `POST /api/admin/llm-test`（管理页）实测连通性与�
 
 ## API
 
-- `POST /v1/ingest`：渠道摄取（网关用）。body: `channel_type, channel_user_id, group_id?, text, display_name?` → `reply{text, citations, escalate, mode, tool_used}, session_id, ticket_id`
+- `POST /v1/ingest`：渠道摄取（网关用；设置 `CHANNEL_TOKEN` 后需 `X-Channel-Token` 头）。body: `channel_type, channel_user_id, group_id?, text, display_name?, image_b64?` → `reply{text, citations, escalate, mode, tool_used}, session_id, ticket_id`
 - `POST /v1/gateway/heartbeat`：网关心跳上报（30 秒一次，>90 秒无心跳显示 stale）
 - 管理端：`GET /api/admin/{overview,stats,sessions,channels,logs,memory,injection-log}`（设 ADMIN_TOKEN 后需 X-Admin-Token）
 - 旧版 Web API 全兼容（`/api/sessions`、`/api/operator/*`、`/api/config`、`/api/kb`、`/api/tools`、WS `/ws/{sid}`、`/ws/operator`）。
@@ -94,13 +118,17 @@ LLM 配好后可用 `POST /api/admin/llm-test`（管理页）实测连通性与�
 ## 测试与验证
 
 ```bash
-python -m pytest tests -q                    # 43 用例：管线/摄取/安全/网关映射/存储/前端兼容/统计/控制台
+python -m pytest tests -q                    # 69 用例：管线/摄取/安全/网关映射/存储/前端兼容/统计/控制台
 python scripts/e2e_check.py http://127.0.0.1:8010   # 18 项在线能力体检（对运行中的服务）
 CORE_BASE_URL=http://127.0.0.1:8010 python scripts/fake_napcat.py  # QQ 全链路（伪装 NapCat，含心跳）
+python scripts/mock_llm.py 9099              # 本地 Mock LLM（OpenAI 兼容），配 base_url=http://127.0.0.1:9099/v1 可验通 LLM 管线
 ```
 
-## 风险与合规（必读）
+## 安全与合规（必读）
 
+- **双令牌鉴权**：`ADMIN_TOKEN` 保护管理/坐席接口与坐席 WS 推送（前端设置令牌后自动携带）；`CHANNEL_TOKEN` 保护渠道摄取与网关心跳，防公网伪造渠道消息。两者未设置时为开发模式（启动告警），生产必须设置。
+- **消息管线防护**：注入护栏（内置规则 + 管理台正则库，表达式 ≤300 字符防回溯滥用）、每身份滑动窗口限流、SPA 静态服务 realpath 包含性校验（防路径穿越）。
+- **LLM Key**：支持环境变量注入（不落库）。管理台「LLM 配置」保存的 Key 存本地 SQLite，接口回显永远掩码；介意落盘的场景请用环境变量方式。
+- **渠道健康**：网关 30 秒心跳上报，>90 秒无心跳控制台标记 stale；`/api/debug/conn` 已收进管理令牌。
 - NapCat 为**自定义非商用许可**的非官方协议端：个人/内部使用可接受，商用前必须复核其 LICENSE 原文并评估腾讯风控；合规优先场景改走 QQ 官方机器人 API（Roadmap P2）。
-- 微信侧不做个人号协议；走企业微信「微信客服」/公众号客服接口（官方 API）。
-- LLM Key 仅从环境变量读取，不落库、不进日志。
+- 微信侧不做个人号协议；走企业微信「微信客服」/公众号客服接口（官方 API，Roadmap）。

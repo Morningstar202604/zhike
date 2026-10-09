@@ -96,6 +96,7 @@ def build_context(query: str, history: list[dict], cfg: dict, visitor_id: str) -
 
     return {
         "kb_block": kb_block,
+        "hits": hits,
         "tools_schema": tools_schema,
         "tools": tools,
         "memory_block": mem_block,
@@ -109,11 +110,7 @@ def build_context(query: str, history: list[dict], cfg: dict, visitor_id: str) -
 
 
 def _rule_react(query: str, ctx: dict, cfg: dict) -> AgentReply:
-    hits = retrieval.retrieve_scored(
-        query,
-        cfg.get("retrieval", {}).get("kb_top_k", 4),
-        cfg.get("retrieval", {}).get("min_overlap", 0.0),
-    )
+    hits = ctx.get("hits") or []  # 复用 build_context 的检索结果，避免同参数二次检索
     tools = ctx["tools"]
     tool_name, tool_args = tools_mod.detect_tool(query, tools)
     if tool_name:

@@ -6,9 +6,17 @@ import re
 KB_PATH = pathlib.Path(__file__).parent / "data" / "kb.json"
 
 
+_KB_CACHE: tuple[int, list[dict]] | None = None
+
+
 def load_kb() -> list[dict]:
-    with open(KB_PATH, encoding="utf-8") as f:
-        return json.load(f)["kb"]
+    """知识库条目；按文件 mtime 缓存，文件被改写后自动重载。"""
+    global _KB_CACHE
+    mtime = KB_PATH.stat().st_mtime_ns
+    if _KB_CACHE is None or _KB_CACHE[0] != mtime:
+        with open(KB_PATH, encoding="utf-8") as f:
+            _KB_CACHE = (mtime, json.load(f)["kb"])
+    return _KB_CACHE[1]
 
 
 def bigrams(text: str) -> set[str]:

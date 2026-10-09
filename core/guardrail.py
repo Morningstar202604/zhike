@@ -14,7 +14,15 @@ _BUILTIN_PATTERNS = [
 ]
 
 
+_CACHE: tuple[int, list[tuple[re.Pattern, str]]] | None = None
+
+
 def _active_rules() -> list[tuple[re.Pattern, str]]:
+    """编译后的注入规则；按 DB 规则版本号缓存，规则 CRUD 后自动失效（多进程安全）。"""
+    global _CACHE
+    version = store.rules_version()
+    if _CACHE is not None and _CACHE[0] == version:
+        return _CACHE[1]
     patterns = []
     for r in store.list_injection_rules(enabled_only=True):
         try:
@@ -24,6 +32,7 @@ def _active_rules() -> list[tuple[re.Pattern, str]]:
     if not patterns:
         for expr in _BUILTIN_PATTERNS:
             patterns.append((re.compile(expr, re.IGNORECASE), "block"))
+    _CACHE = (version, patterns)
     return patterns
 
 
