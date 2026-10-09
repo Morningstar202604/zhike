@@ -4,10 +4,10 @@ import {
   SlidersHorizontal, BookOpen, BarChart3, Brain, ShieldAlert,
   Save, Plus, Pencil, Trash2, X, Activity, Inbox, MessageSquare,
   FileText, Users, Search, Wrench, Zap, ChevronDown, ChevronUp,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Upload, Download,
 } from 'lucide-react'
 import {
-  useConfig, useUpdateConfig, useKb, useKbMutations, useTools, useToolMutations,
+  useConfig, useUpdateConfig, useKb, useKbMutations, useKbImport, exportKb, useTools, useToolMutations,
   useInjectionRules, useInjectionRuleMutations, useLlmTest, useLlmModels,
   useAdminOverview, useAdminMemory, useAdminInjection,
 } from './lib/queries'
@@ -499,8 +499,27 @@ function GuardrailPanel() {
 function KbPanel() {
   const { data: kbRes, isLoading } = useKb()
   const km = useKbMutations()
+  const kbIo = useKbImport()
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState<KbEntry | 'new' | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importReplace, setImportReplace] = useState(false)
+
+  const doImport = () => {
+    kbIo.mutate(
+      { text: importText, replace: importReplace },
+      {
+        onSuccess: (d) => {
+          alert(`导入成功：新增 ${d.added} 条，当前共 ${d.total} 条`)
+          setImporting(false)
+          setImportText('')
+          setImportReplace(false)
+        },
+        onError: (e) => alert((e as Error).message),
+      },
+    )
+  }
 
   if (isLoading) return <Spinner full label="加载知识库…" />
   const all = kbRes?.kb ?? []
@@ -517,6 +536,8 @@ function KbPanel() {
           <Search size={15} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
           <input style={{ paddingLeft: 40 }} placeholder="搜索 id / 标题 / 关键词…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
+        <button className="btn secondary sm" title="批量导入 Markdown" onClick={() => setImporting(true)}><Upload size={13} /> 导入</button>
+        <button className="btn secondary sm" title="导出全部条目为 Markdown" onClick={() => exportKb().catch((e) => alert((e as Error).message))}><Download size={13} /> 导出</button>
         <button className="btn" onClick={() => setEditing('new')}><Plus size={14} /> 新增条目</button>
       </div>
 
@@ -549,6 +570,48 @@ function KbPanel() {
             </div>
             <div className="drawer-body">
               <KbForm key={editing === 'new' ? 'new' : (editing as KbEntry).id} initial={editing === 'new' ? null : (editing as KbEntry)} onDone={() => setEditing(null)} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importing && (
+        <div className="drawer-mask" onClick={() => setImporting(false)}>
+          <div className="drawer" onClick={(ev) => ev.stopPropagation()}>
+            <div className="drawer-head">
+              <h3>批量导入知识库</h3>
+              <button className="btn ghost sm" onClick={() => setImporting(false)}><X size={14} /></button>
+            </div>
+            <div className="drawer-body">
+              <div className="d-field">
+                <label>支持的格式（自动识别）</label>
+                <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                  ① 每条以 <code>## 标题</code> 开头，其后为答案（可含空行）；② 空行分隔的块，首行=标题，其余=答案
+                </span>
+              </div>
+              <div className="d-field">
+                <label>粘贴文本，或选择 .md / .txt 文件</label>
+                <textarea
+                  rows={10}
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  placeholder={'## 退货政策\n签收后 7 天内支持无理由退货退款…\n\n## 发货时效\n付款后 48 小时内发出'}
+                />
+                <input type="file" accept=".md,.txt,text/plain,text/markdown" style={{ marginTop: 8 }} onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) f.text().then((t) => setImportText(t))
+                }} />
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <input type="checkbox" checked={importReplace} onChange={(e) => setImportReplace(e.target.checked)} />
+                <span className="text-xs" style={{ color: 'var(--danger)' }}>清空现有条目后导入（整库重建，谨慎使用）</span>
+              </label>
+              <div className="drawer-foot">
+                <button className="btn secondary" onClick={() => setImporting(false)}>取消</button>
+                <button className="btn" onClick={doImport} disabled={!importText.trim() || kbIo.isPending}>
+                  <Upload size={14} /> {kbIo.isPending ? '导入中…' : '开始导入'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
