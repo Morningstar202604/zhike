@@ -15,7 +15,7 @@ function baseHeaders(): Record<string, string> {
 }
 
 const http = {
-  get: async <T>(url: string): Promise<T> => (await fetch(url)).json() as Promise<T>,
+  get: async <T>(url: string): Promise<T> => (await fetch(url, { headers: baseHeaders() })).json() as Promise<T>,
   post: async <T>(url: string, body?: unknown): Promise<T> => {
     const r = await fetch(url, { method: 'POST', headers: baseHeaders(), body: body === undefined ? undefined : JSON.stringify(body) })
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'request failed')

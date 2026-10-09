@@ -101,6 +101,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             session_id TEXT,
             updated_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
         """
     )
     _seed_builtins(conn)
@@ -140,16 +144,37 @@ def _seed_builtins(conn: sqlite3.Connection) -> None:
             )
 
 
+_SCHEMA_READY: set[str] = set()
+
+
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(_db_path())
+    path = _db_path()
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    _ensure_schema(conn)
+    if path not in _SCHEMA_READY:
+        _ensure_schema(conn)
+        _SCHEMA_READY.add(path)
     try:
         yield conn
         conn.commit()
     finally:
         conn.close()
+
+
+def rules_version() -> int:
+    """注入规则版本号，存 DB 元表：多 worker 部署下各进程读同一信号，CRUD 即时生效。"""
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'rules_version'").fetchone()
+    return int(row["value"]) if row else 0
+
+
+def _bump_rules_version() -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('rules_version', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)"
+        )
 
 
 def init_db() -> None:
@@ -279,6 +304,26 @@ def set_channel_session(channel: str, session_id: str) -> None:
             "INSERT INTO channel_sessions (channel, session_id, updated_at) VALUES (?, ?, ?) "
             "ON CONFLICT(channel) DO UPDATE SET session_id = excluded.session_id, updated_at = excluded.updated_at",
             (channel, session_id, _now()),
+        )
+
+
+def claim_channel_session(channel: str, session_id: str) -> bool:
+    """原子认领渠道映射：INSERT OR IGNORE，channel 主键冲突即认领失败。并发安全的会话创建原语。"""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO channel_sessions (channel, session_id, updated_at) VALUES (?, ?, ?)",
+            (channel, session_id, _now()),
+        )
+    return cur.rowcount > 0
+
+
+def discard_session(session_id: str) -> None:
+    """删除零消息空会话（并发认领输家清理用）；一旦有消息则保留，绝不丢数据。"""
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM sessions WHERE id = ? "
+            "AND NOT EXISTS (SELECT 1 FROM messages WHERE messages.session_id = sessions.id)",
+            (session_id,),
         )
 
 
@@ -595,6 +640,7 @@ def add_injection_rule(expr: str, action: str = "block", enabled: bool = True) -
             (expr, action, 1 if enabled else 0, _now()),
         )
         rid = cur.lastrowid or 0
+    _bump_rules_version()
     return {"id": rid, "expr": expr, "action": action, "enabled": bool(enabled)}
 
 
@@ -616,10 +662,14 @@ def update_injection_rule(rule_id: int, expr: str | None = None,
         params.append(rule_id)
         with get_conn() as conn:
             conn.execute(f"UPDATE injection_rules SET {', '.join(sets)} WHERE id = ?", params)
+        _bump_rules_version()
     return get_injection_rule(rule_id)
 
 
 def delete_injection_rule(rule_id: int) -> bool:
     with get_conn() as conn:
         cur = conn.execute("DELETE FROM injection_rules WHERE id = ?", (rule_id,))
-    return cur.rowcount > 0
+    changed = cur.rowcount > 0
+    if changed:
+        _bump_rules_version()
+    return changed

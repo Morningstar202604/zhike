@@ -24,5 +24,15 @@ def resolve_session(channel: str, visitor_id: str) -> str:
                 pass
     sid = uuid.uuid4().hex
     store.create_session(sid, visitor_id)
+    if store.claim_channel_session(channel, sid):
+        return sid
+    # 并发输家：同渠道已被认领 → 复用赢家的会话，删掉自己刚建的空会话防孤儿
+    winner = store.get_channel_session(channel)
+    winner_sid = winner["session_id"] if winner else ""
+    wsess = store.get_session(winner_sid) if winner_sid else None
+    if wsess and wsess["status"] == "ongoing":
+        store.discard_session(sid)
+        return winner_sid
+    # 极端窗口（赢家映射指向异常会话）：覆盖映射，用自己的新会话保证可用性
     store.set_channel_session(channel, sid)
     return sid

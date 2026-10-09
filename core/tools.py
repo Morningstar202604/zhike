@@ -28,12 +28,18 @@ def tool_initiate_refund(order_id: str, reason: str = "") -> dict:
 
 def tool_lookup_policy(topic: str) -> dict:
     hits = retrieval.retrieve(topic, top_k=2)
+    entries = [
+        {"id": h["id"], "title": h["title"], "answer": h["answer"]} for h in hits
+    ]
+    if entries:
+        note = "；".join(f"【{e['title']}】{e['answer']}（依据 {e['id']}）" for e in entries)
+    else:
+        note = f"未找到与「{topic}」相关的政策条款，已为您转人工核实。"
     return {
         "topic": topic,
         "found": bool(hits),
-        "entries": [
-            {"id": h["id"], "title": h["title"], "answer": h["answer"]} for h in hits
-        ],
+        "entries": entries,
+        "note": note,
     }
 
 

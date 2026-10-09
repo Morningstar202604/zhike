@@ -6,6 +6,16 @@ const coreHost = coreTarget.replace(/^http(s?):\/\//, '')
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          echarts: ['echarts/core', 'echarts/charts', 'echarts/components', 'echarts/renderers'],
+          vendor: ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query', 'zustand'],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     host: true,

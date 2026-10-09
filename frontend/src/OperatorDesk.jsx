@@ -54,8 +54,10 @@ export default function OperatorDesk() {
     }
   }, [])
 
-  // WS 实时接收新会话 / 状态变更（useWs 自动重连）
-  const { state: connState } = useWs('/ws/operator', (p) => {
+  // WS 实时接收新会话 / 状态变更（useWs 自动重连）；设置 ADMIN_TOKEN 后需带 token 鉴权
+  const adminToken = useAppStore((s) => s.adminToken)
+  const wsUrl = adminToken ? `/ws/operator?token=${encodeURIComponent(adminToken)}` : '/ws/operator'
+  const { state: connState } = useWs(wsUrl, (p) => {
     if (p.type === 'new_pending' || p.type === 'session_updated') queues.refetch()
   })
 
