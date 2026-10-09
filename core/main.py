@@ -63,6 +63,13 @@ def require_admin(x_admin_token: str | None = Header(default=None, alias="X-Admi
         raise HTTPException(401, "需要管理员令牌")
 
 
+def require_channel(x_channel_token: str | None = Header(default=None, alias="X-Channel-Token")):
+    """渠道端点共享密钥：设置 CHANNEL_TOKEN 后，伪造渠道消息需持有令牌（防公网注入/刷 LLM 成本）。"""
+    token = os.environ.get("CHANNEL_TOKEN", "").strip()
+    if token and x_channel_token != token:
+        raise HTTPException(401, "需要渠道令牌")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     store.init_db()
@@ -73,6 +80,10 @@ async def lifespan(app: FastAPI):
     if not security.admin_token():
         logger.warning(
             "ADMIN_TOKEN 未设置：操作员/管理接口无需令牌（开发模式）。生产部署必须设置 ADMIN_TOKEN。"
+        )
+    if not os.environ.get("CHANNEL_TOKEN", "").strip():
+        logger.warning(
+            "CHANNEL_TOKEN 未设置：/v1/ingest 与网关心跳为开放端点（开发模式）。核心服务暴露公网时必须设置。"
         )
     app.state.limiter = security.RateLimiter()
     yield
@@ -172,7 +183,7 @@ def create_app() -> FastAPI:
             memory_mod.capture(text, visitor_key, config.get_config())
         return reply, msg_id, ticket_id
 
-    @app.post("/v1/ingest")
+    @app.post("/v1/ingest", dependencies=[Depends(require_channel)])
     async def ingest(body: IngestIn):
         text = (body.text or "").strip()
         if not text and not body.image_b64:
@@ -331,7 +342,7 @@ def create_app() -> FastAPI:
             "dns_overrides": net.status(),
         }
 
-    @app.get("/api/config")
+    @app.get("/api/config", dependencies=[Depends(require_admin)])
     def get_config():
         import copy as _copy
 
@@ -399,6 +410,8 @@ def create_app() -> FastAPI:
     def _check_rule(body: RuleIn):
         import re as _re
 
+        if len(body.expr) > 300:
+            raise HTTPException(400, "正则表达式过长（≤300 字符，防回溯型正则拖慢消息管线）")
         try:
             _re.compile(body.expr, _re.IGNORECASE)
         except _re.error as e:
@@ -484,7 +497,7 @@ def create_app() -> FastAPI:
     def admin_stats():
         return store.admin_stats()
 
-    @app.post("/v1/gateway/heartbeat")
+    @app.post("/v1/gateway/heartbeat", dependencies=[Depends(require_channel)])
     def gateway_heartbeat(body: HeartbeatIn):
         app.state.gateway_channels[body.gateway] = {
             "status": body.status,
@@ -536,7 +549,7 @@ def create_app() -> FastAPI:
     def admin_memory():
         return {"entries": store.all_memory()}
 
-    @app.get("/api/debug/conn")
+    @app.get("/api/debug/conn", dependencies=[Depends(require_admin)])
     def debug_conn():
         return {
             "visitor_sessions": list(hub.visitor_conns.keys()),
@@ -545,7 +558,11 @@ def create_app() -> FastAPI:
         }
 
     @app.websocket("/ws/operator")
-    async def ws_operator(ws: WebSocket):
+    async def ws_operator(ws: WebSocket, token: str | None = None):
+        # 管理端实时推送：设置 ADMIN_TOKEN 后需 ?token= 校验，防外人旁听坐席队列
+        if security.admin_token() and token != security.admin_token():
+            await ws.close(code=4401)
+            return
         await hub.connect_operator(ws)
 
     @app.websocket("/ws/{sid}")
@@ -560,6 +577,7 @@ def create_app() -> FastAPI:
 
         index_html = os.path.join(static_dir, "index.html")
         assets_dir = os.path.join(static_dir, "assets")
+        static_root = os.path.realpath(static_dir)
         if os.path.isdir(assets_dir):
             app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
@@ -567,8 +585,9 @@ def create_app() -> FastAPI:
         def spa_fallback(full_path: str):
             if full_path.startswith(("api/", "v1/", "ws/", "docs", "openapi.json", "healthz")):
                 raise HTTPException(404, "not found")
-            candidate = os.path.join(static_dir, full_path)
-            if full_path and os.path.isfile(candidate):
+            # realpath 包含性校验：拒绝 ../ 逃出静态目录（防路径穿越读取任意文件）
+            candidate = os.path.realpath(os.path.join(static_dir, full_path))
+            if full_path and candidate.startswith(static_root + os.sep) and os.path.isfile(candidate):
                 return FileResponse(candidate)
             return FileResponse(index_html)
 
