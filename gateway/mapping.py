@@ -58,7 +58,9 @@ def from_onebot_v11(event: dict) -> GatewayEvent | None:
     if message_type not in ("group", "private"):
         return None
     text, at_self, image_url = _extract_text(event.get("message"), self_id)
-    if message_type == "group" and not at_self:
+    # 适配器已把命中的 @ 段从 message 中剥离，群聊判定需结合事件级 to_me（matcher 已按 to_me 过滤）
+    at_me = at_self or bool(event.get("to_me"))
+    if message_type == "group" and not at_me:
         return None
     text = text.strip()
     if not text:

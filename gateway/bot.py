@@ -83,6 +83,8 @@ async def handle(event: MessageEvent):
             "message": segs,
             "sender": {"nickname": (event.sender.nickname if event.sender else "") or ""},
             "message_id": event.message_id,
+            # 适配器已剥离命中的 @ 段，群聊判定依赖事件级 to_me
+            "to_me": bool(getattr(event, "to_me", False)),
         }
     )
     if ge is None:

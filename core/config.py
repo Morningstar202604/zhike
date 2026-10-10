@@ -18,6 +18,7 @@ def _defaults() -> dict:
         "retrieval": {
             "kb_top_k": int(os.environ.get("USER_KB_TOP_K", "4")),
             "min_overlap": 0.08,
+            "embedding": os.environ.get("USER_KB_EMBEDDING", "auto"),
         },
         "context": {
         "history_turns": 10,

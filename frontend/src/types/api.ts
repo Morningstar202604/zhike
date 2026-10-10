@@ -9,7 +9,7 @@ export interface AgentConfig {
     api_key?: string
     key_source?: string
   }
-  retrieval: { kb_top_k: number; min_overlap: number }
+  retrieval: { kb_top_k: number; min_overlap: number; embedding?: 'auto' | 'off' }
   context: {
     history_turns: number
     char_budget: number
