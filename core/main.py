@@ -7,7 +7,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -178,6 +178,9 @@ def create_app() -> FastAPI:
     class KbImportIn(BaseModel):
         text: str
         replace: bool = False
+
+    class KbTestIn(BaseModel):
+        query: str
 
     class IngestIn(BaseModel):
         channel_type: str
@@ -600,11 +603,7 @@ def create_app() -> FastAPI:
         if not blocks:
             raise HTTPException(400, "未能解析出任何条目：用「## 标题」开头，或用空行分隔「标题/正文」块")
         items = [] if body.replace else retrieval.load_kb()
-        base = 100
-        for e in items:
-            m = re.match(r"^KB(\d+)$", e["id"])
-            if m:
-                base = max(base, int(m.group(1)))
+        base = _next_kb_base(items)
         for title, answer in blocks:
             base += 1
             items.append({
@@ -616,6 +615,70 @@ def create_app() -> FastAPI:
             })
         _save_kb(items)
         return {"added": len(blocks), "total": len(items), "kb": items}
+
+    @app.post("/api/kb/import/document", dependencies=[Depends(require_admin)])
+    async def import_kb_document(file: UploadFile):
+        """文档导入管道：PDF/Word/Markdown → 解析 → 标题/段落分块 → KB 条目（id 续号，追加语义）。
+
+        PDF/DOCX 解析为可选依赖（requirements-docs.txt），缺失时 400 给出安装提示。
+        """
+        from core import docparse
+
+        data = await file.read()
+        if len(data) > 10 * 1024 * 1024:
+            raise HTTPException(400, "文档超过 10MB 上限")
+        fname = file.filename or "doc"
+        try:
+            text = docparse.extract_text(fname, data)
+            blocks = docparse.chunk_document(text, fname.rsplit(".", 1)[0])
+        except RuntimeError as e:
+            raise HTTPException(400, str(e))
+        if not blocks:
+            raise HTTPException(400, "未能从文档中解析出内容")
+        items = retrieval.load_kb()
+        base = _next_kb_base(items)
+        for title, chunk in blocks:
+            base += 1
+            items.append({
+                "id": f"KB{base}",
+                "title": title[:80],
+                "text": f"{title} {chunk}"[:300],
+                "answer": chunk,
+                "tags": ["文档"],
+            })
+        _save_kb(items)
+        return {"added": len(blocks), "total": len(items), "file": fname}
+
+    @app.post("/api/kb/test", dependencies=[Depends(require_admin)])
+    def kb_test(body: KbTestIn):
+        """试召回：按当前生效配置（top-K/门槛/向量开关）跑一次检索，返回命中与分数。"""
+        q = (body.query or "").strip()
+        if not q:
+            raise HTTPException(400, "empty query")
+        cfg = config.get_config()
+        top_k = cfg.get("retrieval", {}).get("kb_top_k", 4)
+        min_overlap = cfg.get("retrieval", {}).get("min_overlap", 0.0)
+        emb_flag = cfg.get("retrieval", {}).get("embedding", "auto")
+        use_emb = None if emb_flag == "auto" else (emb_flag == "on")
+        hits = retrieval.retrieve_scored(q, top_k, min_overlap, use_embedding=use_emb)
+        return {
+            "query": q,
+            "top_k": top_k,
+            "min_overlap": min_overlap,
+            "embedding": emb_flag,
+            "hits": [
+                {"id": e["id"], "title": e["title"], "score": round(s, 3), "answer": (e["answer"] or "")[:120]}
+                for s, e in hits
+            ],
+        }
+
+    def _next_kb_base(items: list[dict]) -> int:
+        base = 100
+        for e in items:
+            m = re.match(r"^KB(\d+)$", e["id"])
+            if m:
+                base = max(base, int(m.group(1)))
+        return base
 
     @app.get("/api/kb/export", dependencies=[Depends(require_admin)])
     def export_kb():

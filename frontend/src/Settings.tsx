@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   SlidersHorizontal, BookOpen, BarChart3, Brain, ShieldAlert,
@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, Upload, Download,
 } from 'lucide-react'
 import {
-  useConfig, useUpdateConfig, useKb, useKbMutations, useKbImport, exportKb, useTools, useToolMutations,
+  useConfig, useUpdateConfig, useKb, useKbMutations, useKbImport, useKbTest, useKbDocImport, exportKb, useTools, useToolMutations,
   useInjectionRules, useInjectionRuleMutations, useLlmTest, useLlmModels,
   useAdminOverview, useAdminMemory, useAdminInjection,
 } from './lib/queries'
@@ -528,11 +528,16 @@ function KbPanel() {
   const { data: kbRes, isLoading } = useKb()
   const km = useKbMutations()
   const kbIo = useKbImport()
+  const docIo = useKbDocImport()
+  const kbTest = useKbTest()
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [query, setQuery] = useState('')
+  const [recallQuery, setRecallQuery] = useState('')
   const [editing, setEditing] = useState<KbEntry | 'new' | null>(null)
   const [importing, setImporting] = useState(false)
   const [importText, setImportText] = useState('')
   const [importReplace, setImportReplace] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const doImport = () => {
     kbIo.mutate(
@@ -575,9 +580,63 @@ function KbPanel() {
           </span>
         )}
         <button className="btn secondary sm" title="批量导入 Markdown" onClick={() => setImporting(true)}><Upload size={13} /> 导入</button>
+        <button
+          className="btn secondary sm"
+          title="上传 PDF / Word / Markdown / TXT，自动解析分块入库"
+          onClick={() => fileRef.current?.click()}
+          disabled={docIo.isPending}
+        >
+          <Upload size={13} /> {docIo.isPending ? '解析中…' : '传文档'}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".md,.markdown,.txt,.pdf,.docx"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (!f) return
+            docIo.mutate(f, {
+              onSuccess: (d: { file: string; added: number; total: number }) => alert(`导入成功：${d.file} 拆出 ${d.added} 条，当前共 ${d.total} 条`),
+              onError: (err: unknown) => alert((err as Error).message),
+            })
+            e.target.value = ''
+          }}
+        />
         <button className="btn secondary sm" title="导出全部条目为 Markdown" onClick={() => exportKb().catch((e) => alert((e as Error).message))}><Download size={13} /> 导出</button>
         <button className="btn" onClick={() => setEditing('new')}><Plus size={14} /> 新增条目</button>
       </div>
+
+      {/* 试召回：按当前生效配置跑一次检索，调库调参的试错工具 */}
+      <div className="kb-search" style={{ marginBottom: 10 }}>
+        <input
+          placeholder="试召回：输入访客可能的问法，看命中条目与分数…"
+          value={recallQuery}
+          onChange={(e) => setRecallQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && recallQuery.trim()) kbTest.mutate(recallQuery.trim()) }}
+        />
+        <button className="btn secondary sm" disabled={!recallQuery.trim() || kbTest.isPending} onClick={() => kbTest.mutate(recallQuery.trim())}>
+          <Search size={13} /> {kbTest.isPending ? '检索中…' : '试召回'}
+        </button>
+      </div>
+      {kbTest.isError && (
+        <div style={{ color: 'var(--danger)', marginBottom: 12, fontSize: 13 }}>{(kbTest.error as Error).message}</div>
+      )}
+      {kbTest.data && (
+        <div style={{ marginBottom: 12, fontSize: 13 }}>
+          <div style={{ color: 'var(--muted)', marginBottom: 6 }}>
+            top-K {kbTest.data.top_k} · 门槛 {kbTest.data.min_overlap} · 向量 {kbTest.data.embedding}
+          </div>
+          {kbTest.data.hits.length === 0 && <div style={{ color: 'var(--muted)' }}>无命中（会走兜底转人工）</div>}
+          {kbTest.data.hits.map((h: { id: string; title: string; score: number; answer: string }, i: number) => (
+            <div key={h.id} className="f-row" style={{ justifyContent: 'flex-start', gap: 8, padding: '4px 0' }}>
+              <span className={`badge ${i === 0 && h.score >= 0.3 ? 'ok' : 'info'}`}>{h.score.toFixed(2)}</span>
+              <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{h.id}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h.answer}>{h.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {kb.length === 0 && <EmptyState icon={<BookOpen size={22} />} title="没有匹配的知识库条目" desc="调整搜索词或新增一条" />}
 
