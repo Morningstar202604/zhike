@@ -27,7 +27,7 @@ export interface AgentConfig {
     visit_greeting: boolean
   }
   tools: Record<string, boolean>
-  multimodal: { enable: boolean }
+  multimodal: { enable: boolean; vision_model?: string }
   guardrail: { injection_block: boolean }
   engine: { mode: 'rule' | 'llm' | 'auto' }
   escalation: {
