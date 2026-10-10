@@ -21,17 +21,28 @@ def _creds() -> tuple[str, str, str, str]:
     return key, base, model, source
 
 
-async def react(query: str, ctx: dict, cfg: dict) -> dict | None:
-    llm_cfg = cfg.get("llm", {})
-    if not llm_cfg.get("has_key"):
-        return None
-    api_key = llm_cfg.get("api_key") or ""
-    if not api_key:
-        return None
-    base = (llm_cfg.get("base_url") or "").rstrip("/")
-    if not base:
-        return None
+def _data_url(b64: str) -> str:
+    """裸 base64 → data URL：按魔数识别常见图片 MIME（OpenAI 多模态内容格式的通用做法）。"""
+    head = (b64 or "")[:16].lstrip()
+    if head.startswith("/9j/"):
+        mime = "image/jpeg"
+    elif head.startswith("iVBORw0KGgo"):
+        mime = "image/png"
+    elif head.startswith("R0lGOD"):
+        mime = "image/gif"
+    elif head.startswith("UklGR"):
+        mime = "image/webp"
+    else:
+        mime = "image/jpeg"
+    return f"data:{mime};base64,{b64}"
 
+
+def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tuple[list[dict], str]:
+    """组装 system+history+user 消息，返回 (messages, 所用模型名)。
+
+    图片 + multimodal.vision_model 时按 OpenAI 多模态 content 数组（业界统一范式）改用视觉模型。
+    """
+    llm_cfg = cfg.get("llm", {})
     react_steps = cfg.get("escalation", {}).get("react_steps", 3)
     budget = cfg.get("context", {}).get("char_budget", 2400)
     modules_on = ctx["modules_on"]
@@ -62,10 +73,36 @@ async def react(query: str, ctx: dict, cfg: dict) -> dict | None:
     for m in ctx["history"]:
         role = "assistant" if m.get("role") in ("agent", "operator") else "user"
         messages.append({"role": role, "content": m.get("content")})
-    messages.append({"role": "user", "content": query})
 
+    vision_model = (cfg.get("multimodal", {}) or {}).get("vision_model", "") or ""
+    if image_b64 and vision_model:
+        img = image_b64
+        if img.startswith("data:"):
+            img = img.split(",", 1)[-1]
+        if len(img) <= 8_000_000:  # ~6MB 载荷上限，超大图拒走视觉
+            messages.append({"role": "user", "content": [
+                {"type": "text", "text": query or "请看图回答用户的问题。"},
+                {"type": "image_url", "image_url": {"url": _data_url(img)}},
+            ]})
+            return messages, vision_model
+    messages.append({"role": "user", "content": query or "请看图回答用户的问题。"})
+    return messages, llm_cfg.get("model", "deepseek-chat")
+
+
+async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict | None:
+    llm_cfg = cfg.get("llm", {})
+    if not llm_cfg.get("has_key"):
+        return None
+    api_key = llm_cfg.get("api_key") or ""
+    if not api_key:
+        return None
+    base = (llm_cfg.get("base_url") or "").rstrip("/")
+    if not base:
+        return None
+
+    messages, model = _build_messages(query, ctx, cfg, image_b64)
     payload = {
-        "model": llm_cfg.get("model", "deepseek-chat"),
+        "model": model,
         "messages": messages,
         "temperature": llm_cfg.get("temperature", 0.2),
         "top_p": llm_cfg.get("top_p", 1.0),
@@ -92,6 +129,128 @@ async def react(query: str, ctx: dict, cfg: dict) -> dict | None:
         lg.warning("llm request failed: %s %s", type(e).__name__, str(e)[:120])
         return None
     return _parse_llm_answer(raw)
+
+
+class _AnswerStreamer:
+    """字符级状态机：从 LLM 增量输出中抽取 answer 字段值；非 JSON（prose）输出自动直通。"""
+
+    def __init__(self):
+        self.mode = "detect"   # detect | json | prose
+        self.buf = ""          # json 模式：等待 '"answer":"' 出现
+        self.in_str = False    # 已进入 answer 字符串
+        self.esc = ""          # 转义等待态（"" | "\\" | "u"）
+        self.hexbuf = ""
+        self.done = False
+
+    def feed(self, piece: str) -> list[str]:
+        out: list[str] = []
+        for ch in piece:
+            if self.mode == "detect":
+                if ch.isspace():
+                    continue
+                self.mode = "prose" if ch != "{" else "json"
+                if self.mode == "prose":
+                    out.append(ch)
+                continue
+            if self.mode == "prose":
+                out.append(ch)
+                continue
+            if self.done:
+                continue
+            if not self.in_str:
+                self.buf += ch
+                if len(self.buf) > 512:
+                    self.buf = self.buf[-64:]
+                m = re.search(r'"answer"\s*:\s*"', self.buf)
+                if m:
+                    self.in_str = True
+                    self.buf = ""
+                continue
+            if self.esc == "\\":
+                self.esc = ""
+                mapping = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f"}
+                if ch in mapping:
+                    out.append(mapping[ch])
+                elif ch == "u":
+                    self.esc = "u"
+                    self.hexbuf = ""
+                else:
+                    out.append(ch)
+                continue
+            if self.esc == "u":
+                self.hexbuf += ch
+                if len(self.hexbuf) == 4:
+                    try:
+                        out.append(chr(int(self.hexbuf, 16)))
+                    except ValueError:
+                        pass
+                    self.esc = ""
+                continue
+            if ch == "\\":
+                self.esc = "\\"
+                continue
+            if ch == '"':
+                self.done = True
+                continue
+            out.append(ch)
+        return out
+
+
+async def react_stream(query: str, ctx: dict, cfg: dict, image_b64: str = ""):
+    """流式 ReAct（OpenAI SSE 流式范式）。产出事件字典：
+    {"type": "delta", "text": str}   answer 字段增量片段（或 prose 原文），仅供前端打字机呈现
+    {"type": "final", "data": dict}  完整结构化结果（同 react() 返回值），权威终态
+    {"type": "error", "error": str}  请求失败，调用方应走规则降级
+    """
+    llm_cfg = cfg.get("llm", {})
+    api_key = llm_cfg.get("api_key") or ""
+    base = (llm_cfg.get("base_url") or "").rstrip("/")
+    if not llm_cfg.get("has_key") or not api_key or not base:
+        yield {"type": "error", "error": "llm not configured"}
+        return
+    messages, model = _build_messages(query, ctx, cfg, image_b64)
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": llm_cfg.get("temperature", 0.2),
+        "top_p": llm_cfg.get("top_p", 1.0),
+        "max_tokens": llm_cfg.get("max_tokens", 512),
+        "stream": True,
+    }
+    scanner = _AnswerStreamer()
+    buf = ""
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            async with client.stream(
+                "POST", f"{base}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"}, json=payload,
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    chunk = line[5:].strip()
+                    if chunk == "[DONE]":
+                        break
+                    try:
+                        delta = json.loads(chunk)["choices"][0].get("delta", {}) or {}
+                    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                        continue
+                    piece = delta.get("content")
+                    if piece:
+                        buf += piece
+                        for t in scanner.feed(piece):
+                            if t:
+                                yield {"type": "delta", "text": t}
+    except (httpx.HTTPError, ValueError) as e:
+        lg.warning("llm stream failed: %s %s", type(e).__name__, str(e)[:120])
+        yield {"type": "error", "error": f"{type(e).__name__}: {e}"}
+        return
+    data = _parse_llm_answer(buf)
+    if data is None:
+        yield {"type": "error", "error": "empty llm answer"}
+        return
+    yield {"type": "final", "data": data}
 
 
 def _parse_llm_answer(raw: str) -> dict | None:

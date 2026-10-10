@@ -1,0 +1,4 @@
+# 可选：向量语义检索（BGE 中文小模型，CPU 可跑）
+# 公益 1G 内存部署建议不装，用默认 bigram 即可
+sentence-transformers>=3.0
+numpy>=1.26

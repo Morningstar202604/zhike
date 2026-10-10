@@ -43,9 +43,20 @@ QQ 机器人需要 7×24 在线，先说清楚物理规律：**"完全免费 + �
 USER_LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 USER_LLM_MODEL=glm-4-flash
 USER_LLM_API_KEY=（open.bigmodel.cn 注册即送，Flash 档 0 元调用）
+# 可选：看图（多模态）。配了视觉模型名，用户发图就走 LLM 看图，不配则图片转人工
+USER_VISION_MODEL=glm-4v-flash
 ```
 
 不配 Key 也行：规则+检索模式永远可用（免费路径的兜底）。
+
+### 可选增强（都不影响默认可用性）
+
+```bash
+# 向量语义检索（BGE 中文小模型，CPU 可跑；1G 内存小机别装，用默认字面检索）
+pip install -r requirements-embedding.txt
+```
+
+环境变量：`USER_VISION_MODEL`（看图，如 `glm-4v-flash`）；检索开关在管理配置 `retrieval.embedding`（auto/off）。
 
 ## 1. 准备清单
 

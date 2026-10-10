@@ -68,7 +68,9 @@ def build_context(query: str, history: list[dict], cfg: dict, visitor_id: str) -
     modules_on = ctx_cfg.get("modules", {})
     used: dict = {}
 
-    hits = retrieval.retrieve_scored(query, top_k, min_overlap) if modules_on.get("kb", True) else []
+    emb_flag = cfg.get("retrieval", {}).get("embedding", "auto")
+    use_emb = None if emb_flag == "auto" else (emb_flag == "on")
+    hits = retrieval.retrieve_scored(query, top_k, min_overlap, use_embedding=use_emb) if modules_on.get("kb", True) else []
     kb_block = "\n".join(f"- [{h['id']}] {h['title']}: {h['answer']}" for _, h in hits) if hits else "（无相关条目）"
     used["kb"] = {"enabled": bool(modules_on.get("kb", True)), "hits": [e["id"] for _, e in hits]}
 
@@ -147,10 +149,15 @@ def _rule_react(query: str, ctx: dict, cfg: dict) -> AgentReply:
     )
 
 
-async def _llm_answer(query: str, ctx: dict, cfg: dict) -> AgentReply | None:
-    data = await llm.react(query, ctx, cfg)
+async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> AgentReply | None:
+    data = await llm.react(query, ctx, cfg, image_b64)
     if data is None:
         return None
+    return _make_llm_reply(data, ctx, cfg)
+
+
+def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
+    """LLM ReAct 结果 → AgentReply（含工具执行与低置信度兜底转人工）；run() 与 run_stream() 共用。"""
     tools = ctx["tools"]
     tool_name = data.get("tool")
     tool_result = None
@@ -185,7 +192,8 @@ async def _llm_answer(query: str, ctx: dict, cfg: dict) -> AgentReply | None:
     return answer
 
 
-async def run(message: ChannelMessage, history: list[dict], visitor_key: str) -> AgentReply:
+def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
+    """run()/run_stream() 公共前置：截断、上下文、护栏/转人工/图片规则拦截。拦截时直接返回 AgentReply。"""
     cfg = config.get_config()
     query = (message.text or "").strip()
     max_len = cfg.get("escalation", {}).get("max_message_len", 1000)
@@ -216,7 +224,9 @@ async def run(message: ChannelMessage, history: list[dict], visitor_key: str) ->
         )
 
     if message.image_b64 and cfg.get("multimodal", {}).get("enable", True):
-        if not cfg.get("llm", {}).get("has_key", False):
+        # 配了视觉模型且有 Key → 交给 LLM 看图；否则规则模式只能转人工
+        vision_ready = bool((cfg.get("multimodal", {}) or {}).get("vision_model")) and cfg.get("llm", {}).get("has_key", False)
+        if not vision_ready:
             return AgentReply(
                 text="已收到图片，当前为规则模式暂无法理解图片内容，正在为您转接人工坐席查看。",
                 confidence=0.3,
@@ -226,12 +236,20 @@ async def run(message: ChannelMessage, history: list[dict], visitor_key: str) ->
                 ctx_used=ctx["used"],
                 mode="rule_react",
             )
+    return cfg, query, ctx
+
+
+async def run(message: ChannelMessage, history: list[dict], visitor_key: str) -> AgentReply:
+    prepared = _prepare(message, history, visitor_key)
+    if isinstance(prepared, AgentReply):
+        return prepared
+    cfg, query, ctx = prepared
 
     mode = cfg.get("engine", {}).get("mode", "auto")
     llm_reply = None
     if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
         try:
-            llm_reply = await _llm_answer(query, ctx, cfg)
+            llm_reply = await _llm_answer(query, ctx, cfg, image_b64=message.image_b64)
         except Exception:  # aqg: top-level boundary
             llm_reply = None
         if llm_reply is None and mode == "llm":
@@ -241,3 +259,40 @@ async def run(message: ChannelMessage, history: list[dict], visitor_key: str) ->
     if llm_reply:
         return llm_reply
     return _rule_react(query, ctx, cfg)
+
+
+async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: str):
+    """流式管线：产出 ("delta", str) 增量与 ("final", AgentReply) 终态。
+
+    delta 仅供打字机呈现；final.text 为权威内容（可能因工具调用/降级与流式片段不同，消费方须以终态替换）。
+    """
+    prepared = _prepare(message, history, visitor_key)
+    if isinstance(prepared, AgentReply):
+        yield ("delta", prepared.text)
+        yield ("final", prepared)
+        return
+    cfg, query, ctx = prepared
+
+    mode = cfg.get("engine", {}).get("mode", "auto")
+    final: AgentReply | None = None
+    if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
+        data = None
+        try:
+            async for ev in llm.react_stream(query, ctx, cfg, message.image_b64):
+                if ev["type"] == "delta":
+                    yield ("delta", ev["text"])
+                elif ev["type"] == "final":
+                    data = ev["data"]
+                    break
+                elif ev["type"] == "error":
+                    break
+        except Exception:  # aqg: top-level boundary
+            data = None
+        if data is not None:
+            final = _make_llm_reply(data, ctx, cfg)
+    if final is None:
+        final = _rule_react(query, ctx, cfg)
+        if mode == "llm" and cfg.get("llm", {}).get("has_key"):
+            final.mode = "rule_fallback"
+    yield ("delta", final.text)
+    yield ("final", final)

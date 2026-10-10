@@ -257,9 +257,10 @@ export default function VisitorChat() {
       ...prev,
       { role: 'visitor', content: content || '（附图）', refs: [], ts: new Date().toISOString(), image: img || undefined },
     ])
-    setLoading(true)
-    try {
-      const data = await http.post(`/api/sessions/${sid}/messages`, { content, image: img || null })
+    // 流式气泡占位（delta 增量填充，done 事件权威替换）
+    setMessages((prev) => [...prev, { role: 'agent', content: '', refs: [], ts: new Date().toISOString(), streaming: true }])
+    let streamBuf = ''
+    const finalize = (data) => {
       const msg = {
         role: 'agent',
         content: data.text,
@@ -270,7 +271,7 @@ export default function VisitorChat() {
         ctx_used: data.ctx_used,
         message_id: data.message_id,
       }
-      setMessages((prev) => [...prev, msg])
+      setMessages((prev) => [...prev.slice(0, -1), msg])
       setLastMsg(msg)
       if (data.escalate) {
         setEscalated(true)
@@ -280,8 +281,61 @@ export default function VisitorChat() {
       if (data.tool_used === 'injection_guard') {
         setInjectMsg('检测到越权/提示词注入输入，已拦截并记录。请就具体问题咨询。')
       }
+    }
+    setLoading(true)
+    try {
+      const resp = await fetch(`/api/sessions/${sid}/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, image: img || null }),
+      })
+      if (resp.ok && resp.body) {
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
+        let done = false
+        for (;;) {
+          const { value, done: rdDone } = await reader.read()
+          if (rdDone) break
+          buf += decoder.decode(value, { stream: true })
+          const parts = buf.split('\n\n')
+          buf = parts.pop() || ''
+          for (const part of parts) {
+            const evLine = part.split('\n').find((l) => l.startsWith('event: '))
+            const dataLine = part.split('\n').find((l) => l.startsWith('data: '))
+            if (!evLine || !dataLine) continue
+            const ev = evLine.slice(7)
+            let payload
+            try { payload = JSON.parse(dataLine.slice(6)) } catch { continue }
+            if (ev === 'delta') {
+              streamBuf += payload.text
+              setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', content: streamBuf, refs: [], ts: new Date().toISOString(), streaming: true }])
+            } else if (ev === 'done') {
+              done = true
+              finalize(payload)
+            }
+          }
+        }
+        if (!done) {
+          if (streamBuf) {
+            // 流中断但有部分内容：以已有内容收尾，避免重复请求造成双条消息
+            finalize({ text: streamBuf, citations: [] })
+          } else {
+            throw new Error('stream unavailable')
+          }
+        }
+      } else {
+        throw new Error('stream unavailable')
+      }
     } catch (e) {
-      setError(e.message || '网络异常，请检查连接后重试')
+      // 回退：整段接口（流式不可用时依旧可用）
+      try {
+        const data = await http.post(`/api/sessions/${sid}/messages`, { content, image: img || null })
+        finalize(data)
+      } catch (e2) {
+        if (!streamBuf) setMessages((prev) => prev.slice(0, -1))
+        setError(e2.message || '网络异常，请检查连接后重试')
+      }
     } finally {
       setLoading(false)
     }
