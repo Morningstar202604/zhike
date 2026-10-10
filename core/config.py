@@ -9,6 +9,7 @@ def _defaults() -> dict:
         "llm": {
             "base_url": os.environ.get("USER_LLM_BASE_URL", "https://api.deepseek.com/v1"),
             "model": os.environ.get("USER_LLM_MODEL", "deepseek-chat"),
+            "fallback_model": os.environ.get("USER_LLM_FALLBACK_MODEL", ""),
             "temperature": 0.2,
             "top_p": 1.0,
             "max_tokens": 512,

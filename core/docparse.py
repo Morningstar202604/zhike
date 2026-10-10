@@ -21,8 +21,11 @@ def extract_text(filename: str, data: bytes) -> str:
             from pypdf import PdfReader
         except ImportError as e:
             raise RuntimeError("PDF 解析需要依赖：pip install -r requirements-docs.txt") from e
-        reader = PdfReader(io.BytesIO(data))
-        pages = [(page.extract_text() or "").strip() for page in reader.pages]
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            pages = [(page.extract_text() or "").strip() for page in reader.pages]
+        except Exception as e:  # 伪 PDF/加密/损坏：转可读 400，不让 pypdf 异常裸奔成 500
+            raise RuntimeError(f"PDF 解析失败：{type(e).__name__}: {str(e)[:80]}") from e
         return "\n\n".join(p for p in pages if p)
     if name.endswith(".docx"):
         try:
@@ -31,7 +34,10 @@ def extract_text(filename: str, data: bytes) -> str:
             import docx
         except ImportError as e:
             raise RuntimeError("DOCX 解析需要依赖：pip install -r requirements-docs.txt") from e
-        d = docx.Document(io.BytesIO(data))
+        try:
+            d = docx.Document(io.BytesIO(data))
+        except Exception as e:  # 伪 DOCX：转可读 400
+            raise RuntimeError(f"DOCX 解析失败：{type(e).__name__}: {str(e)[:80]}") from e
         lines = []
         for p in d.paragraphs:
             t = (p.text or "").strip()

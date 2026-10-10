@@ -89,6 +89,26 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
     return messages, llm_cfg.get("model", "deepseek-chat")
 
 
+async def _post_chat(base: str, api_key: str, payload: dict) -> str | None:
+    """单次 chat/completions 调用（含 4xx 时去掉 response_format 的重试）。失败返回 None。"""
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json=payload,
+        )
+        if resp.status_code in (400, 422):
+            retry = dict(payload)
+            retry.pop("response_format", None)
+            resp = await client.post(
+                f"{base}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=retry,
+            )
+        resp.raise_for_status()
+        return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+
+
 async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict | None:
     llm_cfg = cfg.get("llm", {})
     if not llm_cfg.get("has_key"):
@@ -109,24 +129,20 @@ async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict |
         "max_tokens": llm_cfg.get("max_tokens", 512),
     }
     payload["response_format"] = {"type": "json_object"}
+    raw = None
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-            if resp.status_code in (400, 422):
-                payload.pop("response_format", None)
-                resp = await client.post(
-                    f"{base}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json=payload,
-                )
-            resp.raise_for_status()
-            raw = (resp.json()["choices"][0]["message"]["content"] or "").strip()
+        raw = await _post_chat(base, api_key, payload)
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
         lg.warning("llm request failed: %s %s", type(e).__name__, str(e)[:120])
+    # 多模型备援：主模型失败且配了 fallback_model 时换模型重试一次
+    fallback = (llm_cfg.get("fallback_model", "") or "").strip()
+    if raw is None and fallback and fallback != payload["model"]:
+        lg.info("llm fallback model engaged: %s", fallback)
+        try:
+            raw = await _post_chat(base, api_key, {**payload, "model": fallback})
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
+            lg.warning("llm fallback failed: %s %s", type(e).__name__, str(e)[:120])
+    if raw is None:
         return None
     return _parse_llm_answer(raw)
 

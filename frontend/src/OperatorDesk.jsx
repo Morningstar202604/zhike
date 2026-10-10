@@ -196,6 +196,22 @@ export default function OperatorDesk() {
                   <div className="bubble">{m.content}</div>
                   <MsgMeta msg={m} />
                   {m.ts && <span className="msg-time">{formatTime(m.ts)}</span>}
+                  {(m.role === 'agent' || m.role === 'operator') && (
+                    <button
+                      className="btn secondary sm"
+                      style={{ marginTop: 4 }}
+                      title="把这条回复沉淀为知识库条目，下次同样问题自动回答"
+                      onClick={() => {
+                        const text = (m.content || '').trim()
+                        if (!text) return
+                        http.post('/api/kb/save-note', { text })
+                          .then((d) => alert(`已存入知识库：${d.entry.id}（共 ${d.total} 条）`))
+                          .catch((e) => alert(e.message || '保存失败'))
+                      }}
+                    >
+                      存为知识库
+                    </button>
+                  )}
                 </div>
               </div>
             ),

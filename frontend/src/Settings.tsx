@@ -217,6 +217,16 @@ function ParamsPanel({ cfg, upd }: { cfg: AgentConfig; upd: ReturnType<typeof us
         <Row label={`Max tokens · ${cfg.llm.max_tokens}`}>
           <input type="range" min="128" max="4096" step="128" value={cfg.llm.max_tokens} onChange={(e) => set('llm', 'max_tokens', parseInt(e.target.value, 10))} />
         </Row>
+        <Row label="备援模型">
+          <input
+            type="text"
+            title="主模型请求失败时自动换用（如 glm-4-flash ↔ deepseek-chat），留空不启用"
+            placeholder="如 glm-4-flash，留空=不启用"
+            value={cfg.llm.fallback_model ?? ''}
+            onChange={(e) => set('llm', 'fallback_model', e.target.value.trim())}
+            style={{ maxWidth: 260 }}
+          />
+        </Row>
       </Grp>
 
       <Grp id="retrieval" title="知识检索（RAG）">

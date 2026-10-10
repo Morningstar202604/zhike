@@ -197,6 +197,18 @@ export function useLlmModels() {
     mutationFn: () => http.get<{ configured: boolean; ok: boolean; models: string[]; count?: number; error?: string | null; base_url?: string; source?: string }>('/api/admin/llm-models'),
   })
 }
+export function useAdminReport() {
+  return useQuery({
+    queryKey: ['admin', 'report'],
+    queryFn: () => http.get<{
+      days: number
+      daily: { day: string; sessions: number; agent_replies: number; kb_hits: number; escalations: number }[]
+      totals: { sessions: number; agent_replies: number; kb_hits: number; escalations: number; kb_hit_rate: number | null; escalate_rate: number | null; csat: number | null; csat_n: number }
+    }>('/api/admin/report?days=7'),
+    refetchInterval: 60_000,
+  })
+}
+
 export function useAdminInjection() {
   return useQuery({ queryKey: qk.admin.injection, queryFn: () => http.get<{ entries: InjectionLogEntry[] }>('/api/admin/injection-log') })
 }

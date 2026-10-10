@@ -8,6 +8,7 @@ export interface AgentConfig {
     has_key: boolean
     api_key?: string
     key_source?: string
+    fallback_model?: string
   }
   retrieval: { kb_top_k: number; min_overlap: number; embedding?: 'auto' | 'off' }
   context: {

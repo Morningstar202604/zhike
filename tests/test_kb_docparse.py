@@ -1,7 +1,9 @@
 """回归：文档导入管道（docparse 解析/分块）+ 试召回端点。"""
+import json
+
 import pytest
 
-from core import docparse
+from core import docparse, retrieval
 
 
 def test_chunk_by_headings():
@@ -69,7 +71,16 @@ def test_kb_test_endpoint(client):
     assert r2.status_code == 400
 
 
-def test_kb_doc_import_markdown(client):
+def test_kb_doc_import_markdown(client, monkeypatch, tmp_path):
+    """导入测试必须用临时 KB，避免污染仓库真实知识库文件。"""
+    import pathlib
+
+    kb_file = tmp_path / "kb.json"
+    kb_file.write_text(json.dumps({"kb": [
+        {"id": "KB001", "title": "种子", "text": "种子", "answer": "种子条目", "tags": []},
+    ]}), encoding="utf-8")
+    monkeypatch.setattr(retrieval, "KB_PATH", kb_file)
+    retrieval._KB_CACHE = None
     md = "## 保修政策\n主机保修 1 年。\n\n## 配件\n配件保修 90 天。"
     r = client.post(
         "/api/kb/import/document",
@@ -78,7 +89,8 @@ def test_kb_doc_import_markdown(client):
     assert r.status_code == 200
     d = r.json()
     assert d["added"] == 2 and d["file"] == "售后手册.md"
-    entries = client.get("/api/kb").json()["kb"]
-    new = [e for e in entries if e["tags"] and "文档" in e["tags"]]
-    assert len(new) >= 2
+    entries = retrieval.load_kb()
+    new = [e for e in entries if e.get("tags") and "文档" in e["tags"]]
+    assert len(new) == 2
     assert all(e["id"].startswith("KB") for e in new)
+    retrieval._KB_CACHE = None
