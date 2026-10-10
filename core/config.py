@@ -48,6 +48,7 @@ def _defaults() -> dict:
     },
     "multimodal": {
         "enable": True,
+        "vision_model": os.environ.get("USER_VISION_MODEL", ""),
     },
     "guardrail": {
         "injection_block": True,

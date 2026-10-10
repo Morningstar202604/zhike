@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core import config, events_log, guardrail, llm, memory as memory_mod, net, pipeline, retrieval, security, sessions, store, tools as tools_mod
@@ -291,6 +292,67 @@ def create_app() -> FastAPI:
             "ctx_used": reply.ctx_used,
             "message_id": msg_id,
         }
+
+    def _sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    @app.post("/api/sessions/{sid}/chat/stream")
+    async def chat_stream(sid: str, body: MessageIn):
+        """访客流式问答（SSE 范式：delta 增量打字机 → done 权威终态，终态 text 为准）。"""
+        content = (body.content or "").strip()
+        if not content and not body.image:
+            raise HTTPException(400, "empty message")
+        sess = store.get_session(sid)
+        visitor_id = (sess or {}).get("visitor_id", "anonymous")
+        limiter: security.RateLimiter = app.state.limiter
+        if not limiter.allow(visitor_id):
+            raise HTTPException(429, "rate limited")
+        if not sess:
+            raise HTTPException(404, "session not found")
+
+        async def gen():
+            yield _sse("meta", {"session_id": sid})
+            ev.info(f"ingest(visitor stream) visitor={visitor_id} text={content[:60]}")
+            history = store.get_messages(sid)
+            store.add_message(sid, "visitor", content or "（附图）")
+            reply, msg_id, ticket_id = None, None, None
+            async for kind, payload in pipeline.run_stream(
+                pipeline.ChannelMessage(text=content, image_b64=body.image or ""),
+                history,
+                visitor_id,
+            ):
+                if kind == "delta":
+                    yield _sse("delta", {"text": payload})
+                else:
+                    reply = payload
+            msg_id = store.add_message(sid, "agent", reply.text, reply.citations)
+            if reply.escalate:
+                ticket_id = store.create_ticket(sid)
+                store.mark_escalated(sid, reply.escalate_reason)
+                ev.info(f"escalate session={sid} reason={reply.escalate_reason} ticket={ticket_id}")
+                await hub.broadcast_to_operators(
+                    {"type": "new_pending", "session_id": sid, "ticket_id": ticket_id, "reason": reply.escalate_reason}
+                )
+            if content:
+                store.set_memory(visitor_id, "last_topic", content[:50])
+                memory_mod.capture(content, visitor_id, config.get_config())
+            yield _sse("done", {
+                "role": "agent",
+                "text": reply.text,
+                "citations": reply.citations,
+                "confidence": reply.confidence,
+                "escalate": reply.escalate,
+                "escalate_reason": reply.escalate_reason,
+                "ticket_id": ticket_id,
+                "mode": reply.mode,
+                "tool_used": reply.tool_used,
+                "tool_result": reply.tool_result,
+                "memory_note": reply.memory_note,
+                "ctx_used": reply.ctx_used,
+                "message_id": msg_id,
+            })
+
+        return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.post("/api/sessions/{sid}/escalate")
     async def escalate(sid: str):
