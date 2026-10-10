@@ -31,6 +31,12 @@ const http = {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'request failed')
     return r.json() as Promise<T>
   },
+  postForm: async <T>(url: string, form: FormData): Promise<T> => {
+    const t = useAppStore.getState().adminToken
+    const r = await fetch(url, { method: 'POST', headers: t ? { 'X-Admin-Token': t } : {}, body: form })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'request failed')
+    return r.json() as Promise<T>
+  },
 }
 
 // ---- config ----
@@ -65,6 +71,25 @@ export function useKbImport() {
   return useMutation({
     mutationFn: (p: { text: string; replace: boolean }) =>
       http.post<{ added: number; total: number }>('/api/kb/import', p),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.kb }),
+  })
+}
+
+export function useKbTest() {
+  return useMutation({
+    mutationFn: (query: string) =>
+      http.post<{ query: string; top_k: number; min_overlap: number; embedding: string; hits: { id: string; title: string; score: number; answer: string }[] }>('/api/kb/test', { query }),
+  })
+}
+
+export function useKbDocImport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      return http.postForm<{ added: number; total: number; file: string }>('/api/kb/import/document', fd)
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.kb }),
   })
 }
