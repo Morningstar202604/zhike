@@ -4,9 +4,9 @@ import type { EChartsOption } from './lib/echarts'
 import {
   Inbox, MessageSquare, FileText, Users, BookOpen, ShieldAlert, Activity,
   Bot, Zap, Headset, Lock, RefreshCw, LayoutDashboard, CheckCircle2, AlertTriangle,
-  Radio, ScrollText, MessagesSquare,
+  Radio, ScrollText, MessagesSquare, BarChart3,
 } from 'lucide-react'
-import { useAdminOverview, useAdminStats, useAgentHealth, useAdminChannels, useConfig, useUpdateConfig } from './lib/queries'
+import { useAdminOverview, useAdminStats, useAdminReport, useAgentHealth, useAdminChannels, useConfig, useUpdateConfig } from './lib/queries'
 import type { ChannelStatus } from './types/api'
 import { useAppStore } from './store/appStore'
 import { StatCard, EmptyState, PageHead } from './ui'
@@ -21,6 +21,7 @@ export default function Dashboard() {
   const health = useAgentHealth()
   const overview = useAdminOverview()
   const stats = useAdminStats()
+  const report = useAdminReport()
   const channelsQ = useAdminChannels()
   const { data: cfgRes } = useConfig()
   const upd = useUpdateConfig()
@@ -64,6 +65,27 @@ export default function Dashboard() {
       name: '新会话', type: 'line', smooth: true, areaStyle: { opacity: 0.18 },
       data: st.sessions_by_day.map((s) => s.count), itemStyle: { color: PALETTE[4] },
     }],
+  } : undefined
+
+  const reportOption: EChartsOption | undefined = report.data ? {
+    tooltip: { trigger: 'axis' },
+    legend: { bottom: 0, textStyle: { color: 'rgba(128,128,145,.9)', fontSize: 11 } },
+    grid: { left: 36, right: 40, top: 16, bottom: 46 },
+    xAxis: { type: 'category', data: report.data.daily.map((d) => d.day.slice(5)), ...AXIS },
+    yAxis: [
+      { type: 'value', minInterval: 1, ...AXIS, splitLine: { lineStyle: { color: 'rgba(128,128,145,.15)' } } },
+      { type: 'value', ...AXIS, axisLabel: { formatter: '{value}%' }, splitLine: { show: false } },
+    ],
+    series: [
+      { name: '会话', type: 'bar', barMaxWidth: 14, data: report.data.daily.map((d) => d.sessions), itemStyle: { color: PALETTE[0] } },
+      { name: '机器人回复', type: 'bar', barMaxWidth: 14, data: report.data.daily.map((d) => d.agent_replies), itemStyle: { color: PALETTE[4] } },
+      { name: '升级', type: 'bar', barMaxWidth: 14, data: report.data.daily.map((d) => d.escalations), itemStyle: { color: PALETTE[3] } },
+      {
+        name: 'KB命中率', type: 'line', smooth: true, yAxisIndex: 1,
+        data: report.data.daily.map((d) => (d.agent_replies ? Math.round((d.kb_hits / d.agent_replies) * 100) : 0)),
+        itemStyle: { color: PALETTE[1] },
+      },
+    ],
   } : undefined
 
   const channelOption: EChartsOption | undefined = st && st.channels.length > 0 ? {
@@ -226,6 +248,9 @@ export default function Dashboard() {
           </ChartCard>
           <ChartCard title="近 7 天新会话" icon={<Activity size={15} />}>
             <EChart option={dayOption ?? emptyOpt} height={250} />
+          </ChartCard>
+          <ChartCard title="经营报表 · 近 7 天（会话/回复/升级 + KB 命中率）" icon={<BarChart3 size={15} />}>
+            <EChart option={reportOption ?? emptyOpt} height={250} />
           </ChartCard>
           <ChartCard title="渠道分布" icon={<Bot size={15} />}>
             <EChart option={channelOption ?? emptyOpt} height={250} />

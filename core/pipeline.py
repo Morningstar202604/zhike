@@ -3,6 +3,7 @@
 无 LLM 凭据或调用失败时自动降级为「规则 + 检索」，不抛错、不 500。
 """
 import json
+import re
 from dataclasses import dataclass, field
 
 from core import config, guardrail, llm, memory as memory_mod, retrieval, store, tools as tools_mod
@@ -70,9 +71,24 @@ def build_context(query: str, history: list[dict], cfg: dict, visitor_id: str) -
 
     emb_flag = cfg.get("retrieval", {}).get("embedding", "auto")
     use_emb = None if emb_flag == "auto" else (emb_flag == "on")
+    used["kb"] = {"enabled": bool(modules_on.get("kb", True)), "hits": []}
+    # 查询改写（零成本规则版）：短问句/指代开头时，用记忆里的最近话题补全检索意图，缓解多轮指代丢失
+    ret_query = query
+    if query and (len(query) < 8 or re.match(r"^(它|这|那|该|此|怎么弄|怎么办|为什么|多少)", query)):
+        last = (store.get_memory(visitor_id) or {}).get("last_topic", "").strip()
+        if last and last not in query:
+            ret_query = f"{last} {query}"
+            used["kb"]["rewritten"] = last
     hits = retrieval.retrieve_scored(query, top_k, min_overlap, use_embedding=use_emb) if modules_on.get("kb", True) else []
+    if ret_query != query:
+        # 改写查询与原查询各检一遍，按条目取 max 合并：补语义召回的同时不稀释字面命中
+        merged: dict[str, tuple[float, dict]] = {e["id"]: (s, e) for s, e in hits}
+        for s, e in retrieval.retrieve_scored(ret_query, top_k, min_overlap, use_embedding=use_emb):
+            if e["id"] not in merged or s > merged[e["id"]][0]:
+                merged[e["id"]] = (s, e)
+        hits = sorted(merged.values(), key=lambda x: x[0], reverse=True)[:top_k]
     kb_block = "\n".join(f"- [{h['id']}] {h['title']}: {h['answer']}" for _, h in hits) if hits else "（无相关条目）"
-    used["kb"] = {"enabled": bool(modules_on.get("kb", True)), "hits": [e["id"] for _, e in hits]}
+    used["kb"]["hits"] = [e["id"] for _, e in hits]
 
     tools = tools_mod.active_tools(cfg) if modules_on.get("tools", True) else {}
     tools_schema = tools_mod.tool_schema_block(cfg) if modules_on.get("tools", True) else []
@@ -277,9 +293,11 @@ async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: 
     final: AgentReply | None = None
     if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
         data = None
+        deltas_sent = False
         try:
             async for ev in llm.react_stream(query, ctx, cfg, message.image_b64):
                 if ev["type"] == "delta":
+                    deltas_sent = True
                     yield ("delta", ev["text"])
                 elif ev["type"] == "final":
                     data = ev["data"]
@@ -290,6 +308,12 @@ async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: 
             data = None
         if data is not None:
             final = _make_llm_reply(data, ctx, cfg)
+        elif not deltas_sent:
+            # 流式未产出任何内容：按非流式再试一次（内部含多模型备援），仍失败才回规则
+            try:
+                final = await _llm_answer(query, ctx, cfg, image_b64=message.image_b64)
+            except Exception:  # aqg: top-level boundary
+                final = None
     if final is None:
         final = _rule_react(query, ctx, cfg)
         if mode == "llm" and cfg.get("llm", {}).get("has_key"):

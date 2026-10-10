@@ -505,6 +505,71 @@ def admin_stats() -> dict:
     }
 
 
+def admin_report(days: int = 7) -> dict:
+    """经营报表：日序列（会话/回复/KB命中/升级）+ 汇总（命中率/升级率/CSAT）。纯 SQL 聚合，零新表。"""
+    days = max(1, min(days, 90))
+    day_cutoff = (datetime.now(timezone.utc) - timedelta(days=days - 1)).date().isoformat()
+    with get_conn() as conn:
+        sess_rows = conn.execute(
+            "SELECT date(datetime(started_at,'localtime')) d, COUNT(*) c FROM sessions "
+            "WHERE date(started_at) >= ? GROUP BY d",
+            (day_cutoff,),
+        ).fetchall()
+        agent_rows = conn.execute(
+            "SELECT date(datetime(created_at,'localtime')) d, COUNT(*) c, "
+            "SUM(CASE WHEN refs IS NOT NULL AND refs NOT IN ('', '[]') THEN 1 ELSE 0 END) kb "
+            "FROM messages WHERE role = 'agent' AND date(created_at) >= ? GROUP BY d",
+            (day_cutoff,),
+        ).fetchall()
+        esc_rows = conn.execute(
+            "SELECT date(datetime(started_at,'localtime')) d, COUNT(*) c FROM sessions "
+            "WHERE escalated = 1 AND date(started_at) >= ? GROUP BY d",
+            (day_cutoff,),
+        ).fetchall()
+        fb = conn.execute(
+            "SELECT COUNT(*) n, SUM(CASE WHEN rating = 'helpful' THEN 1 ELSE 0 END) good "
+            "FROM feedback WHERE date(created_at) >= ?",
+            (day_cutoff,),
+        ).fetchone()
+
+    today = datetime.now().date()
+    day_list = [(today - timedelta(days=days - 1 - i)).isoformat() for i in range(days)]
+    sess_map = {r["d"]: r["c"] for r in sess_rows}
+    agent_map = {r["d"]: (r["c"], r["kb"] or 0) for r in agent_rows}
+    esc_map = {r["d"]: r["c"] for r in esc_rows}
+
+    daily = []
+    tot = {"sessions": 0, "agent_replies": 0, "kb_hits": 0, "escalations": 0}
+    for d in day_list:
+        replies, kb = agent_map.get(d, (0, 0))
+        row = {
+            "day": d,
+            "sessions": sess_map.get(d, 0),
+            "agent_replies": replies,
+            "kb_hits": kb,
+            "escalations": esc_map.get(d, 0),
+        }
+        daily.append(row)
+        tot["sessions"] += row["sessions"]
+        tot["agent_replies"] += replies
+        tot["kb_hits"] += kb
+        tot["escalations"] += row["escalations"]
+
+    n_fb = fb["n"] or 0
+    good = fb["good"] or 0
+    return {
+        "days": days,
+        "daily": daily,
+        "totals": {
+            **tot,
+            "kb_hit_rate": round(tot["kb_hits"] / tot["agent_replies"], 3) if tot["agent_replies"] else None,
+            "escalate_rate": round(tot["escalations"] / tot["sessions"], 3) if tot["sessions"] else None,
+            "csat": round(good / n_fb, 3) if n_fb else None,
+            "csat_n": n_fb,
+        },
+    }
+
+
 def log_injection(session_id: str, visitor_id: str, raw_input: str,
                   detected: str, action: str) -> None:
     with get_conn() as conn:

@@ -717,6 +717,36 @@ def create_app() -> FastAPI:
     def admin_stats():
         return store.admin_stats()
 
+    @app.get("/api/admin/report", dependencies=[Depends(require_admin)])
+    def admin_report(days: int = 7):
+        """经营报表：近 N 天日序列 + 命中率/升级率/CSAT 汇总。"""
+        return store.admin_report(days)
+
+    class KbSaveNoteIn(BaseModel):
+        title: str = ""
+        text: str
+        tags: list[str] = []
+
+    @app.post("/api/kb/save-note", dependencies=[Depends(require_admin)])
+    def kb_save_note(body: KbSaveNoteIn):
+        """坐席答案回流：把坐席手工回复存为 KB 条目（id 续号，tag 坐席回流），沉淀为下次的自动答案。"""
+        text = (body.text or "").strip()
+        if not text:
+            raise HTTPException(400, "empty text")
+        title = (body.title or text.strip().splitlines()[0] or text[:30]).strip()[:80]
+        items = retrieval.load_kb()
+        base = _next_kb_base(items)
+        entry = {
+            "id": f"KB{base + 1}",
+            "title": title,
+            "text": f"{title} {text}"[:300],
+            "answer": text,
+            "tags": body.tags or ["坐席回流"],
+        }
+        items.append(entry)
+        _save_kb(items)
+        return {"entry": entry, "total": len(items)}
+
     @app.post("/v1/gateway/heartbeat", dependencies=[Depends(require_channel)])
     def gateway_heartbeat(body: HeartbeatIn):
         app.state.gateway_channels[body.gateway] = {
