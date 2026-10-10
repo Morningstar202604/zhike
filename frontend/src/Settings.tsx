@@ -311,6 +311,16 @@ function ParamsPanel({ cfg, upd }: { cfg: AgentConfig; upd: ReturnType<typeof us
           <input type="checkbox" checked={cfg.multimodal.enable} onChange={(e) => set('multimodal', 'enable', e.target.checked)} />
         </div>
         <div className="f-row">
+          <span className="f-lb" title="填视觉模型名后，用户发图走 LLM 看图；留空则图片转人工">视觉模型</span>
+          <input
+            type="text"
+            placeholder="如 glm-4v-flash，留空=图片转人工"
+            value={cfg.multimodal.vision_model ?? ''}
+            onChange={(e) => set('multimodal', 'vision_model', e.target.value.trim())}
+            style={{ maxWidth: 260 }}
+          />
+        </div>
+        <div className="f-row">
           <span className="f-lb">注入护栏</span>
           <input type="checkbox" checked={cfg.guardrail.injection_block} onChange={(e) => set('guardrail', 'injection_block', e.target.checked)} />
         </div>
@@ -554,6 +564,16 @@ function KbPanel() {
           <Search size={15} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
           <input style={{ paddingLeft: 40 }} placeholder="搜索 id / 标题 / 关键词…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
+        {kbRes?.embedding && (
+          <span
+            className={`badge ${kbRes.embedding.available && kbRes.embedding.enabled !== 'off' ? 'ok' : 'info'}`}
+            title={kbRes.embedding.available
+              ? `向量后端 ${kbRes.embedding.model}：字面+语义混合检索`
+              : '未安装 sentence-transformers，当前纯字面检索（可选装 requirements-embedding.txt）'}
+          >
+            {kbRes.embedding.enabled === 'off' ? '检索：纯字面（已关）' : kbRes.embedding.available ? '检索：字面+向量' : '检索：纯字面'}
+          </span>
+        )}
         <button className="btn secondary sm" title="批量导入 Markdown" onClick={() => setImporting(true)}><Upload size={13} /> 导入</button>
         <button className="btn secondary sm" title="导出全部条目为 Markdown" onClick={() => exportKb().catch((e) => alert((e as Error).message))}><Download size={13} /> 导出</button>
         <button className="btn" onClick={() => setEditing('new')}><Plus size={14} /> 新增条目</button>
