@@ -25,14 +25,23 @@ def test_admin_report_totals(client, monkeypatch, tmp_path):
     assert all("day" in row for row in d["daily"])
 
 
-def test_kb_save_note_allocates_id_and_tag(client):
-    n_before = len(client.get("/api/kb").json()["kb"])
+def test_kb_save_note_allocates_id_and_tag(client, monkeypatch, tmp_path):
+    """存 KB 测试用临时知识库文件，避免污染仓库真实 KB。"""
+    from core import retrieval
+
+    kb_file = tmp_path / "kb.json"
+    kb_file.write_text(json.dumps({"kb": [
+        {"id": "KB001", "title": "种子", "text": "种子", "answer": "种子", "tags": []},
+    ]}), encoding="utf-8")
+    monkeypatch.setattr(retrieval, "KB_PATH", kb_file)
+    retrieval._KB_CACHE = None
     r = client.post("/api/kb/save-note", json={"text": "夜间客服电话 400-000-0000"})
     assert r.status_code == 200
     d = r.json()
-    assert d["entry"]["tags"] == ["坐席回流"]
-    assert d["total"] == n_before + 1
-    assert d["entry"]["id"].startswith("KB")
+    assert d["entry"]["id"] == "KB101" and "坐席回流" in d["entry"]["tags"] and d["total"] == 2
+    saved = retrieval.load_kb()[-1]
+    assert saved["answer"].startswith("夜间客服电话")
+    retrieval._KB_CACHE = None
 
 
 def test_kb_save_note_empty_rejected(client):
