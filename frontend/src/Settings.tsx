@@ -86,6 +86,7 @@ export default function Settings() {
 
 /* ============ 参数配置（补齐 char_budget/react_steps/top_p + 引擎模式） ============ */
 function ParamsPanel({ cfg, upd }: { cfg: AgentConfig; upd: ReturnType<typeof useUpdateConfig> }) {
+  const { data: kbMeta } = useKb()
   const llmTest = useLlmTest()
   const llmModels = useLlmModels()
   const [apiKeyInput, setApiKeyInput] = useState('')
@@ -224,6 +225,23 @@ function ParamsPanel({ cfg, upd }: { cfg: AgentConfig; upd: ReturnType<typeof us
         </Row>
         <Row label={`最低重叠 · ${cfg.retrieval.min_overlap}`}>
           <input type="range" min="0" max="0.3" step="0.01" value={cfg.retrieval.min_overlap} onChange={(e) => set('retrieval', 'min_overlap', parseFloat(e.target.value))} />
+        </Row>
+        <Row label="向量语义检索">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <select
+              value={cfg.retrieval.embedding || 'auto'}
+              onChange={(e) => set('retrieval', 'embedding', e.target.value)}
+              style={{ minWidth: 150 }}
+            >
+              <option value="auto">自动（可用即用）</option>
+              <option value="off">关闭（纯字面）</option>
+            </select>
+            <span className="text-xs" style={{ color: 'var(--muted)' }}>
+              {kbMeta?.embedding?.available
+                ? `BGE 已就绪（${kbMeta.embedding.model}），与字面检索混合评分`
+                : '未安装 sentence-transformers，当前纯字面检索（pip install -r requirements-embedding.txt）'}
+            </span>
+          </div>
         </Row>
       </Grp>
 

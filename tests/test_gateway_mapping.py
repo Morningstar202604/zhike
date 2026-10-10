@@ -35,6 +35,28 @@ def test_group_without_at_ignored():
     assert ev is None
 
 
+def test_group_at_stripped_by_adapter_still_maps():
+    """适配器 _check_at_me 命中后会弹出 at 段；bot.py 以事件级 to_me 兜底，群聊不得被误丢。"""
+    ev = from_onebot_v11(
+        {**_group_event([{"type": "text", "data": {"text": "这个图片是什么"}}]), "to_me": True}
+    )
+    assert ev is not None, "to_me=True 的群聊消息即使 at 段已被剥离也必须通过"
+    assert ev.channel_type == "qq_group" and ev.text == "这个图片是什么"
+
+
+def test_group_image_only_with_to_me_maps():
+    """纯图片群聊（@ 已剥离）：文本占位 [图片] + 图片 URL，进入转人工/视觉链路。"""
+    ev = from_onebot_v11(
+        {
+            **_group_event([{"type": "image", "data": {"url": "https://gchat.qpic.cn/a.png"}}]),
+            "to_me": True,
+        }
+    )
+    assert ev is not None
+    assert ev.image_url == "https://gchat.qpic.cn/a.png"
+    assert ev.should_reply is True, "纯图片也要能触发回复（转人工或视觉应答）"
+
+
 def test_private_message_always_replies():
     ev = from_onebot_v11(
         {

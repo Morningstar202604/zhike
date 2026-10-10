@@ -47,7 +47,7 @@ export function useUpdateConfig() {
 
 // ---- kb ----
 export function useKb() {
-  return useQuery({ queryKey: qk.kb, queryFn: () => http.get<{ kb: KbEntry[] }>('/api/kb') })
+  return useQuery({ queryKey: qk.kb, queryFn: () => http.get<{ kb: KbEntry[]; embedding?: { available: boolean; enabled: string; model: string } }>('/api/kb') })
 }
 export function useKbMutations() {
   const qc = useQueryClient()

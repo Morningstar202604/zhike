@@ -546,7 +546,15 @@ def create_app() -> FastAPI:
 
     @app.get("/api/kb")
     def kb_list():
-        return {"kb": retrieval.load_kb()}
+        emb_flag = config.get_config().get("retrieval", {}).get("embedding", "auto")
+        return {
+            "kb": retrieval.load_kb(),
+            "embedding": {
+                "available": retrieval.embedding_available(),
+                "enabled": emb_flag,
+                "model": retrieval.BGE_MODEL if retrieval.embedding_available() else "",
+            },
+        }
 
     def _save_kb(items: list[dict]) -> None:
         p = retrieval.KB_PATH

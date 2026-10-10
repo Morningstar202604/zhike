@@ -38,6 +38,13 @@ _EMB_STATE: dict = {"model": None, "matrix": None, "ids": [], "sig": "", "failed
 _BGE_QUERY_PREFIX = "为这个句子生成表示以检索相关文章："  # BGE-zh 官方查询指令
 
 
+def embedding_available() -> bool:
+    """向量后端依赖是否可导入（find_spec 不触发模型下载/加载，供控制台状态展示与 auto 判断预检）。"""
+    import importlib.util
+
+    return importlib.util.find_spec("sentence_transformers") is not None
+
+
 def _get_encoder():
     """惰性加载 BGE 编码器；未安装依赖或加载失败返回 None（进程内只试一次，不反复拖慢请求）。"""
     if _EMB_STATE["failed"]:
