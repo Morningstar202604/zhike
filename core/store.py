@@ -361,6 +361,13 @@ def get_memory(visitor_id: str) -> dict:
     return {r["key"]: r["value"] for r in rows}
 
 
+def clear_memory(visitor_id: str) -> int:
+    """删除某访客全部记忆（opt-out 用）；返回删除条数。"""
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM memory WHERE visitor_id = ?", (visitor_id,))
+        return cur.rowcount or 0
+
+
 def all_memory() -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(

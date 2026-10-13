@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from core import config, events_log, guardrail, llm, memory as memory_mod, net, pipeline, retrieval, security, sessions, store, tools as tools_mod
+from core import config, events_log, guardrail, llm, memory as memory_mod, net, pipeline, ratelimit, retrieval, security, sessions, store, tools as tools_mod
 
 logger = logging.getLogger("core")
 ev = logging.getLogger("cs.events")
@@ -146,7 +146,7 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "CHANNEL_TOKEN 未设置：/v1/ingest 与网关心跳已禁用（503）。生产部署必须设置。"
         )
-    app.state.limiter = security.RateLimiter()
+    app.state.limiter = ratelimit.SQLiteRateLimiter()
     yield
 
 

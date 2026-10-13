@@ -1,4 +1,8 @@
-"""注入护栏：数据驱动正则规则（DB），全部停用时回退内置规则，护栏不失效。"""
+"""注入护栏：数据驱动正则规则（DB），全部停用时回退内置规则，护栏不失效。
+
+输入侧：detect_injection（挡用户越狱）
+输出侧：detect_output（挡 LLM 被攻破后泄露系统提示/越权内容）
+"""
 import re
 
 from core import store
@@ -13,6 +17,12 @@ _BUILTIN_PATTERNS = [
     r"jailbreak|越狱",
 ]
 
+# 输出侧：LLM 回答里如果出现这些，说明系统提示被泄露，要拦截
+_OUTPUT_PATTERNS = [
+    re.compile(r"你是知客|你的系统提示|system prompt|你的指令是", re.IGNORECASE),
+    re.compile(r"base_url|api_key|sk-[a-zA-Z0-9]{10,}", re.IGNORECASE),
+    re.compile(r"我被要求(忽略|不|禁止).{0,15}(回答|讨论|提及)", re.IGNORECASE),
+]
 
 _CACHE: tuple[int, list[tuple[re.Pattern, str]]] | None = None
 
@@ -42,3 +52,14 @@ def detect_injection(text: str) -> tuple[str | None, str | None]:
         if m:
             return m.group(0), action
     return None, None
+
+
+def detect_output(text: str) -> str | None:
+    """输出侧护栏：返回命中的违规片段（None 表示安全）。"""
+    if not text:
+        return None
+    for pat in _OUTPUT_PATTERNS:
+        m = pat.search(text)
+        if m:
+            return m.group(0)
+    return None

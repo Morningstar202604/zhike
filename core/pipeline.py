@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from core import config, guardrail, llm, memory as memory_mod, retrieval, store, tools as tools_mod
 from core.schemas import LlmReply
+from core import tracing
 
 
 @dataclass
@@ -186,6 +187,14 @@ def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
         except TypeError:
             tool_result = {"tool": tool_name, "status": "bad_args", "note": "工具参数不合法。"}
         parsed.answer = (tool_result or {}).get("note") or parsed.answer or "工具已执行。"
+
+    # 输出侧护栏：LLM 回答若泄露系统提示/Key，替换为安全话术并转人工
+    bad_output = guardrail.detect_output(parsed.answer)
+    if bad_output:
+        parsed.answer = "抱歉，我无法回答这个问题。请问您还有其他关于订单、退款或政策的问题吗？"
+        parsed.escalate = True
+        parsed.escalate_reason = "output_guardrail"
+
     answer = AgentReply(
         text=parsed.answer,
         citations=parsed.citations,
@@ -204,6 +213,22 @@ def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
     return answer
 
 
+# 记忆 opt-out 触发词（访客说"不要记我/忘记我"时清记忆）
+_MEMORY_OPT_OUT_PATTERNS = [
+    re.compile(r"(不要|别|停止).{0,6}(记|保存|存储)我", re.IGNORECASE),
+    re.compile(r"忘记(我|所有)(关于我)?的(记忆|信息|偏好)", re.IGNORECASE),
+    re.compile(r"(关闭|关掉).{0,4}(记忆|个性化)", re.IGNORECASE),
+]
+
+
+def _maybe_opt_out_memory(query: str, visitor_id: str) -> str | None:
+    for pat in _MEMORY_OPT_OUT_PATTERNS:
+        if pat.search(query):
+            store.clear_memory(visitor_id)
+            return "好的，已为您清除所有记忆，后续不会主动记录您的偏好。"
+    return None
+
+
 def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
     """run()/run_stream() 公共前置：截断、上下文、护栏/转人工/图片规则拦截。拦截时直接返回 AgentReply。"""
     cfg = config.get_config()
@@ -211,6 +236,17 @@ def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
     max_len = cfg.get("escalation", {}).get("max_message_len", 1000)
     if len(query) > max_len:
         query = query[:max_len]
+
+    # 记忆 opt-out：访客说"不要记我/忘记我"直接拦截并清记忆
+    opt_out_reply = _maybe_opt_out_memory(query, visitor_key)
+    if opt_out_reply:
+        ctx = build_context(query, history, cfg, visitor_key)
+        return AgentReply(
+            text=opt_out_reply,
+            confidence=1.0,
+            mode="rule_react",
+            ctx_used=ctx["used"],
+        )
 
     ctx = build_context(query, history, cfg, visitor_key)
 
@@ -252,25 +288,27 @@ def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
 
 
 async def run(message: ChannelMessage, history: list[dict], visitor_key: str) -> AgentReply:
-    prepared = _prepare(message, history, visitor_key)
-    if isinstance(prepared, AgentReply):
-        return prepared
-    cfg, query, ctx = prepared
+    with tracing.span("zhike.pipeline.run", {"channel": message.channel_type, "visitor": visitor_key}):
+        prepared = _prepare(message, history, visitor_key)
+        if isinstance(prepared, AgentReply):
+            return prepared
+        cfg, query, ctx = prepared
 
-    mode = cfg.get("engine", {}).get("mode", "auto")
-    llm_reply = None
-    if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
-        try:
-            llm_reply = await _llm_answer(query, ctx, cfg, image_b64=message.image_b64)
-        except Exception:  # aqg: top-level boundary
-            llm_reply = None
-        if llm_reply is None and mode == "llm":
-            rule = _rule_react(query, ctx, cfg)
-            rule.mode = "rule_fallback"
-            return rule
-    if llm_reply:
-        return llm_reply
-    return _rule_react(query, ctx, cfg)
+        mode = cfg.get("engine", {}).get("mode", "auto")
+        llm_reply = None
+        if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
+            with tracing.span("zhike.llm", {"model": cfg["llm"].get("model", "")}):
+                try:
+                    llm_reply = await _llm_answer(query, ctx, cfg, image_b64=message.image_b64)
+                except Exception:
+                    llm_reply = None
+            if llm_reply is None and mode == "llm":
+                rule = _rule_react(query, ctx, cfg)
+                rule.mode = "rule_fallback"
+                return rule
+        if llm_reply:
+            return llm_reply
+        return _rule_react(query, ctx, cfg)
 
 
 async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: str):
