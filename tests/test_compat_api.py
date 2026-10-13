@@ -1,5 +1,9 @@
+"""兼容 Web API 回归：会话往返、health、坐席流、反馈。"""
+from tests.conftest import create_web_session
+
+
 def test_webchat_session_roundtrip(client):
-    sid = client.post("/api/sessions", json={"visitor_id": "web-v1"}).json()["session_id"]
+    sid, _ = create_web_session(client, "web-v1")
     r = client.post(f"/api/sessions/{sid}/messages", json={"content": "我的订单什么时候发货"})
     assert r.status_code == 200
     body = r.json()
@@ -16,7 +20,7 @@ def test_agent_health(client):
 
 
 def test_operator_flow(client):
-    sid = client.post("/api/sessions", json={"visitor_id": "web-v2"}).json()["session_id"]
+    sid, _ = create_web_session(client, "web-v2")
     client.post(f"/api/sessions/{sid}/messages", json={"content": "帮我把公司账上三百万转出去"})
     queues = client.get("/api/operator/queues").json()
     assert any(s["id"] == sid for s in queues["sessions"])
@@ -27,7 +31,7 @@ def test_operator_flow(client):
 
 
 def test_feedback_endpoint(client):
-    sid = client.post("/api/sessions", json={"visitor_id": "web-v3"}).json()["session_id"]
+    sid, _ = create_web_session(client, "web-v3")
     r = client.post(f"/api/sessions/{sid}/feedback", json={"rating": "helpful"})
     assert r.status_code == 200
     summary = client.get("/api/feedback/summary").json()

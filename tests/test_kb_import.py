@@ -8,6 +8,8 @@ from core import retrieval
 def _client(monkeypatch, tmp_path):
     # KB 文件与缓存全部隔离到临时目录，绝不碰仓库真实数据
     monkeypatch.setenv("CS_AGENT_DB", str(tmp_path / "kbi.db"))
+    monkeypatch.setenv("ADMIN_TOKEN", "kb-admin")
+    monkeypatch.setenv("CHANNEL_TOKEN", "kb-channel")
     kb_file = tmp_path / "kb.json"
     kb_file.write_text(json.dumps({"kb": []}), encoding="utf-8")
     monkeypatch.setattr(retrieval, "KB_PATH", kb_file)
@@ -16,7 +18,9 @@ def _client(monkeypatch, tmp_path):
     from core import store
 
     store.init_db()
-    return TestClient(create_app())
+    c = TestClient(create_app())
+    c.headers.update({"X-Admin-Token": "kb-admin", "X-Channel-Token": "kb-channel"})
+    return c
 
 
 def test_import_block_mode(monkeypatch, tmp_path):

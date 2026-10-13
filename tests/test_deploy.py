@@ -30,7 +30,8 @@ def test_static_spa_serving(tmp_path, monkeypatch):
         r2 = c.get("/dashboard")
         assert r2.status_code == 200 and "cs-agent-spa" in r2.text
         assert c.get("/assets/app.js").status_code == 200
-        assert c.get("/api/agent/health").status_code == 200
+        # 安全默认：ADMIN_TOKEN 未设置时 /api/agent/health 直接 503（不再裸奔）
+        assert c.get("/api/agent/health").status_code == 503
         assert c.get("/healthz").json()["ok"] is True
 
 
@@ -44,9 +45,10 @@ def test_static_disabled_by_default(tmp_path, monkeypatch):
 def test_cors_whitelist(tmp_path, monkeypatch):
     app = _make_app(tmp_path, monkeypatch, {"CS_AGENT_CORS_ORIGINS": "https://cs.example.com"})
     with TestClient(app) as c:
-        ok = c.get("/api/agent/health", headers={"Origin": "https://cs.example.com"})
+        # 用 /healthz 测 CORS（无需 admin token，专注 CORS 中间件行为）
+        ok = c.get("/healthz", headers={"Origin": "https://cs.example.com"})
         assert ok.headers.get("access-control-allow-origin") == "https://cs.example.com"
-        bad = c.get("/api/agent/health", headers={"Origin": "https://evil.example"})
+        bad = c.get("/healthz", headers={"Origin": "https://evil.example"})
         assert bad.headers.get("access-control-allow-origin") is None
 
 

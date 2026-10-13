@@ -22,7 +22,6 @@ import { ensureVisitorId, useAppStore } from './store/appStore'
 import { useShell } from './components/ResponsiveShell'
 import { http } from './lib/queries'
 import './pages.css'
-
 const SCENES = [
   { icon: <Package size={16} />, bg: 'var(--brand-soft)', color: 'var(--brand)', title: '查订单物流', text: '我的订单 ORD12345678 什么时候发货？' },
   { icon: <Undo2 size={16} />, bg: 'var(--ok-soft)', color: '#1a8f52', title: '申请退款', text: '我想申请退款，怎么操作？' },
@@ -140,6 +139,10 @@ export default function VisitorChat() {
       if (!visitorId.current) visitorId.current = ensureVisitorId()
       const data = await http.post('/api/sessions', { visitor_id: visitorId.current })
       setSessionId(data.session_id)
+      // 保存会话归属凭据，后续该会话所有请求自动带 X-Session-Secret
+      if (data.session_secret) {
+        useAppStore.getState().setSessionSecret(data.session_id, data.session_secret)
+      }
       setSessions((prev) => {
         const next = [
           {
@@ -157,22 +160,15 @@ export default function VisitorChat() {
     [sessionId],
   )
 
-  // 老访客问候
-  useEffect(() => {
-    const vid = ensureVisitorId()
-    http.get(`/api/memory/${vid}`)
-      .then((d) => {
-        if (d.visits > 1 && d.memory && Object.keys(d.memory).length > 0) {
-          const topics = Object.values(d.memory).slice(0, 3).join('、')
-          setMemoryNote(`欢迎回来！您之前咨询过：${topics}`)
-        }
-      })
-      .catch(() => {})
-  }, [])
+  // 老访客问候已下线：/api/memory 现在仅管理员可读（PII 保护），不再由访客端拉取。
 
   // WS 实时通道（useWs 自动重连；sessionId 为空时不连接）
+  // 访客 WS 必须带 secret query，否则后端 close(4401)
+  const wsPath = sessionId
+    ? `/ws/${sessionId}?secret=${encodeURIComponent(useAppStore.getState().getSessionSecret(sessionId) || '')}`
+    : null
   const { state: wsState } = useWs(
-    sessionId ? `/ws/${sessionId}` : null,
+    wsPath,
     (p) => {
       if (p.type === 'operator_message') {
         setMessages((prev) => [
@@ -284,9 +280,13 @@ export default function VisitorChat() {
     }
     setLoading(true)
     try {
+      const sec = useAppStore.getState().getSessionSecret(sid)
       const resp = await fetch(`/api/sessions/${sid}/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sec ? { 'X-Session-Secret': sec } : {}),
+        },
         body: JSON.stringify({ content, image: img || null }),
       })
       if (resp.ok && resp.body) {

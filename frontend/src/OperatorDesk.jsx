@@ -54,12 +54,14 @@ export default function OperatorDesk() {
     }
   }, [])
 
-  // WS 实时接收新会话 / 状态变更（useWs 自动重连）；设置 ADMIN_TOKEN 后需带 token 鉴权
+  // WS 实时接收新会话 / 状态变更（useWs 自动重连）
+  // token 走 Sec-WebSocket-Protocol 子协议（避免 query string 进 access log / 浏览器历史）
   const adminToken = useAppStore((s) => s.adminToken)
-  const wsUrl = adminToken ? `/ws/operator?token=${encodeURIComponent(adminToken)}` : '/ws/operator'
+  const wsUrl = '/ws/operator'
+  const wsSubs = adminToken ? ['zhike-admin', adminToken] : undefined
   const { state: connState } = useWs(wsUrl, (p) => {
     if (p.type === 'new_pending' || p.type === 'session_updated') queues.refetch()
-  })
+  }, true, wsSubs)
 
   useEffect(() => { ensureOpId() }, [])
   useEffect(() => {
