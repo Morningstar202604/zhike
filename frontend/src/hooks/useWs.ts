@@ -9,6 +9,7 @@ export function useWs(
   url: string | null,
   onMessage: (p: WsMessage) => void,
   enabled = true,
+  subprotocols?: string[],
 ): { state: 'connecting' | 'online' | 'offline'; close: () => void } {
   const [state, setState] = useState<'connecting' | 'online' | 'offline'>(url ? 'connecting' : 'offline')
   const wsRef = useRef<WebSocket | null>(null)
@@ -16,6 +17,8 @@ export function useWs(
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onMsgRef = useRef(onMessage)
   onMsgRef.current = onMessage
+  const subRef = useRef(subprotocols)
+  subRef.current = subprotocols
 
   useEffect(() => {
     if (!enabled || !url) return
@@ -24,7 +27,9 @@ export function useWs(
     const connect = () => {
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
       const host = window.location.host
-      const socket = new WebSocket(`${proto}://${host}${url}`)
+      const socket = subRef.current?.length
+        ? new WebSocket(`${proto}://${host}${url}`, subRef.current)
+        : new WebSocket(`${proto}://${host}${url}`)
       wsRef.current = socket
       setState('connecting')
       socket.onopen = () => setState('online')

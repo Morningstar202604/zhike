@@ -1,5 +1,6 @@
-"""安全组件：每身份滑动窗口限流 + 管理员令牌校验。"""
+"""安全组件：每身份滑动窗口限流 + 管理员令牌校验 + 时序安全比较。"""
 import os
+import secrets
 import time
 from collections import defaultdict, deque
 
@@ -23,3 +24,15 @@ class RateLimiter:
 
 def admin_token() -> str:
     return os.environ.get("ADMIN_TOKEN", "")
+
+
+def constant_time_equals(a: str | None, b: str | None) -> bool:
+    """时序安全的字符串比较（防 token 侧信道）。空值一律 False。"""
+    if not a or not b:
+        return False
+    return secrets.compare_digest(str(a), str(b))
+
+
+def is_channel_protected() -> bool:
+    """CHANNEL_TOKEN 是否设置。未设置时 /v1/ingest 与心跳应直接拒绝，防公网裸奔刷 LLM 成本。"""
+    return bool(os.environ.get("CHANNEL_TOKEN", "").strip())

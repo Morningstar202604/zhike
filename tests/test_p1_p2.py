@@ -1,4 +1,5 @@
 """回归：P1（报表聚合 / 坐席答案回流）+ P2（查询改写 / 多模型备援）。"""
+from tests.conftest import create_web_session
 import asyncio
 import json
 
@@ -12,7 +13,7 @@ async def _collect(agen):
 
 
 def test_admin_report_totals(client, monkeypatch, tmp_path):
-    sid = client.post("/api/sessions", json={"visitor_id": "rep-v1"}).json()["session_id"]
+    sid = create_web_session(client, "rep-v1")[0]
     client.post(f"/api/sessions/{sid}/messages", json={"content": "退货政策是什么"})
     store.add_feedback(sid, None, "helpful")
     r = client.get("/api/admin/report?days=7")

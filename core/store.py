@@ -24,6 +24,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
             visitor_id TEXT,
+            secret TEXT,
             status TEXT DEFAULT 'ongoing',
             escalated INTEGER DEFAULT 0,
             escalate_reason TEXT,
@@ -107,6 +108,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    # 轻量 migration：老库无 secret 列则补（SQLite 不支持 ADD COLUMN IF NOT EXISTS）
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+    if "secret" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN secret TEXT")
     _seed_builtins(conn)
 
 
@@ -182,12 +187,24 @@ def init_db() -> None:
         _ensure_schema(conn)
 
 
-def create_session(session_id: str, visitor_id: str) -> None:
+def create_session(session_id: str, visitor_id: str, secret: str = "") -> None:
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO sessions (id, visitor_id, status, started_at) VALUES (?, ?, 'ongoing', ?)",
-            (session_id, visitor_id, _now()),
+            "INSERT INTO sessions (id, visitor_id, secret, status, started_at) VALUES (?, ?, ?, 'ongoing', ?)",
+            (session_id, visitor_id, secret, _now()),
         )
+
+
+def check_session_secret(session_id: str, secret: str) -> bool:
+    """校验访客会话归属：sid + secret 双因子。未设置 secret 的老会话/渠道会话一律拒绝 web 写操作。"""
+    if not secret:
+        return False
+    with get_conn() as conn:
+        row = conn.execute("SELECT secret FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    if not row or not row["secret"]:
+        return False
+    import secrets as _secrets
+    return _secrets.compare_digest(str(row["secret"]), secret)
 
 
 def add_message(session_id: str, role: str, content: str, refs: list | None = None,

@@ -18,6 +18,7 @@ def test_admin_token_required(monkeypatch, tmp_path):
 
 
 def test_admin_open_mode_warns(caplog, monkeypatch, tmp_path):
+    """安全默认：ADMIN_TOKEN 未设置时，管理接口直接 503（不再 200 裸奔），并打告警日志。"""
     import logging
 
     monkeypatch.setenv("CS_AGENT_DB", str(tmp_path / "t2.db"))
@@ -29,7 +30,7 @@ def test_admin_open_mode_warns(caplog, monkeypatch, tmp_path):
     app = create_app()
     with caplog.at_level(logging.WARNING, logger="core"):
         with TestClient(app) as c:
-            assert c.get("/api/operator/queues").status_code == 200
+            assert c.get("/api/operator/queues").status_code == 503
     assert any("ADMIN_TOKEN" in r.message for r in caplog.records)
 
 

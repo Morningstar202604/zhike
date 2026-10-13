@@ -7,27 +7,35 @@ import type {
   SessionRow, LogEntry, ChannelStatus,
 } from '../types/api'
 
-function baseHeaders(): Record<string, string> {
+function baseHeaders(url?: string): Record<string, string> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' }
   const t = useAppStore.getState().adminToken
   if (t) h['X-Admin-Token'] = t
+  // 自动从 /api/sessions/{sid}/... 路径提取 sid，带上对应 X-Session-Secret
+  if (url) {
+    const m = url.match(/\/api\/sessions\/([a-f0-9]+)\//)
+    if (m) {
+      const sec = useAppStore.getState().getSessionSecret(m[1])
+      if (sec) h['X-Session-Secret'] = sec
+    }
+  }
   return h
 }
 
 const http = {
-  get: async <T>(url: string): Promise<T> => (await fetch(url, { headers: baseHeaders() })).json() as Promise<T>,
+  get: async <T>(url: string): Promise<T> => (await fetch(url, { headers: baseHeaders(url) })).json() as Promise<T>,
   post: async <T>(url: string, body?: unknown): Promise<T> => {
-    const r = await fetch(url, { method: 'POST', headers: baseHeaders(), body: body === undefined ? undefined : JSON.stringify(body) })
+    const r = await fetch(url, { method: 'POST', headers: baseHeaders(url), body: body === undefined ? undefined : JSON.stringify(body) })
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'request failed')
     return r.json() as Promise<T>
   },
   put: async <T>(url: string, body?: unknown): Promise<T> => {
-    const r = await fetch(url, { method: 'PUT', headers: baseHeaders(), body: body === undefined ? undefined : JSON.stringify(body) })
+    const r = await fetch(url, { method: 'PUT', headers: baseHeaders(url), body: body === undefined ? undefined : JSON.stringify(body) })
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'request failed')
     return r.json() as Promise<T>
   },
   del: async <T>(url: string): Promise<T> => {
-    const r = await fetch(url, { method: 'DELETE', headers: baseHeaders() })
+    const r = await fetch(url, { method: 'DELETE', headers: baseHeaders(url) })
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'request failed')
     return r.json() as Promise<T>
   },
