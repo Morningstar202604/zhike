@@ -3,6 +3,7 @@ import json
 import os
 
 from core import store
+from core import crypto
 
 def _defaults() -> dict:
     return {
@@ -84,6 +85,10 @@ def get_config() -> dict:
     stored = store.get_config() or {}
     cfg = _deep_merge(cfg, stored)
     stored_key = cfg["llm"].get("api_key") or ""
+    # DB 里存的可能是 Fernet 加密 token，运行时解密
+    if stored_key:
+        stored_key = crypto.decrypt_key(stored_key)
+        cfg["llm"]["api_key"] = stored_key
     env_key = os.environ.get("USER_LLM_API_KEY", "")
     if stored_key and stored_key != "your-api-key-here":
         cfg["llm"]["key_source"] = "ui"
@@ -99,5 +104,8 @@ def update_config(patch: dict) -> dict:
     llm_patch = patch.get("llm") or {}
     if "api_key" in llm_patch and isinstance(llm_patch["api_key"], str) and llm_patch["api_key"].startswith("••"):
         llm_patch["api_key"] = get_config()["llm"].get("api_key") or ""
+    # 落库前加密 api_key（Fernet），DB 里不再存明文
+    if "api_key" in llm_patch and isinstance(llm_patch["api_key"], str):
+        llm_patch["api_key"] = crypto.encrypt_key(llm_patch["api_key"])
     store.set_config(patch)
     return get_config()

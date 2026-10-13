@@ -198,12 +198,16 @@ def test_retrieve_hybrid_embedding_boost(monkeypatch, tmp_path):
     ]}), encoding="utf-8")
     monkeypatch.setattr(retrieval, "KB_PATH", kb_file)
     retrieval._KB_CACHE = None
-    q = "索取发票凭证"  # 与 KB002 零 bigram 重叠，只有语义能捞回
-    # 语义命中有 bigram 零重叠的条目
-    monkeypatch.setattr(retrieval, "_emb_scores", lambda query, kb: {"KB001": 0.0, "KB002": 0.8})
+    retrieval._INDEX_STATE["sig"] = ""  # 强制索引失效
+    q = "索取发票凭证"  # 与 KB002 零字面重叠，只有语义能捞回
+    # 模拟向量检索：KB002 第 0 名，KB001 不命中
+    monkeypatch.setattr(retrieval, "_vec_search", lambda conn, query, kb, top_k: [(0.1, "KB002")])
+    monkeypatch.setattr(retrieval, "_fts_search", lambda conn, query, top_k: [])
+    monkeypatch.setattr(retrieval, "_ensure_conn", lambda: object())  # dummy conn，走 FTS+vec+RRF 分支
+    monkeypatch.setattr(retrieval, "rebuild_index_if_needed", lambda conn, kb: None)  # 跳过真建索引
     hits = retrieval.retrieve_scored(q, top_k=2, min_overlap=0.0, use_embedding=True)
     assert [e["id"] for _, e in hits] == ["KB002"]
-    # 关闭向量 → 字面零重叠的 KB002 被过滤
+    # 关闭向量 → 零命中（bigram 兜底也捞不回）
     hits2 = retrieval.retrieve_scored(q, top_k=2, min_overlap=0.0, use_embedding=False)
     assert all(e["id"] != "KB002" for _, e in hits2)
 
