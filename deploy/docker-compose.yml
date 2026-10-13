@@ -26,8 +26,8 @@ services:
     volumes:
       - core_data:/data
     ports:
-      # ZHIKE_BIND=127.0.0.1 时仅本机可达（配合 CF Tunnel / 反代）；默认全网卡
-      - "${ZHIKE_BIND:-0.0.0.0}:8010:8010"
+      # 安全默认：仅本机可达（配合 CF Tunnel / 反代）；显式设 ZHIKE_BIND=0.0.0.0 才公网暴露
+      - "${ZHIKE_BIND:-127.0.0.1}:8010:8010"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8010/healthz', timeout=3)"]
       interval: 30s

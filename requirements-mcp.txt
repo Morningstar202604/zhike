@@ -1,0 +1,2 @@
+# 可选：MCP 工具暴露（core/mcp_server.py），不装不影响主服务
+mcp>=1.0

@@ -6,12 +6,16 @@ export interface AppStore {
   visitorId: string | null
   opId: string | null
   adminToken: string
+  /** 会话归属凭据：sid -> session_secret。web 访客会话必须带 X-Session-Secret 才能读写。 */
+  sessionSecrets: Record<string, string>
   // 草稿（移动端切页不丢输入）
   draft: Record<string, string>
   setSession: (id: string | null) => void
   setVisitorId: (id: string | null) => void
   setOpId: (id: string | null) => void
   setAdminToken: (t: string) => void
+  setSessionSecret: (sid: string, secret: string) => void
+  getSessionSecret: (sid: string) => string | undefined
   setDraft: (page: string, value: string) => void
   resetDraft: (page: string) => void
 }
@@ -20,22 +24,32 @@ const rand = () => Math.random().toString(36).slice(2, 10)
 
 export const useAppStore = create<AppStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       sessionId: null,
       visitorId: null,
       opId: null,
       adminToken: '',
+      sessionSecrets: {},
       draft: {},
-      setSession: (id) => set({ sessionId: id }),
-      setVisitorId: (id) => set({ visitorId: id }),
-      setOpId: (id) => set({ opId: id }),
-      setAdminToken: (t) => set({ adminToken: t }),
-      setDraft: (page, value) => set((s) => ({ draft: { ...s.draft, [page]: value } })),
-      resetDraft: (page) => set((s) => ({ draft: { ...s.draft, [page]: '' } })),
+      setSession: (id: string | null) => set({ sessionId: id }),
+      setVisitorId: (id: string | null) => set({ visitorId: id }),
+      setOpId: (id: string | null) => set({ opId: id }),
+      setAdminToken: (t: string) => set({ adminToken: t }),
+      setSessionSecret: (sid: string, secret: string) =>
+        set((s: AppStore) => ({ sessionSecrets: { ...s.sessionSecrets, [sid]: secret } })),
+      getSessionSecret: (sid: string) => get().sessionSecrets[sid],
+      setDraft: (page: string, value: string) => set((s: AppStore) => ({ draft: { ...s.draft, [page]: value } })),
+      resetDraft: (page: string) => set((s: AppStore) => ({ draft: { ...s.draft, [page]: '' } })),
     }),
     {
       name: 'cs-agent-app',
-      partialize: (s) => ({ visitorId: s.visitorId, opId: s.opId, adminToken: s.adminToken, draft: s.draft }),
+      partialize: (s: AppStore) => ({
+        visitorId: s.visitorId,
+        opId: s.opId,
+        adminToken: s.adminToken,
+        sessionSecrets: s.sessionSecrets,
+        draft: s.draft,
+      }),
     },
   ),
 )

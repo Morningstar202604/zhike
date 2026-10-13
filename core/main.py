@@ -3,11 +3,12 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -76,8 +77,9 @@ class Hub:
             except Exception:  # aqg: top-level boundary
                 self.operator_conns.discard(ws)
 
-    async def connect(self, session_id: str, ws: WebSocket):
-        await ws.accept()
+    async def connect(self, session_id: str, ws: WebSocket, already_accepted: bool = False):
+        if not already_accepted:
+            await ws.accept()
         self.visitor_conns.setdefault(session_id, set()).add(ws)
         try:
             while True:
@@ -85,8 +87,9 @@ class Hub:
         except WebSocketDisconnect:
             self.visitor_conns.get(session_id, set()).discard(ws)
 
-    async def connect_operator(self, ws: WebSocket):
-        await ws.accept()
+    async def connect_operator(self, ws: WebSocket, already_accepted: bool = False):
+        if not already_accepted:
+            await ws.accept()
         self.operator_conns.add(ws)
         try:
             while True:
@@ -100,15 +103,32 @@ hub = Hub()
 
 def require_admin(x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")):
     token = security.admin_token()
-    if token and x_admin_token != token:
+    if not token:
+        # 安全默认：ADMIN_TOKEN 未设置时管理接口一律禁用（不再开发模式裸奔）
+        raise HTTPException(
+            503,
+            "ADMIN_TOKEN 未配置：管理接口已禁用。请在环境变量设置强随机令牌（openssl rand -hex 32）后重启。",
+        )
+    if not security.constant_time_equals(x_admin_token, token):
         raise HTTPException(401, "需要管理员令牌")
 
 
 def require_channel(x_channel_token: str | None = Header(default=None, alias="X-Channel-Token")):
-    """渠道端点共享密钥：设置 CHANNEL_TOKEN 后，伪造渠道消息需持有令牌（防公网注入/刷 LLM 成本）。"""
+    """渠道端点共享密钥：未设置 CHANNEL_TOKEN 时直接 503，防公网伪造消息/刷 LLM 成本。"""
     token = os.environ.get("CHANNEL_TOKEN", "").strip()
-    if token and x_channel_token != token:
+    if not token:
+        raise HTTPException(
+            503,
+            "CHANNEL_TOKEN 未配置：渠道摄取已禁用。请在环境变量设置强随机令牌后重启。",
+        )
+    if not security.constant_time_equals(x_channel_token, token):
         raise HTTPException(401, "需要渠道令牌")
+
+
+def _require_session_secret(sid: str, x_session_secret: str | None = Header(default=None, alias="X-Session-Secret")):
+    """web 访客会话归属校验：sid + secret 双因子。渠道会话（QQ 等，由 CHANNEL_TOKEN 保护）不经过此依赖。"""
+    if not store.check_session_secret(sid, x_session_secret or ""):
+        raise HTTPException(401, "会话无效或归属校验失败")
 
 
 @asynccontextmanager
@@ -120,11 +140,11 @@ async def lifespan(app: FastAPI):
     app.state.gateway_channels = {}
     if not security.admin_token():
         logger.warning(
-            "ADMIN_TOKEN 未设置：操作员/管理接口无需令牌（开发模式）。生产部署必须设置 ADMIN_TOKEN。"
+            "ADMIN_TOKEN 未设置：所有 /api/admin/* 与坐席接口已禁用（503）。生产部署必须设置。"
         )
     if not os.environ.get("CHANNEL_TOKEN", "").strip():
         logger.warning(
-            "CHANNEL_TOKEN 未设置：/v1/ingest 与网关心跳为开放端点（开发模式）。核心服务暴露公网时必须设置。"
+            "CHANNEL_TOKEN 未设置：/v1/ingest 与网关心跳已禁用（503）。生产部署必须设置。"
         )
     app.state.limiter = security.RateLimiter()
     yield
@@ -133,12 +153,17 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="Zhike CS Agent Core", lifespan=lifespan)
     cors_env = os.environ.get("CS_AGENT_CORS_ORIGINS", "").strip()
-    origins = [o.strip() for o in cors_env.split(",") if o.strip()] if cors_env else ["*"]
+    if cors_env:
+        origins = [o.strip() for o in cors_env.split(",") if o.strip()]
+    else:
+        # 安全默认：不再 * 全开。开发模式默认放行 vite dev server；生产必须显式配置。
+        origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_headers=["Authorization", "X-Admin-Token", "X-Channel-Token", "X-Session-Secret", "Content-Type"],
     )
 
     class NewSession(BaseModel):
@@ -262,22 +287,25 @@ def create_app() -> FastAPI:
     @app.post("/api/sessions")
     def new_session(body: NewSession):
         sid = uuid.uuid4().hex
-        store.create_session(sid, body.visitor_id)
-        return {"session_id": sid, "status": "ongoing", "visitor_id": body.visitor_id}
+        secret = secrets.token_urlsafe(24)
+        store.create_session(sid, body.visitor_id, secret=secret)
+        return {"session_id": sid, "session_secret": secret, "status": "ongoing", "visitor_id": body.visitor_id}
 
     @app.get("/api/sessions/{sid}/messages")
-    def get_messages(sid: str):
+    def get_messages(sid: str, _=Depends(_require_session_secret)):
         return {"messages": store.get_messages(sid)}
 
     @app.post("/api/sessions/{sid}/messages")
-    async def post_message(sid: str, body: MessageIn):
+    async def post_message(sid: str, body: MessageIn, request: Request, _=Depends(_require_session_secret)):
         content = (body.content or "").strip()
         if not content and not body.image:
             raise HTTPException(400, "empty message")
         sess = store.get_session(sid)
         visitor_id = (sess or {}).get("visitor_id", "anonymous")
         limiter: security.RateLimiter = app.state.limiter
-        if not limiter.allow(visitor_id):
+        # 限流 key 用客户端 IP（不再用可伪造的 visitor_id），防一人刷爆全匿名桶
+        ip_key = f"ip:{request.client.host if request.client else 'unknown'}"
+        if not limiter.allow(ip_key):
             raise HTTPException(429, "rate limited")
         reply, msg_id, _ = await _handle_inbound(sid, content, body.image, visitor_id)
         return {
@@ -300,7 +328,7 @@ def create_app() -> FastAPI:
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     @app.post("/api/sessions/{sid}/chat/stream")
-    async def chat_stream(sid: str, body: MessageIn):
+    async def chat_stream(sid: str, body: MessageIn, request: Request, _=Depends(_require_session_secret)):
         """访客流式问答（SSE 范式：delta 增量打字机 → done 权威终态，终态 text 为准）。"""
         content = (body.content or "").strip()
         if not content and not body.image:
@@ -308,7 +336,8 @@ def create_app() -> FastAPI:
         sess = store.get_session(sid)
         visitor_id = (sess or {}).get("visitor_id", "anonymous")
         limiter: security.RateLimiter = app.state.limiter
-        if not limiter.allow(visitor_id):
+        ip_key = f"ip:{request.client.host if request.client else 'unknown'}"
+        if not limiter.allow(ip_key):
             raise HTTPException(429, "rate limited")
         if not sess:
             raise HTTPException(404, "session not found")
@@ -358,7 +387,7 @@ def create_app() -> FastAPI:
         return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.post("/api/sessions/{sid}/escalate")
-    async def escalate(sid: str):
+    async def escalate(sid: str, _=Depends(_require_session_secret)):
         store.mark_escalated(sid, "visitor_requested")
         ticket_id = store.create_ticket(sid)
         store.add_message(sid, "agent", "好的，正在为您转接人工坐席。")
@@ -400,7 +429,7 @@ def create_app() -> FastAPI:
         await hub.broadcast_to_operators({"type": "session_updated", "session_id": sid, "status": "closed"})
         return {"session_id": sid, "status": "closed"}
 
-    @app.get("/api/memory/{visitor_id}")
+    @app.get("/api/memory/{visitor_id}", dependencies=[Depends(require_admin)])
     def get_memory(visitor_id: str):
         return {
             "visitor_id": visitor_id,
@@ -409,7 +438,7 @@ def create_app() -> FastAPI:
         }
 
     @app.post("/api/sessions/{sid}/feedback")
-    def add_feedback(sid: str, body: FeedbackIn):
+    def add_feedback(sid: str, body: FeedbackIn, _=Depends(_require_session_secret)):
         if body.rating not in ("helpful", "not_helpful"):
             raise HTTPException(400, "rating must be helpful or not_helpful")
         store.add_feedback(sid, body.message_id or 0, body.rating, body.comment)
@@ -422,25 +451,23 @@ def create_app() -> FastAPI:
                 return {"rating": body.rating, "escalated": True, "ticket_id": ticket_id}
         return {"rating": body.rating, "escalated": False}
 
-    @app.get("/api/feedback/summary")
+    @app.get("/api/feedback/summary", dependencies=[Depends(require_admin)])
     def feedback_summary():
         return store.feedback_summary()
 
-    @app.get("/api/agent/health")
+    @app.get("/api/agent/health", dependencies=[Depends(require_admin)])
     def agent_health():
         cfg = config.get_config()
         llm_cfg = cfg.get("llm", {})
         engine_mode = cfg.get("engine", {}).get("mode", "auto")
         effective = "llm_react" if (engine_mode in ("llm", "auto") and llm_cfg.get("has_key")) else "rule_react"
         active = tools_mod.active_tools(cfg)
+        # 脱敏：不返回 base_url / 具体 model 名等内部拓扑，避免给攻击者侦察图
         return {
             "mode": effective,
             "engine_mode": engine_mode,
             "llm_ready": bool(llm_cfg.get("has_key")),
-            "model": llm_cfg.get("model"),
-            "base_url": llm_cfg.get("base_url"),
             "kb_entries": len(retrieval.load_kb()),
-            "tools": list(active.keys()),
             "tool_count": len(active),
             "injection_rules": len(store.list_injection_rules(enabled_only=True)),
             "kb_top_k": cfg.get("retrieval", {}).get("kb_top_k"),
@@ -448,7 +475,6 @@ def create_app() -> FastAPI:
             "memory_enable": cfg.get("memory", {}).get("enable"),
             "escalate_threshold": cfg.get("escalation", {}).get("confidence_threshold"),
             "react_steps": cfg.get("escalation", {}).get("react_steps"),
-            "dns_overrides": net.status(),
         }
 
     @app.get("/api/config", dependencies=[Depends(require_admin)])
@@ -547,7 +573,7 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "rule not found")
         return {"ok": True}
 
-    @app.get("/api/kb")
+    @app.get("/api/kb", dependencies=[Depends(require_admin)])
     def kb_list():
         emb_flag = config.get_config().get("retrieval", {}).get("embedding", "auto")
         return {
@@ -808,15 +834,30 @@ def create_app() -> FastAPI:
         }
 
     @app.websocket("/ws/operator")
-    async def ws_operator(ws: WebSocket, token: str | None = None):
-        # 管理端实时推送：设置 ADMIN_TOKEN 后需 ?token= 校验，防外人旁听坐席队列
-        if security.admin_token() and token != security.admin_token():
+    async def ws_operator(ws: WebSocket):
+        # 管理端实时推送：通过 Sec-WebSocket-Protocol 子协议传 token（避免 query string 进 access log / 浏览器历史）
+        # 客户端写法：new WebSocket(url, ["zhike-admin", token])
+        token = security.admin_token()
+        if not token:
             await ws.close(code=4401)
             return
-        await hub.connect_operator(ws)
+        subprotocols = ws.headers.get("sec-websocket-protocol", "")
+        parts = [p.strip() for p in subprotocols.split(",")]
+        # 约定 ["zhike-admin", "<token>"]
+        client_token = parts[1] if len(parts) >= 2 else ""
+        if not security.constant_time_equals(client_token, token):
+            await ws.close(code=4401)
+            return
+        # 握手时必须回选 subprotocol，否则浏览器认为握手失败
+        await ws.accept(subprotocol="zhike-admin")
+        await hub.connect_operator(ws, already_accepted=True)
 
     @app.websocket("/ws/{sid}")
-    async def ws(sid: str, ws: WebSocket):
+    async def ws(sid: str, ws: WebSocket, secret: str | None = None):
+        # 访客 WS：校验 session secret（query string，因为 secret 是会话级短期凭据，且仅本会话可读）
+        if not store.check_session_secret(sid, secret or ""):
+            await ws.close(code=4401)
+            return
         await hub.connect(sid, ws)
 
     # ---- 单端口模式：可选托管前端构建产物（CS_AGENT_STATIC_DIR=frontend/dist）----
