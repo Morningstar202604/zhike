@@ -1,4 +1,5 @@
 """回归：Agent 三能力 — 流式管线 / 视觉多模态 / 混合检索 / SSE 端到端。"""
+from tests.conftest import create_web_session
 import asyncio
 import json
 
@@ -220,7 +221,7 @@ def test_chat_stream_endpoint_sse(client, monkeypatch):
         yield {"type": "final", "data": {"answer": "您好，请问有什么可以帮您？", "citations": [], "confidence": 0.9, "escalate": False}}
 
     monkeypatch.setattr(llm_mod, "react_stream", fake_stream)
-    sid = client.post("/api/sessions", json={"visitor_id": "sse-v"}).json()["session_id"]
+    sid = create_web_session(client, "sse-v")[0]
     r = client.post(f"/api/sessions/{sid}/chat/stream", json={"content": "在吗"})
     assert r.status_code == 200
     assert "text/event-stream" in r.headers["content-type"]
@@ -240,7 +241,7 @@ def test_chat_stream_persists_messages(client, monkeypatch):
         yield {"type": "final", "data": {"answer": "好的", "citations": [], "confidence": 0.9, "escalate": False}}
 
     monkeypatch.setattr(llm_mod, "react_stream", fake_stream)
-    sid = client.post("/api/sessions", json={"visitor_id": "sse-p"}).json()["session_id"]
+    sid = create_web_session(client, "sse-p")[0]
     client.post(f"/api/sessions/{sid}/chat/stream", json={"content": "测试持久化"})
     msgs = client.get(f"/api/sessions/{sid}/messages").json()["messages"]
     assert [m["role"] for m in msgs] == ["visitor", "agent"]

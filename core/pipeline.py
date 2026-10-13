@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass, field
 
 from core import config, guardrail, llm, memory as memory_mod, retrieval, store, tools as tools_mod
+from core.schemas import LlmReply
 
 
 @dataclass
@@ -175,27 +176,22 @@ async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> 
 def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
     """LLM ReAct 结果 → AgentReply（含工具执行与低置信度兜底转人工）；run() 与 run_stream() 共用。"""
     tools = ctx["tools"]
-    tool_name = data.get("tool")
+    parsed = LlmReply.safe_parse(data)  # 结构化输出校验，替代裸 dict.get
+    tool_name = parsed.tool
     tool_result = None
     if tool_name and tool_name in tools:
-        args = data.get("tool_args") or {}
-        if not isinstance(args, dict):
-            args = {}
+        args = parsed.tool_args or {}
         try:
             tool_result = tools[tool_name](**args)
         except TypeError:
             tool_result = {"tool": tool_name, "status": "bad_args", "note": "工具参数不合法。"}
-        data["answer"] = (tool_result or {}).get("note") or data.get("answer") or "工具已执行。"
-    try:
-        confidence = float(data.get("confidence", 0.0))
-    except (TypeError, ValueError):
-        confidence = 0.0
+        parsed.answer = (tool_result or {}).get("note") or parsed.answer or "工具已执行。"
     answer = AgentReply(
-        text=data.get("answer", ""),
-        citations=data.get("citations", []) if isinstance(data.get("citations"), list) else [],
-        confidence=confidence,
-        escalate=bool(data.get("escalate", False)),
-        escalate_reason=data.get("escalate_reason", ""),
+        text=parsed.answer,
+        citations=parsed.citations,
+        confidence=parsed.confidence,
+        escalate=parsed.escalate,
+        escalate_reason=parsed.escalate_reason,
         tool_used=tool_name,
         tool_result=tool_result,
         ctx_used=ctx["used"],
