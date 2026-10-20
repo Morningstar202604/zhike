@@ -4,19 +4,33 @@ import logging
 import os
 import re
 import secrets
+import contextlib
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from core import config, events_log, guardrail, llm, memory as memory_mod, net, pipeline, ratelimit, retrieval, security, sessions, store, tools as tools_mod
+from core import config, events_log, executor_client, guardrail, llm, memory as memory_mod, net, pipeline, ratelimit, retrieval, security, sessions, store, tools as tools_mod
+from core.actions import authz as actions_authz
+from core.actions import client as actions_client
+from core.actions import registry as actions_registry
+from core.actions import service as actions_service
 
 logger = logging.getLogger("core")
 ev = logging.getLogger("cs.events")
+
+# ---- 入参体积护栏（模块级常量，便于配置与测试覆盖）----
+# 图片 base64 上限（约 6MB 原始图；与 llm._build_messages 的可接受范围一致）
+MAX_IMAGE_B64_CHARS = int(os.environ.get("MAX_IMAGE_B64_CHARS", str(8_000_000)))
+# 单条文本硬上限（pipeline 还会按 max_message_len 截断，这里挡住恶意超大 payload）
+MAX_TEXT_CHARS = int(os.environ.get("MAX_TEXT_CHARS", "20000"))
+# 知识库批量导入单次条目数上限
+MAX_KB_IMPORT_ITEMS = int(os.environ.get("MAX_KB_IMPORT_ITEMS", "2000"))
 
 
 def _parse_kb_blocks(raw: str) -> list[tuple[str, str]]:
@@ -77,25 +91,29 @@ class Hub:
             except Exception:  # aqg: top-level boundary
                 self.operator_conns.discard(ws)
 
-    async def connect(self, session_id: str, ws: WebSocket, already_accepted: bool = False):
-        if not already_accepted:
-            await ws.accept()
-        self.visitor_conns.setdefault(session_id, set()).add(ws)
+    async def _hold(self, ws: WebSocket, on_close):
+        """挂住连接直到断开。任何异常路径都必须执行清理，否则死连接会永久占用注册表。"""
         try:
             while True:
                 await ws.receive_text()
         except WebSocketDisconnect:
-            self.visitor_conns.get(session_id, set()).discard(ws)
+            pass
+        except Exception as e:  # 客户端异常断开/协议错误：同样要清理
+            ev.info("ws closed abnormally: %s: %s", type(e).__name__, str(e)[:80])
+        finally:
+            on_close()
+
+    async def connect(self, session_id: str, ws: WebSocket, already_accepted: bool = False):
+        if not already_accepted:
+            await ws.accept()
+        self.visitor_conns.setdefault(session_id, set()).add(ws)
+        await self._hold(ws, lambda: self.visitor_conns.get(session_id, set()).discard(ws))
 
     async def connect_operator(self, ws: WebSocket, already_accepted: bool = False):
         if not already_accepted:
             await ws.accept()
         self.operator_conns.add(ws)
-        try:
-            while True:
-                await ws.receive_text()
-        except WebSocketDisconnect:
-            self.operator_conns.discard(ws)
+        await self._hold(ws, lambda: self.operator_conns.discard(ws))
 
 
 hub = Hub()
@@ -131,9 +149,28 @@ def _require_session_secret(sid: str, x_session_secret: str | None = Header(defa
         raise HTTPException(401, "会话无效或归属校验失败")
 
 
+def _require_admin_or_session(
+    sid: str,
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    x_session_secret: str | None = Header(default=None, alias="X-Session-Secret"),
+):
+    """只读会话内容的双重授权：管理员令牌（控制台/坐席查看任意会话）或访客自己的 secret。
+
+    渠道会话（QQ）创建时没有 secret，坐席台必须靠管理员令牌才能回放对话；
+    写操作（发消息/升级/反馈）仍只认 secret，避免拿管理员令牌代替访客身份。
+    """
+    token = security.admin_token()
+    if token and security.constant_time_equals(x_admin_token, token):
+        return
+    if not store.check_session_secret(sid, x_session_secret or ""):
+        raise HTTPException(401, "会话无效或需要管理员令牌")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     store.init_db()
+    if retrieval.seed_kb_if_missing():
+        logger.info("knowledge base seeded to %s", retrieval.KB_PATH)
     applied = net.apply()
     logger.info("DNS overrides applied: %s (LLM_HOSTS set=%s)", applied, bool(os.environ.get("LLM_HOSTS")))
     events_log.attach()
@@ -163,7 +200,7 @@ def create_app() -> FastAPI:
         allow_origins=origins,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Authorization", "X-Admin-Token", "X-Channel-Token", "X-Session-Secret", "Content-Type"],
+        allow_headers=["Authorization", "X-Admin-Token", "X-Channel-Token", "X-Session-Secret", "X-Agent-Token", "Content-Type"],
     )
 
     class NewSession(BaseModel):
@@ -215,29 +252,84 @@ def create_app() -> FastAPI:
         display_name: str = ""
         image_b64: str | None = None
 
+    # ---- 入参体积护栏 ----
+    def _check_payload(text: str | None, image_b64: str | None) -> None:
+        if text and len(text) > MAX_TEXT_CHARS:
+            raise HTTPException(413, f"文本过长（上限 {MAX_TEXT_CHARS} 字符）")
+        if image_b64:
+            if len(image_b64) > MAX_IMAGE_B64_CHARS:
+                raise HTTPException(413, f"图片过大（base64 上限 {MAX_IMAGE_B64_CHARS} 字符）")
+            if image_b64.startswith("data:") and "," not in image_b64:
+                raise HTTPException(400, "图片 data URL 格式不合法")
+
     class HeartbeatIn(BaseModel):
         gateway: str
         status: str = "online"
         detail: dict = {}
 
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception):
+        """兜底：任何未预料的异常都要落日志并返回结构化 JSON，而不是让客户端拿到 traceback。"""
+        ev.error("unhandled %s %s: %s: %s",
+                 request.method, request.url.path, type(exc).__name__, str(exc)[:300])
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "服务内部错误，已记录日志"},
+        )
+
     @app.get("/healthz")
     def healthz():
         return {"ok": True}
 
-    async def _handle_inbound(sid: str, text: str, image: str | None, visitor_key: str):
-        inj, inj_action = guardrail.detect_injection(text)
+    def _preflight(sid: str, text: str, visitor_key: str) -> None:
+        """入口侧注入检测与审计落库。所有入口（渠道/非流式/流式）都必须先过一次。"""
+        inj, inj_action = guardrail.detect_injection(text or "")
         if inj:
             store.log_injection(sid, visitor_key, text, inj, inj_action or "block")
             if (inj_action or "block") == "block":
                 ev.warning(f"guardrail block visitor={visitor_key} hit={inj!r}")
+
+    def _remember(visitor_key: str, text: str, reply) -> None:
+        """写入最近话题与偏好沉淀。
+
+        两种情况必须跳过：
+        1. 本轮就是 opt-out 语句（否则把"别记我"又存回去）
+        2. 该访客此前已 opt-out（持久化标记，否则会话内还会继续记录）
+        """
+        if not text or getattr(reply, "opt_out", False):
+            return
+        if store.memory_opted_out(visitor_key):
+            return
+        store.set_memory(visitor_key, "last_topic", text[:50])
+        memory_mod.capture(text, visitor_key, config.get_config())
+
+    def _safe_reply(error: Exception) -> "pipeline.AgentReply":
+        """管线内部异常时的兜底回复。
+
+        用户不该因为一次模型/网络故障看到 500，也不能看到沉默——统一转人工并留日志。
+        """
+        ev.error("pipeline failed: %s: %s", type(error).__name__, str(error)[:200])
+        return pipeline.AgentReply(
+            text="抱歉，刚才处理时出了点问题，已为您转接人工坐席。",
+            confidence=0.0,
+            escalate=True,
+            escalate_reason="pipeline_error",
+            mode="fallback",
+        )
+
+    async def _handle_inbound(sid: str, text: str, image: str | None, visitor_key: str):
+        _preflight(sid, text, visitor_key)
         ev.info(f"ingest visitor={visitor_key} text={text[:60]}")
         history = store.get_messages(sid)
         store.add_message(sid, "visitor", text or "（附图）")
-        reply = await pipeline.run(
-            pipeline.ChannelMessage(text=text, image_b64=image or ""),
-            history,
-            visitor_key,
-        )
+        try:
+            reply = await pipeline.run(
+                pipeline.ChannelMessage(text=text, image_b64=image or ""),
+                history,
+                visitor_key,
+            )
+        except Exception as e:  # 管线内部异常不能变成 500，也不能让访客干等
+            reply = _safe_reply(e)
         msg_id = store.add_message(sid, "agent", reply.text, refs=reply.citations, tool_used=reply.tool_used)
         ev.info(
             f"reply session={sid[:8]} mode={reply.mode} tool={reply.tool_used} "
@@ -251,9 +343,7 @@ def create_app() -> FastAPI:
             await hub.broadcast_to_operators(
                 {"type": "new_pending", "session_id": sid, "ticket_id": ticket_id, "reason": reply.escalate_reason}
             )
-        if text:
-            store.set_memory(visitor_key, "last_topic", text[:50])
-            memory_mod.capture(text, visitor_key, config.get_config())
+        _remember(visitor_key, text, reply)
         return reply, msg_id, ticket_id
 
     @app.post("/v1/ingest", dependencies=[Depends(require_channel)])
@@ -261,6 +351,7 @@ def create_app() -> FastAPI:
         text = (body.text or "").strip()
         if not text and not body.image_b64:
             raise HTTPException(400, "empty message")
+        _check_payload(text, body.image_b64)
         identity = f"{body.channel_type}:{body.channel_user_id}"
         limiter: security.RateLimiter = app.state.limiter
         if not limiter.allow(identity):
@@ -292,7 +383,7 @@ def create_app() -> FastAPI:
         return {"session_id": sid, "session_secret": secret, "status": "ongoing", "visitor_id": body.visitor_id}
 
     @app.get("/api/sessions/{sid}/messages")
-    def get_messages(sid: str, _=Depends(_require_session_secret)):
+    def get_messages(sid: str, _=Depends(_require_admin_or_session)):
         return {"messages": store.get_messages(sid)}
 
     @app.post("/api/sessions/{sid}/messages")
@@ -300,14 +391,17 @@ def create_app() -> FastAPI:
         content = (body.content or "").strip()
         if not content and not body.image:
             raise HTTPException(400, "empty message")
+        _check_payload(content, body.image)
         sess = store.get_session(sid)
+        if sess and sess["status"] == "closed":
+            raise HTTPException(409, "会话已关闭，请开始新会话")
         visitor_id = (sess or {}).get("visitor_id", "anonymous")
         limiter: security.RateLimiter = app.state.limiter
         # 限流 key 用客户端 IP（不再用可伪造的 visitor_id），防一人刷爆全匿名桶
         ip_key = f"ip:{request.client.host if request.client else 'unknown'}"
         if not limiter.allow(ip_key):
             raise HTTPException(429, "rate limited")
-        reply, msg_id, _ = await _handle_inbound(sid, content, body.image, visitor_id)
+        reply, msg_id, ticket_id = await _handle_inbound(sid, content, body.image, visitor_id)
         return {
             "role": "agent",
             "text": reply.text,
@@ -315,7 +409,7 @@ def create_app() -> FastAPI:
             "confidence": reply.confidence,
             "escalate": reply.escalate,
             "escalate_reason": reply.escalate_reason,
-            "ticket_id": None,
+            "ticket_id": ticket_id,
             "mode": reply.mode,
             "tool_used": reply.tool_used,
             "tool_result": reply.tool_result,
@@ -333,6 +427,7 @@ def create_app() -> FastAPI:
         content = (body.content or "").strip()
         if not content and not body.image:
             raise HTTPException(400, "empty message")
+        _check_payload(content, body.image)
         sess = store.get_session(sid)
         visitor_id = (sess or {}).get("visitor_id", "anonymous")
         limiter: security.RateLimiter = app.state.limiter
@@ -341,33 +436,40 @@ def create_app() -> FastAPI:
             raise HTTPException(429, "rate limited")
         if not sess:
             raise HTTPException(404, "session not found")
+        if sess["status"] == "closed":
+            raise HTTPException(409, "会话已关闭，请开始新会话")
 
         async def gen():
             yield _sse("meta", {"session_id": sid})
+            _preflight(sid, content, visitor_id)
             ev.info(f"ingest(visitor stream) visitor={visitor_id} text={content[:60]}")
             history = store.get_messages(sid)
             store.add_message(sid, "visitor", content or "（附图）")
             reply, msg_id, ticket_id = None, None, None
-            async for kind, payload in pipeline.run_stream(
-                pipeline.ChannelMessage(text=content, image_b64=body.image or ""),
-                history,
-                visitor_id,
-            ):
-                if kind == "delta":
-                    yield _sse("delta", {"text": payload})
-                else:
-                    reply = payload
-            msg_id = store.add_message(sid, "agent", reply.text, reply.citations)
+            try:
+                async for kind, payload in pipeline.run_stream(
+                    pipeline.ChannelMessage(text=content, image_b64=body.image or ""),
+                    history,
+                    visitor_id,
+                ):
+                    if kind == "delta":
+                        yield _sse("delta", {"text": payload})
+                    else:
+                        reply = payload
+            except Exception as e:  # 流式过程中断：不能把 None 传到下面去
+                reply = _safe_reply(e)
+            if reply is None:
+                # run_stream 正常结束却没产出 final（契约破坏或空实现）：退回安全话术，不让请求 500
+                reply = _safe_reply(RuntimeError("pipeline stream produced no final reply"))
+            msg_id = store.add_message(sid, "agent", reply.text, reply.citations, tool_used=reply.tool_used)
             if reply.escalate:
-                ticket_id = store.create_ticket(sid)
                 store.mark_escalated(sid, reply.escalate_reason)
+                ticket_id = store.create_ticket(sid)
                 ev.info(f"escalate session={sid} reason={reply.escalate_reason} ticket={ticket_id}")
                 await hub.broadcast_to_operators(
                     {"type": "new_pending", "session_id": sid, "ticket_id": ticket_id, "reason": reply.escalate_reason}
                 )
-            if content:
-                store.set_memory(visitor_id, "last_topic", content[:50])
-                memory_mod.capture(content, visitor_id, config.get_config())
+            _remember(visitor_id, content, reply)
             yield _sse("done", {
                 "role": "agent",
                 "text": reply.text,
@@ -388,6 +490,11 @@ def create_app() -> FastAPI:
 
     @app.post("/api/sessions/{sid}/escalate")
     async def escalate(sid: str, _=Depends(_require_session_secret)):
+        sess = store.get_session(sid)
+        if not sess:
+            raise HTTPException(404, "会话不存在")
+        if sess["status"] == "closed":
+            raise HTTPException(409, "会话已关闭")
         store.mark_escalated(sid, "visitor_requested")
         ticket_id = store.create_ticket(sid)
         store.add_message(sid, "agent", "好的，正在为您转接人工坐席。")
@@ -404,6 +511,8 @@ def create_app() -> FastAPI:
     async def take_session(sid: str, body: NewSession | None = None):
         if body is None:
             body = NewSession()
+        if not store.get_session(sid):
+            raise HTTPException(404, "会话不存在")
         store.set_status(sid, "agent_handled", assignee=body.visitor_id)
         await hub.publish(sid, {"type": "agent_handled", "operator": body.visitor_id, "session_id": sid})
         await hub.broadcast_to_operators({"type": "session_updated", "session_id": sid, "status": "agent_handled"})
@@ -414,6 +523,8 @@ def create_app() -> FastAPI:
         content = body.content.strip()
         if not content:
             raise HTTPException(400, "empty message")
+        if not store.get_session(sid):
+            raise HTTPException(404, "会话不存在")
         store.add_message(sid, "operator", content)
         await hub.publish(
             sid,
@@ -424,6 +535,8 @@ def create_app() -> FastAPI:
 
     @app.post("/api/operator/close/{sid}", dependencies=[Depends(require_admin)])
     async def close_session(sid: str):
+        if not store.get_session(sid):
+            raise HTTPException(404, "会话不存在")
         store.close_session(sid)
         await hub.publish(sid, {"type": "session_closed", "session_id": sid})
         await hub.broadcast_to_operators({"type": "session_updated", "session_id": sid, "status": "closed"})
@@ -441,6 +554,14 @@ def create_app() -> FastAPI:
     def add_feedback(sid: str, body: FeedbackIn, _=Depends(_require_session_secret)):
         if body.rating not in ("helpful", "not_helpful"):
             raise HTTPException(400, "rating must be helpful or not_helpful")
+        # message_id 必须属于本会话且是 agent 消息，防止给他人消息打分
+        if body.message_id:
+            msgs = store.get_messages(sid)
+            target = next((m for m in msgs if m["id"] == body.message_id), None)
+            if target is None:
+                raise HTTPException(400, "message_id 不属于该会话")
+            if target["role"] != "agent":
+                raise HTTPException(400, "只能对 Agent 回复评分")
         store.add_feedback(sid, body.message_id or 0, body.rating, body.comment)
         if body.rating == "not_helpful":
             sess = store.get_session(sid)
@@ -462,11 +583,12 @@ def create_app() -> FastAPI:
         engine_mode = cfg.get("engine", {}).get("mode", "auto")
         effective = "llm_react" if (engine_mode in ("llm", "auto") and llm_cfg.get("has_key")) else "rule_react"
         active = tools_mod.active_tools(cfg)
-        # 脱敏：不返回 base_url / 具体 model 名等内部拓扑，避免给攻击者侦察图
+        # 脱敏：不返回 base_url 等内部拓扑；model 名是界面展示必需（总览页要显示引擎型号），且 /api/config 本就返回
         return {
             "mode": effective,
             "engine_mode": engine_mode,
             "llm_ready": bool(llm_cfg.get("has_key")),
+            "model": llm_cfg.get("model", "") if llm_cfg.get("has_key") else "",
             "kb_entries": len(retrieval.load_kb()),
             "tool_count": len(active),
             "injection_rules": len(store.list_injection_rules(enabled_only=True)),
@@ -493,7 +615,10 @@ def create_app() -> FastAPI:
 
         allowed = set(config.DEFAULTS.keys())
         patch = {k: v for k, v in (body.config or {}).items() if k in allowed}
-        cfg = config.update_config(patch)
+        try:
+            cfg = config.update_config(patch)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         key = cfg["llm"].get("api_key") or ""
         view = _copy.deepcopy(cfg)
         view["llm"]["api_key"] = ("••••" + key[-4:]) if key else ""
@@ -585,38 +710,122 @@ def create_app() -> FastAPI:
             },
         }
 
-    def _save_kb(items: list[dict]) -> None:
+    _kb_lock = threading.Lock()
+
+    @contextlib.contextmanager
+    def _kb_file_lock():
+        """跨进程文件锁。
+
+        只用 threading.Lock 不够：多 worker（uvicorn --workers N）或多实例部署时
+        每个进程有自己的锁对象，彼此不互斥，仍会丢更新（实测 5 进程各写 10 条只剩 12 条）。
+        这里用操作系统级独占锁，Linux/macOS 走 fcntl，Windows 走 msvcrt。
+        """
+        lock_path = retrieval.KB_PATH.with_suffix(retrieval.KB_PATH.suffix + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(lock_path, "a+")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                # 阻塞等待：重试直到拿到锁
+                while True:
+                    try:
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+                        break
+                    except OSError:
+                        time.sleep(0.05)
+            else:
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            fh.close()
+
+    def _kb_mutate(fn):
+        """在【进程内锁 + 跨进程文件锁】内完成「读 → 改 → 写」。
+
+        两层锁缺一不可：
+        - threading.Lock：同进程多线程互斥
+        - 文件锁：多 worker/多实例互斥
+        只锁写盘不行，必须把读取也纳入临界区，否则读到旧列表后覆盖（实测丢 78% 数据）。
+        """
+        with _kb_lock, _kb_file_lock():
+            # 强制绕过缓存从磁盘读，拿到的才是最新内容
+            retrieval._KB_CACHE = None
+            items = list(retrieval.load_kb())
+            result, new_items = fn(items)
+            _save_kb_unlocked(new_items)
+            retrieval._KB_CACHE = None
+            return result, new_items
+
+    def _save_kb_unlocked(items: list[dict]) -> None:
+        """原子写知识库。
+
+        并发安全靠三件事：
+        1. 模块级锁串行化「读-改-写」，避免两个管理员同时改导致丢更新
+        2. 临时文件名带 uuid，避免并发抢同一个 .tmp（Windows 上会 WinError 32）
+        3. os.replace 失败时重试（杀毒/索引器会短暂占用句柄）
+        """
         p = retrieval.KB_PATH
         p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"kb": items}, f, ensure_ascii=False, indent=2)
+        last_err = None
+        for attempt in range(3):
+            try:
+                os.replace(tmp, p)
+                break
+            except OSError as e:
+                last_err = e
+                time.sleep(0.05 * (attempt + 1))
+        else:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise RuntimeError(f"知识库写入失败：{type(last_err).__name__}") from last_err
 
     @app.post("/api/kb", dependencies=[Depends(require_admin)])
     def add_kb(body: KbIn):
-        items = retrieval.load_kb()
-        if any(e["id"] == body.id for e in items):
-            raise HTTPException(400, "kb id already exists")
-        items.append({"id": body.id, "text": body.text, "title": body.title, "answer": body.answer, "tags": body.tags})
-        _save_kb(items)
+        def op(items):
+            if any(e["id"] == body.id for e in items):
+                raise HTTPException(400, "kb id already exists")
+            items.append({"id": body.id, "text": body.text, "title": body.title,
+                          "answer": body.answer, "tags": body.tags})
+            return None, items
+        _, items = _kb_mutate(op)
         return {"kb": items}
 
     @app.put("/api/kb/{kb_id}", dependencies=[Depends(require_admin)])
     def update_kb(kb_id: str, body: KbIn):
-        items = retrieval.load_kb()
-        for i, e in enumerate(items):
-            if e["id"] == kb_id:
-                items[i] = {"id": kb_id, "text": body.text, "title": body.title, "answer": body.answer, "tags": body.tags}
-                _save_kb(items)
-                return {"kb": items}
-        raise HTTPException(404, "kb not found")
+        def op(items):
+            for i, e in enumerate(items):
+                if e["id"] == kb_id:
+                    items[i] = {"id": kb_id, "text": body.text, "title": body.title,
+                                "answer": body.answer, "tags": body.tags}
+                    return None, items
+            raise HTTPException(404, "kb not found")
+        _, items = _kb_mutate(op)
+        return {"kb": items}
 
     @app.delete("/api/kb/{kb_id}", dependencies=[Depends(require_admin)])
     def delete_kb(kb_id: str):
-        items = retrieval.load_kb()
-        new = [e for e in items if e["id"] != kb_id]
-        if len(new) == len(items):
-            raise HTTPException(404, "kb not found")
-        _save_kb(new)
+        def op(items):
+            new = [e for e in items if e["id"] != kb_id]
+            if len(new) == len(items):
+                raise HTTPException(404, "kb not found")
+            return None, new
+        _, new = _kb_mutate(op)
         return {"kb": new}
 
     @app.post("/api/kb/import", dependencies=[Depends(require_admin)])
@@ -628,18 +837,23 @@ def create_app() -> FastAPI:
         blocks = _parse_kb_blocks(body.text)
         if not blocks:
             raise HTTPException(400, "未能解析出任何条目：用「## 标题」开头，或用空行分隔「标题/正文」块")
-        items = [] if body.replace else retrieval.load_kb()
-        base = _next_kb_base(items)
-        for title, answer in blocks:
-            base += 1
-            items.append({
-                "id": f"KB{base}",
-                "title": title[:80],
-                "text": f"{title} {answer}"[:300],
-                "answer": answer or title,
-                "tags": [],
-            })
-        _save_kb(items)
+        if len(blocks) > MAX_KB_IMPORT_ITEMS:
+            raise HTTPException(413, f"单次导入条目过多（{len(blocks)} > {MAX_KB_IMPORT_ITEMS}），请分批导入")
+        def op(items):
+            if body.replace:
+                items = []
+            base = _next_kb_base(items)
+            for title, answer in blocks:
+                base += 1
+                items.append({
+                    "id": f"KB{base}",
+                    "title": title[:80],
+                    "text": f"{title} {answer}"[:300],
+                    "answer": answer or title,
+                    "tags": [],
+                })
+            return None, items
+        _, items = _kb_mutate(op)
         return {"added": len(blocks), "total": len(items), "kb": items}
 
     @app.post("/api/kb/import/document", dependencies=[Depends(require_admin)])
@@ -661,18 +875,19 @@ def create_app() -> FastAPI:
             raise HTTPException(400, str(e))
         if not blocks:
             raise HTTPException(400, "未能从文档中解析出内容")
-        items = retrieval.load_kb()
-        base = _next_kb_base(items)
-        for title, chunk in blocks:
-            base += 1
-            items.append({
-                "id": f"KB{base}",
-                "title": title[:80],
-                "text": f"{title} {chunk}"[:300],
-                "answer": chunk,
-                "tags": ["文档"],
-            })
-        _save_kb(items)
+        def op(items):
+            base = _next_kb_base(items)
+            for title, chunk in blocks:
+                base += 1
+                items.append({
+                    "id": f"KB{base}",
+                    "title": title[:80],
+                    "text": f"{title} {chunk}"[:300],
+                    "answer": chunk,
+                    "tags": ["文档"],
+                })
+            return None, items
+        _, items = _kb_mutate(op)
         return {"added": len(blocks), "total": len(items), "file": fname}
 
     @app.post("/api/kb/test", dependencies=[Depends(require_admin)])
@@ -760,17 +975,19 @@ def create_app() -> FastAPI:
         if not text:
             raise HTTPException(400, "empty text")
         title = (body.title or text.strip().splitlines()[0] or text[:30]).strip()[:80]
-        items = retrieval.load_kb()
-        base = _next_kb_base(items)
-        entry = {
-            "id": f"KB{base + 1}",
-            "title": title,
-            "text": f"{title} {text}"[:300],
-            "answer": text,
-            "tags": body.tags or ["坐席回流"],
-        }
-        items.append(entry)
-        _save_kb(items)
+
+        def op(items):
+            base = _next_kb_base(items)
+            entry = {
+                "id": f"KB{base + 1}",
+                "title": title,
+                "text": f"{title} {text}"[:300],
+                "answer": text,
+                "tags": body.tags or ["坐席回流"],
+            }
+            items.append(entry)
+            return entry, items
+        entry, items = _kb_mutate(op)
         return {"entry": entry, "total": len(items)}
 
     @app.post("/v1/gateway/heartbeat", dependencies=[Depends(require_channel)])
@@ -824,6 +1041,275 @@ def create_app() -> FastAPI:
     @app.get("/api/admin/memory", dependencies=[Depends(require_admin)])
     def admin_memory():
         return {"entries": store.all_memory()}
+
+    # ============================================================
+    # 动作层：动作目录 / 执行 / 审计 / 审批
+    # ============================================================
+
+    class ActionExecuteIn(BaseModel):
+        action: str
+        params: dict = {}
+        session_id: str | None = None
+        idempotency_key: str | None = None
+        approval_id: str | None = None
+        # 由谁触发：admin / operator:xxx / qq:123 / agent@qq:123
+        # 不传时按管理员令牌推断为 admin（控制台直接调用）
+        principal: str | None = None
+
+    class ApprovalIn(BaseModel):
+        reason: str = ""
+
+    def _principal_from(body_principal: str | None, x_admin_token: str | None,
+                        x_agent_token: str | None = None) -> str:
+        """决定本次调用的主体。**绝不信任请求体自报的身份。**
+
+        规则（按优先级）：
+        1. 带合法 AGENT_TOKEN → 允许声明 agent@<origin>（网关/Agent 服务间调用）
+        2. 带合法 ADMIN_TOKEN → admin
+        3. 否则 → 匿名 qq 主体（只读之外一律拒绝）
+
+        为什么不能直接用 body.principal：那样任何匿名请求写
+        `{"principal":"admin"}` 就能拿到管理员权限（已复现）。
+        """
+        token = security.admin_token()
+        is_admin = bool(token) and security.constant_time_equals(x_admin_token, token)
+
+        agent_token = os.environ.get("AGENT_TOKEN", "").strip()
+        is_agent = bool(agent_token) and security.constant_time_equals(x_agent_token, agent_token)
+
+        if is_agent:
+            # 服务间调用：允许传 agent@<origin>，但仍限制为 agent 主体
+            if body_principal and body_principal.startswith("agent"):
+                return body_principal
+            return "agent"
+        if is_admin:
+            # 管理员可以声明"以某个 QQ 身份触发"用于测试，但降级为 agent 语义
+            if body_principal and body_principal.startswith("agent"):
+                return body_principal
+            return "admin"
+        # 未认证：忽略任何自报身份
+        return "qq:anonymous"
+
+    @app.get("/api/actions/catalog", dependencies=[Depends(require_admin)])
+    def actions_catalog():
+        return {
+            "actions": actions_registry.catalog(),
+            "risks": actions_authz.risk_summary(),
+            "agent_tier": actions_authz.agent_tier(),
+            "tier_label": actions_authz.TIER_LABEL[actions_authz.agent_tier()],
+            "l2_enabled": actions_authz.l2_enabled(),
+        }
+
+    @app.post("/api/actions/execute")
+    async def actions_execute(body: ActionExecuteIn,
+                              x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+                              x_agent_token: str | None = Header(default=None, alias="X-Agent-Token")):
+        """执行动作。
+
+        权限由 principal 决定，不依赖管理员令牌本身——
+        带管理员令牌只说明"调用方是控制台"，具体能做什么仍走策略判定。
+        """
+        principal = _principal_from(body.principal, x_admin_token, x_agent_token)
+        try:
+            result = await actions_service.execute(
+                action=body.action,
+                params=body.params or {},
+                principal_raw=principal,
+                session_id=body.session_id,
+                idempotency_key=body.idempotency_key,
+                approval_id=body.approval_id,
+            )
+        except actions_service.ActionError as e:
+            raise HTTPException(e.status, str(e), headers=None)
+        return result
+
+    @app.get("/api/actions/logs", dependencies=[Depends(require_admin)])
+    def actions_logs(limit: int = 100, status: str | None = None,
+                     action: str | None = None, risk: int | None = None):
+        return {"entries": store.action_log_list(limit=limit, status=status, action=action, risk=risk)}
+
+    @app.get("/api/approvals", dependencies=[Depends(require_admin)])
+    def approvals_list(status: str = "pending"):
+        return {"entries": store.approval_list(status=status)}
+
+    @app.get("/api/approvals/{approval_id}", dependencies=[Depends(require_admin)])
+    def approval_detail(approval_id: str):
+        ap = store.approval_get(approval_id)
+        if not ap:
+            raise HTTPException(404, "审批不存在")
+        return ap
+
+    @app.post("/api/approvals/{approval_id}/approve", dependencies=[Depends(require_admin)])
+    def approval_approve(approval_id: str):
+        try:
+            return actions_service.approve(approval_id, decided_by="admin")
+        except actions_service.ActionError as e:
+            raise HTTPException(e.status, str(e))
+
+    @app.post("/api/approvals/{approval_id}/deny", dependencies=[Depends(require_admin)])
+    def approval_deny(approval_id: str, body: ApprovalIn | None = None):
+        try:
+            return actions_service.deny(approval_id, decided_by="admin",
+                                        reason=(body.reason if body else ""))
+        except actions_service.ActionError as e:
+            raise HTTPException(e.status, str(e))
+
+    @app.get("/api/admin/audit/verify", dependencies=[Depends(require_admin)])
+    def audit_verify(from_id: int | None = None):
+        return store.verify_audit_chain(from_id)
+
+    @app.get("/api/admin/audit/entries", dependencies=[Depends(require_admin)])
+    def audit_entries(limit: int = 100):
+        with store.get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, ts, actor, kind, payload, hash FROM audit_chain ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return {"entries": [dict(r) for r in rows]}
+
+    @app.get("/api/executor/health", dependencies=[Depends(require_admin)])
+    async def executor_health():
+        """电脑执行器健康。核心侧只做 HTTP 探测，不在本进程执行任何本地命令。"""
+        return await executor_client.health()
+
+    @app.get("/api/gateway/health", dependencies=[Depends(require_admin)])
+    async def gateway_health():
+        """QQ 网关健康（协议端是否已连接）。"""
+        return await actions_client.probe()
+
+    @app.get("/api/admin/schema", dependencies=[Depends(require_admin)])
+    def admin_schema():
+        """数据库迁移版本与各表容量。"""
+        return {"schema_version": store.schema_version(), "tables": store.data_stats()}
+
+    @app.post("/api/admin/purge", dependencies=[Depends(require_admin)])
+    def admin_purge(days: int = 180):
+        """清理超过保留期的运营数据。
+
+        审计链 audit_chain 永不删除（哈希链完整性），只清理可再生的运营表。
+        """
+        try:
+            removed = store.purge_old_data(days)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        store.append_audit("admin", "data.purge", {"days": days, "removed": removed})
+        return {"days": days, "removed": removed}
+
+    @app.get("/api/admin/outbox", dependencies=[Depends(require_admin)])
+    def admin_outbox():
+        return {"stats": store.outbox_stats()}
+
+    @app.get("/api/channels/adapters", dependencies=[Depends(require_admin)])
+    def channel_adapters():
+        """已注册的渠道适配器与能力矩阵。
+
+        未接入网关时返回空列表——不假装有渠道。
+        """
+        try:
+            from gateway.adapters.bus import registry as gw_registry
+
+            return {"adapters": gw_registry.describe()}
+        except Exception:
+            return {"adapters": []}
+
+    # ============================================================
+    # Agent 多步任务（ReAct）
+    # ============================================================
+
+    class AgentRunIn(BaseModel):
+        goal: str
+        principal: str | None = None
+        session_id: str | None = None
+        max_steps: int | None = None
+
+    # 运行中的取消信号：run_id -> threading.Event
+    # 单 worker 部署下够用；多 worker 时改为查库标志（见计划阶段 3）
+    app.state.run_cancels = {}
+
+    @app.post("/api/agent/run")
+    async def agent_run(body: AgentRunIn,
+                        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+                        x_agent_token: str | None = Header(default=None, alias="X-Agent-Token")):
+        """跑一次多步任务。goal 是自然语言目标。
+
+        与 /api/actions/execute 的区别：那个执行单个动作，这个让模型自己规划多步。
+        """
+        if not body.goal.strip():
+            raise HTTPException(400, "goal 不能为空")
+        principal_raw = _principal_from(body.principal, x_admin_token, x_agent_token)
+
+        # 预算可由请求覆盖步数（其余仍走环境变量）
+        budget = {}
+        if body.max_steps is not None:
+            budget["max_steps"] = max(1, min(int(body.max_steps), 20))
+
+        import threading
+        import uuid as _uuid
+
+        from core import agent_llm, agent_loop
+
+        cancel = threading.Event()
+        run_id = _uuid.uuid4().hex
+        # 先登记再启动：这样任务一开跑就能被取消，不必等 run_id 回传
+        app.state.run_cancels[run_id] = cancel
+
+        async def llm_call(messages, tools):
+            return await agent_llm.call_llm(messages, tools)
+
+        try:
+            result = await agent_loop.run_agent(
+                goal=body.goal.strip(),
+                principal_raw=principal_raw,
+                llm_call=llm_call,
+                session_id=body.session_id,
+                budget=budget or None,
+                cancel_event=cancel,
+                run_id=run_id,
+            )
+        except Exception as e:
+            app.state.run_cancels.pop(run_id, None)
+            ev.error("agent run failed: %s: %s", type(e).__name__, str(e)[:200])
+            raise HTTPException(500, f"任务执行失败：{type(e).__name__}")
+
+        app.state.run_cancels.pop(result.run_id, None)
+        return {
+            "run_id": result.run_id,
+            "status": result.status,
+            "answer": result.answer,
+            "usage": result.usage,
+            "steps": [
+                {"step": s.step_no, "thought": s.thought, "action": s.action,
+                 "status": s.status, "duration_ms": s.duration_ms,
+                 "observation": (s.observation or "")[:300]}
+                for s in result.steps
+            ],
+            "error": result.error,
+        }
+
+    @app.get("/api/agent/runs", dependencies=[Depends(require_admin)])
+    def agent_runs(limit: int = 50, status: str | None = None):
+        return {"entries": store.agent_runs_list(limit=limit, status=status)}
+
+    @app.get("/api/agent/runs/{run_id}", dependencies=[Depends(require_admin)])
+    def agent_run_detail(run_id: str):
+        run = store.agent_run_get(run_id)
+        if not run:
+            raise HTTPException(404, "任务不存在")
+        return {"run": run, "steps": store.agent_steps_list(run_id)}
+
+    @app.post("/api/agent/runs/{run_id}/cancel", dependencies=[Depends(require_admin)])
+    def agent_run_cancel(run_id: str):
+        """取消一个运行中的任务。在下一个检查点生效（不强行中断正在执行的动作）。"""
+        evt = app.state.run_cancels.get(run_id)
+        if evt is None:
+            run = store.agent_run_get(run_id)
+            if not run:
+                raise HTTPException(404, "任务不存在")
+            if run["status"] != "running":
+                raise HTTPException(409, f"任务已结束（{run['status']}）")
+            raise HTTPException(409, "任务不在本进程运行（可能已转移到其他 worker）")
+        evt.set()
+        return {"run_id": run_id, "status": "cancelling"}
 
     @app.get("/api/debug/conn", dependencies=[Depends(require_admin)])
     def debug_conn():

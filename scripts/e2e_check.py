@@ -1,20 +1,62 @@
 """对运行中的 core 做全能力实测。
 
-用法：先启动 core（python -m uvicorn core.main:app --port 8000），然后
+用法：
     python scripts/e2e_check.py [BASE_URL]
-输出逐项 PASS/FAIL 清单，任一失败退出码 1。
+令牌从环境变量读取（与服务端保持一致）：
+    ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py
+
+也可以显式传参：
+    python scripts/e2e_check.py --base URL --admin-token xxx --channel-token yyy
+
+退出码：0=全部通过；1=有失败；2=缺少令牌（服务端已强制鉴权，无法体检）。
 """
+import argparse
 import asyncio
 import json
+import os
 import sys
 import uuid
 
 import httpx
 
-BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000").rstrip("/")
-client = httpx.Client(timeout=20)
+
+def _parse_args():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("base", nargs="?", default=None, help="core 地址，默认 http://127.0.0.1:8000")
+    ap.add_argument("--base", dest="base_opt", default=None)
+    ap.add_argument("--admin-token", default=None)
+    ap.add_argument("--channel-token", default=None)
+    return ap.parse_args()
+
+
+_ARGS = _parse_args()
+BASE = (_ARGS.base_opt or _ARGS.base or os.environ.get("E2E_BASE") or "http://127.0.0.1:8000").rstrip("/")
+ADMIN_TOKEN = _ARGS.admin_token or os.environ.get("ADMIN_TOKEN", "")
+CHANNEL_TOKEN = _ARGS.channel_token or os.environ.get("CHANNEL_TOKEN", "")
+
+# 所有请求统一带头：服务端设了令牌后，不带头的体检必然 401/503
+_HEADERS = {}
+if ADMIN_TOKEN:
+    _HEADERS["X-Admin-Token"] = ADMIN_TOKEN
+if CHANNEL_TOKEN:
+    _HEADERS["X-Channel-Token"] = CHANNEL_TOKEN
+
+client = httpx.Client(timeout=20, headers=_HEADERS)
 results = []
 run_id = uuid.uuid4().hex[:6]
+
+
+def _token_missing_hint() -> str | None:
+    """探测服务端是否强制鉴权，给出比 401 更有用的提示。"""
+    try:
+        h = client.get(f"{BASE}/api/agent/health")
+        if h.status_code == 503 and "ADMIN_TOKEN" in h.text:
+            return "服务端未设置 ADMIN_TOKEN（管理接口禁用）。若只想跑渠道相关检查，请设置 ADMIN_TOKEN 后重启服务。"
+        if h.status_code == 401 and not ADMIN_TOKEN:
+            return "服务端已设置 ADMIN_TOKEN，但脚本未提供：用 ADMIN_TOKEN=xxx 环境变量或 --admin-token 传入。"
+    except Exception:
+        return None
+    return None
 
 
 def check(name, fn):
@@ -40,6 +82,7 @@ def health():
     r = client.get(f"{BASE}/healthz")
     assert r.status_code == 200 and r.json()["ok"] is True, r.text[:120]
     r2 = client.get(f"{BASE}/api/agent/health")
+    assert r2.status_code == 200, f"/api/agent/health HTTP {r2.status_code}: {r2.text[:120]}（多半是缺 ADMIN_TOKEN）"
     h = r2.json()
     assert h["kb_entries"] > 0 and h["tool_count"] > 0, f"health 异常: {h}"
     return f"mode={h['mode']} kb={h['kb_entries']} tools={h['tool_count']}"
@@ -157,16 +200,25 @@ def operator_flow():
     return "队列→接管→回复→关闭 ✓"
 
 
+def _web_session(visitor: str) -> tuple[str, str]:
+    """建 web 访客会话并返回 (sid, secret)。访客写操作必须带 secret。"""
+    d = client.post(f"{BASE}/api/sessions", json={"visitor_id": visitor}).json()
+    return d["session_id"], d["session_secret"]
+
+
 def feedback_and_negative_escalate():
     uid = f"fb-{run_id}"
-    sid = client.post(f"{BASE}/api/sessions", json={"visitor_id": uid}).json()["session_id"]
-    client.post(f"{BASE}/api/sessions/{sid}/messages", json={"content": "怎么开发票"})
-    r = client.post(f"{BASE}/api/sessions/{sid}/feedback", json={"rating": "helpful"})
-    assert r.json()["escalated"] is False
-    r2 = client.post(f"{BASE}/api/sessions/{sid}/feedback", json={"rating": "not_helpful"})
-    assert r2.json()["escalated"] is True and r2.json()["ticket_id"], r2.text
+    sid, secret = _web_session(uid)
+    h = {"X-Session-Secret": secret}
+    r = client.post(f"{BASE}/api/sessions/{sid}/messages", json={"content": "怎么开发票"}, headers=h)
+    assert r.status_code == 200, r.text[:120]
+    r1 = client.post(f"{BASE}/api/sessions/{sid}/feedback", json={"rating": "helpful"}, headers=h)
+    assert r1.json()["escalated"] is False, r1.text
+    r2 = client.post(f"{BASE}/api/sessions/{sid}/feedback", json={"rating": "not_helpful"}, headers=h)
+    body = r2.json()
+    assert body["escalated"] is True and body["ticket_id"], r2.text
     s = client.get(f"{BASE}/api/feedback/summary").json()
-    assert s["helpful"] >= 1 and s["not_helpful"] >= 1
+    assert s["helpful"] >= 1 and s["not_helpful"] >= 1, s
     return f"好评率汇总 {s['help_rate']:.0%}，差评自动升级 ✓"
 
 
@@ -214,7 +266,14 @@ def tool_registry_crud():
 
 async def ws_push():
     import websockets
-    async with websockets.connect(f"{BASE.replace('http', 'ws')}/ws/operator") as ws:
+
+    if not ADMIN_TOKEN:
+        raise AssertionError("坐席 WS 需要管理员令牌：设置 ADMIN_TOKEN 环境变量或 --admin-token")
+    # 与服务端约定一致：Sec-WebSocket-Protocol 传 ["zhike-admin", "<token>"]
+    async with websockets.connect(
+        f"{BASE.replace('http', 'ws')}/ws/operator",
+        subprotocols=["zhike-admin", ADMIN_TOKEN],
+    ) as ws:
         uid = f"ws-{run_id}"
         sid = ingest("帮我接一条根本不存在的外部线路XYZ", uid, "ws-g1")["session_id"]
         raw = await asyncio.wait_for(ws.recv(), timeout=10)
@@ -241,6 +300,15 @@ check("14 配置热更新（引擎模式即时生效）", config_hot_reload)
 check("15 知识库 CRUD+新条目立即可检索", kb_crud_and_retrieval)
 check("16 工具注册表 CRUD", tool_registry_crud)
 check("17 WS 实时推送（坐席端）", lambda: asyncio.run(ws_push()))
+
+_hint = _token_missing_hint()
+if _hint:
+    print(f"[令牌缺失] {_hint}")
+    print("           （体检需要与服务端一致的 ADMIN_TOKEN / CHANNEL_TOKEN）")
+    sys.exit(2)
+if not ADMIN_TOKEN or not CHANNEL_TOKEN:
+    print("[提示] 未同时提供 ADMIN_TOKEN 与 CHANNEL_TOKEN，相关用例预期会失败；")
+    print("       生产模式（两个都设了）下必须先提供令牌，否则本脚本无意义。")
 
 width = max(len(n) for n, _, _ in results)
 failed = 0

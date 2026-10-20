@@ -33,6 +33,8 @@ class AgentReply:
     tool_result: dict | None = None
     memory_note: str | None = None
     ctx_used: dict | None = None
+    # 访客明确要求忘记自己时置 True：调用方不得再把本轮文本写回记忆
+    opt_out: bool = False
 
 
 def _relevant_history(history: list[dict], query: str, turns: int, relevant_only: bool) -> list[dict]:
@@ -74,9 +76,12 @@ def build_context(query: str, history: list[dict], cfg: dict, visitor_id: str) -
     emb_flag = cfg.get("retrieval", {}).get("embedding", "auto")
     use_emb = None if emb_flag == "auto" else (emb_flag == "on")
     used["kb"] = {"enabled": bool(modules_on.get("kb", True)), "hits": []}
-    # 查询改写（零成本规则版）：短问句/指代开头时，用记忆里的最近话题补全检索意图，缓解多轮指代丢失
+    # 查询改写（零成本规则版）：短问句/指代开头时，用记忆里的最近话题补全检索意图
+    # 记忆模块关闭时不能再用 last_topic 改写——否则「关闭记忆」形同虚设，
+    # 且会把历史话题带进本次检索（隐私问题，已复现）。
     ret_query = query
-    if query and (len(query) < 8 or re.match(r"^(它|这|那|该|此|怎么弄|怎么办|为什么|多少)", query)):
+    memory_on = modules_on.get("memory", True) and cfg.get("memory", {}).get("enable", True)
+    if memory_on and query and (len(query) < 8 or re.match(r"^(它|这|那|该|此|怎么弄|怎么办|为什么|多少)", query)):
         last = (store.get_memory(visitor_id) or {}).get("last_topic", "").strip()
         if last and last not in query:
             ret_query = f"{last} {query}"
@@ -136,11 +141,16 @@ def _rule_react(query: str, ctx: dict, cfg: dict) -> AgentReply:
     if tool_name:
         result = tools[tool_name](**tool_args)
         note = result.get("note") or json.dumps(result, ensure_ascii=False)
+        # 工具明确说"没找到"时必须真的转人工——否则对客承诺与系统行为不一致
+        # （lookup_policy 返回 found=False 时文案写着"已转人工"，但 escalate 是 False，已复现）
+        missed = result.get("found") is False
         return AgentReply(
             text=note,
-            confidence=0.9,
+            confidence=0.4 if missed else 0.9,
             tool_used=tool_name,
             tool_result=result,
+            escalate=missed,
+            escalate_reason="knowledge_miss" if missed else "",
             memory_note=ctx["used"].get("memory", {}).get("greeting", ""),
             ctx_used=ctx["used"],
             mode="rule_react",
@@ -213,18 +223,29 @@ def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
     return answer
 
 
-# 记忆 opt-out 触发词（访客说"不要记我/忘记我"时清记忆）
+# 记忆 opt-out 触发词（访客说"不要记住我/忘记我"时清记忆）
+# 注意：中文里"记住我"中间隔了"住"，早期写成 (记|保存)我 会漏掉最常见的说法。
+# 另用负向先行排除"不要忘记我"——语义相反，不能当退出处理。
 _MEMORY_OPT_OUT_PATTERNS = [
-    re.compile(r"(不要|别|停止).{0,6}(记|保存|存储)我", re.IGNORECASE),
-    re.compile(r"忘记(我|所有)(关于我)?的(记忆|信息|偏好)", re.IGNORECASE),
-    re.compile(r"(关闭|关掉).{0,4}(记忆|个性化)", re.IGNORECASE),
+    re.compile(r"(不要|别|停止|不用)(再)?.{0,4}(记(住)?|保存|存储|保留).{0,2}我(?!的生日)", re.IGNORECASE),
+    re.compile(r"(不要|别)记住我", re.IGNORECASE),
+    re.compile(r"忘记(我|所有|一切)(关于我)?的?(记忆|信息|偏好|资料)", re.IGNORECASE),
+    re.compile(r"(清除|删除|清空).{0,4}(我的)?(记忆|偏好|个人信息)", re.IGNORECASE),
+    re.compile(r"(关闭|关掉|停用).{0,4}(记忆|个性化)", re.IGNORECASE),
+]
+
+# 反向语义：出现这些说法时不做 opt-out（"不要忘记我"是挽留，不是退出）
+_MEMORY_OPT_OUT_NEGATIVE = [
+    re.compile(r"(不要|别)忘记我", re.IGNORECASE),
 ]
 
 
 def _maybe_opt_out_memory(query: str, visitor_id: str) -> str | None:
+    if any(pat.search(query) for pat in _MEMORY_OPT_OUT_NEGATIVE):
+        return None
     for pat in _MEMORY_OPT_OUT_PATTERNS:
         if pat.search(query):
-            store.clear_memory(visitor_id)
+            store.clear_memory(visitor_id, opt_out=True)
             return "好的，已为您清除所有记忆，后续不会主动记录您的偏好。"
     return None
 
@@ -246,6 +267,7 @@ def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
             confidence=1.0,
             mode="rule_react",
             ctx_used=ctx["used"],
+            opt_out=True,
         )
 
     ctx = build_context(query, history, cfg, visitor_key)
@@ -352,5 +374,9 @@ async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: 
         final = _rule_react(query, ctx, cfg)
         if mode == "llm" and cfg.get("llm", {}).get("has_key"):
             final.mode = "rule_fallback"
-    yield ("delta", final.text)
+    # 已向客户端发过 delta 时不再补发 delta：
+    # 否则前端会把「半截 LLM 文本 + 规则话术」拼在一起显示（已复现）。
+    # final 仍完整返回，前端以它为准覆盖。
+    if not deltas_sent:
+        yield ("delta", final.text)
     yield ("final", final)

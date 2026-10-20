@@ -26,11 +26,13 @@ class RingHandler(logging.Handler):
 
 
 def attach() -> None:
-    handler = RingHandler()
+    """挂载环形缓冲 handler。幂等：重复调用（测试反复建 app）不会重复记录或泄漏 handler。"""
     for name in ("cs.events", "core"):
         lg = logging.getLogger(name)
         lg.setLevel(logging.INFO)
-        lg.addHandler(handler)
+        if any(isinstance(h, RingHandler) for h in lg.handlers):
+            continue
+        lg.addHandler(RingHandler())
 
 
 def entries(limit: int = 200, level: str | None = None) -> list[dict]:

@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from 'react'
 import { Inbox, ClipboardList, Radio, X, Headset, Ticket, User, RefreshCw } from 'lucide-react'
-import { http, useOperatorQueues } from './lib/queries'
+import { http, useOperatorQueues, isAuthError } from './lib/queries'
+import TokenGate from './components/TokenGate'
 import { useWs } from './hooks/useWs'
 import { useAppStore, ensureOpId } from './store/appStore'
 import { useShell } from './components/ResponsiveShell'
@@ -145,7 +146,12 @@ export default function OperatorDesk() {
 
         <div className={`op-list ${isMobile ? 'op-list-mobile' : ''}`}>
           {queues.isLoading && <Spinner label="加载队列…" />}
-          {queues.isError && <ErrorBanner message={queues.error?.message} onRetry={() => queues.refetch()} />}
+          {queues.isError && isAuthError(queues.error) && (
+            <TokenGate error={queues.error} onAuthed={() => queues.refetch()} />
+          )}
+          {queues.isError && !isAuthError(queues.error) && (
+            <ErrorBanner message={queues.error?.message} onRetry={() => queues.refetch()} />
+          )}
           {items && items.length === 0 && !queues.isLoading && (
             <div className="empty">{tab === 'sessions' ? '暂无待接管会话' : '暂无工单'}</div>
           )}

@@ -2,13 +2,15 @@ import React, { createContext, useContext, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import {
   MessageCircle, Headset, Settings, Menu, X,
-  LayoutDashboard, MessagesSquare, ScrollText,
+  LayoutDashboard, MessagesSquare, ScrollText, ShieldAlert, ListChecks,
 } from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 
 export const NAV = [
   { to: '/dashboard', label: '运行总览', icon: <LayoutDashboard size={17} /> },
   { to: '/sessions', label: '会话中心', icon: <MessagesSquare size={17} /> },
+  { to: '/actions', label: '动作审计', icon: <ShieldAlert size={17} /> },
+  { to: '/runs', label: '任务运行', icon: <ListChecks size={17} /> },
   { to: '/operator', label: '坐席工作台', icon: <Headset size={17} /> },
   { to: '/logs', label: '日志中心', icon: <ScrollText size={17} /> },
   { to: '/', label: '访客对话', icon: <MessageCircle size={17} />, end: true },

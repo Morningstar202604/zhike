@@ -44,6 +44,7 @@ if ! grep -q "^NAPCAT_QQ=[0-9]" .env; then
 fi
 
 # ---- 阶段二：构建并启动 ----
+# 注意：必须在仓库根执行，compose 里的构建上下文是 ..（仓库根），env_file 也是 ../.env
 echo "▸ 构建镜像并启动（首次需数分钟）"
 docker compose -f deploy/docker-compose.yml up -d --build
 

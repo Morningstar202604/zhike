@@ -16,7 +16,7 @@ class LlmReply(BaseModel):
     """LLM 必须返回的 JSON schema。所有字段都给安全默认值，校验失败也能降级。"""
     answer: str = ""
     citations: list[str] = Field(default_factory=list)
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     escalate: bool = False
     escalate_reason: str = ""
     tool: str | None = None
@@ -30,16 +30,40 @@ class LlmReply(BaseModel):
         try:
             return cls.model_validate(data)
         except ValidationError:
-            # 二次宽松：逐字段取，类型错就用默认值
-            try:
-                return cls(
-                    answer=str(data.get("answer", "") or ""),
-                    citations=[str(x) for x in (data.get("citations") or []) if isinstance(x, (str, int))],
-                    confidence=float(data.get("confidence", 0.0) or 0.0),
-                    escalate=bool(data.get("escalate", False)),
-                    escalate_reason=str(data.get("escalate_reason", "") or ""),
-                    tool=data.get("tool") if isinstance(data.get("tool"), str) else None,
-                    tool_args=data.get("tool_args") if isinstance(data.get("tool_args"), dict) else {},
-                )
-            except Exception:
-                return cls()
+            return cls._lenient(data)
+
+    @classmethod
+    def _lenient(cls, data: dict) -> "LlmReply":
+        """逐字段独立兜底：某个字段类型错不能把整条回答丢掉。
+
+        之前整块 try/except 会导致 confidence="high" 时 answer 一起被清空，
+        高质量回答被误判成空回复并转人工（已复现）。
+        """
+        answer = data.get("answer")
+        answer = answer if isinstance(answer, str) else ("" if answer is None else str(answer))
+
+        raw_cit = data.get("citations")
+        if isinstance(raw_cit, (list, tuple)):
+            citations = [str(x) for x in raw_cit if isinstance(x, (str, int))]
+        elif isinstance(raw_cit, str) and raw_cit:
+            citations = [raw_cit]          # 单个字符串不能被拆成字符列表
+        else:
+            citations = []
+
+        try:
+            confidence = float(data.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = max(0.0, min(1.0, confidence))
+
+        tool = data.get("tool")
+        tool_args = data.get("tool_args")
+        return cls(
+            answer=answer,
+            citations=citations,
+            confidence=confidence,
+            escalate=bool(data.get("escalate", False)),
+            escalate_reason=str(data.get("escalate_reason", "") or ""),
+            tool=tool if isinstance(tool, str) else None,
+            tool_args=tool_args if isinstance(tool_args, dict) else {},
+        )

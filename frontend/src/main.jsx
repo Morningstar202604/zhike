@@ -15,6 +15,8 @@ const Settings = lazy(() => import('./Settings'))
 const Dashboard = lazy(() => import('./Dashboard'))
 const LogsCenter = lazy(() => import('./LogsCenter'))
 const SessionsCenter = lazy(() => import('./SessionsCenter'))
+const ActionsCenter = lazy(() => import('./ActionsCenter'))
+const AgentRuns = lazy(() => import('./AgentRuns'))
 
 export default function App() {
   return (
@@ -26,6 +28,8 @@ export default function App() {
               <Route path="/" element={<VisitorChat />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/sessions" element={<SessionsCenter />} />
+              <Route path="/actions" element={<ActionsCenter />} />
+              <Route path="/runs" element={<AgentRuns />} />
               <Route path="/logs" element={<LogsCenter />} />
               <Route path="/operator" element={<OperatorDesk />} />
               <Route path="/settings" element={<Settings />} />

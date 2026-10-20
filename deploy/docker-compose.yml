@@ -14,14 +14,23 @@ services:
     restart: unless-stopped
 
   core:
-    build: .
+    # 构建上下文必须是仓库根：Dockerfile 在根目录，且需要拷 core/ gateway/ frontend/
+    build:
+      context: ..
+      dockerfile: Dockerfile
     image: zhike-core:latest
     container_name: zhike-core
     command: python -m uvicorn core.main:app --host 0.0.0.0 --port 8010 --workers 1
-    env_file: .env
+    # .env 由 scripts/deploy.sh 生成在仓库根，与 compose 文件同级的上一层
+    env_file:
+      - ../.env
     environment:
       - CS_AGENT_DB=/data/cs_agent.db
+      # 知识库与检索索引也放持久卷，否则容器重建会退回镜像内种子
+      - CS_AGENT_KB=/data/kb.json
+      - CS_AGENT_RETRIEVAL_DB=/data/retrieval.db
       - CS_AGENT_STATIC_DIR=/app/frontend/dist
+      - EXECUTOR_URL=http://executor:8020
       - TZ=Asia/Shanghai
     volumes:
       - core_data:/data
@@ -37,11 +46,12 @@ services:
     restart: unless-stopped
 
   gateway:
-    build: .
+    # 复用 core 构建出的镜像，不重复构建（同一 Dockerfile、同一上下文）
     image: zhike-core:latest
     container_name: zhike-gateway
     command: python gateway/bot.py
-    env_file: .env
+    env_file:
+      - ../.env
     environment:
       - CORE_BASE_URL=http://core:8010
       - ONEBOT_WS_URL=ws://napcat:3001
@@ -49,6 +59,25 @@ services:
     depends_on:
       core:
         condition: service_healthy
+    restart: unless-stopped
+
+  # 电脑执行器：与 core 同机、仅容器网络内可达。
+  # 需要授权宿主目录时，在 .env 里设 EXECUTOR_WORKDIR（宿主路径），挂载为 /work。
+  executor:
+    image: zhike-core:latest
+    container_name: zhike-executor
+    command: python -m executor.main
+    env_file:
+      - ../.env
+    environment:
+      - EXECUTOR_BIND=0.0.0.0
+      - EXECUTOR_PORT=8020
+      - EXECUTOR_POLICY_PATH=/work/policy.json
+      - TZ=Asia/Shanghai
+    volumes:
+      # 只挂你需要它操作的目录；不要挂 / 或用户主目录
+      - "${EXECUTOR_WORKDIR:-./exec_work}:/work"
+    # 不发布端口：只有 core 通过容器内网访问
     restart: unless-stopped
 
 volumes:

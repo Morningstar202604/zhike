@@ -99,8 +99,61 @@ def get_config() -> dict:
     return cfg
 
 
+# 每个配置分组允许的字段类型（None 表示任意）
+_SCHEMA: dict[str, dict[str, type | tuple]] = {
+    "llm": {"base_url": str, "model": str, "fallback_model": str, "api_key": (str, type(None)),
+            "temperature": (int, float), "top_p": (int, float), "max_tokens": int,
+            "has_key": bool, "key_source": str},
+    "retrieval": {"kb_top_k": int, "min_overlap": (int, float), "embedding": str},
+    "context": {"history_turns": int, "char_budget": int, "compress_threshold": int,
+                "summarize": bool, "relevant_only": bool, "modules": dict, "persona": str},
+    "memory": {"enable": bool, "retrieval_top_k": int, "auto_capture": bool,
+               "capture_keywords": list, "visit_greeting": bool},
+    "tools": {},
+    "multimodal": {"enable": bool, "vision_model": str},
+    "guardrail": {"injection_block": bool},
+    "engine": {"mode": str},
+    "escalation": {"confidence_threshold": (int, float), "max_message_len": int, "react_steps": int},
+}
+
+
+def validate_patch(patch: dict) -> None:
+    """校验配置补丁，类型不符抛 ValueError。
+
+    没有校验时，管理员提交 {"llm": "oops"} 会让 get_config() 后续全部 500，
+    且已经落库、重启才恢复（已复现的自伤型 DoS）。
+    """
+    if not isinstance(patch, dict):
+        raise ValueError("配置必须是对象")
+    for group, value in patch.items():
+        if group not in _SCHEMA:
+            continue          # 未知分组忽略（保持向前兼容）
+        if not isinstance(value, dict):
+            raise ValueError(f"配置分组 {group} 必须是对象，收到 {type(value).__name__}")
+        allowed = _SCHEMA[group]
+        for key, v in value.items():
+            if key not in allowed:
+                continue
+            expected = allowed[key]
+            if expected is dict and not isinstance(v, dict):
+                raise ValueError(f"{group}.{key} 必须是对象")
+            if expected is list and not isinstance(v, list):
+                raise ValueError(f"{group}.{key} 必须是数组")
+            if expected not in (dict, list) and not isinstance(v, expected):
+                names = expected.__name__ if isinstance(expected, type) else "/".join(t.__name__ for t in expected)
+                raise ValueError(f"{group}.{key} 类型应为 {names}，收到 {type(v).__name__}")
+    # 关键字段取值合法性
+    engine = patch.get("engine", {}).get("mode")
+    if engine is not None and engine not in ("rule", "llm", "auto"):
+        raise ValueError("engine.mode 必须是 rule/llm/auto")
+    top_k = patch.get("retrieval", {}).get("kb_top_k")
+    if top_k is not None and not (1 <= int(top_k) <= 50):
+        raise ValueError("retrieval.kb_top_k 必须在 1-50 之间")
+
+
 def update_config(patch: dict) -> dict:
     patch = json.loads(json.dumps(patch or {}))
+    validate_patch(patch)
     llm_patch = patch.get("llm") or {}
     if "api_key" in llm_patch and isinstance(llm_patch["api_key"], str) and llm_patch["api_key"].startswith("••"):
         llm_patch["api_key"] = get_config()["llm"].get("api_key") or ""

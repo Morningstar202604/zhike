@@ -27,10 +27,17 @@ def admin_token() -> str:
 
 
 def constant_time_equals(a: str | None, b: str | None) -> bool:
-    """时序安全的字符串比较（防 token 侧信道）。空值一律 False。"""
+    """时序安全的字符串比较（防 token 侧信道）。空值一律 False。
+
+    secrets.compare_digest 对含非 ASCII 的 str 会抛 TypeError，
+    攻击者可用它把鉴权端点变成 500（已复现）。统一先编码成 bytes 再比。
+    """
     if not a or not b:
         return False
-    return secrets.compare_digest(str(a), str(b))
+    try:
+        return secrets.compare_digest(str(a).encode("utf-8"), str(b).encode("utf-8"))
+    except (UnicodeError, TypeError):
+        return False
 
 
 def is_channel_protected() -> bool:

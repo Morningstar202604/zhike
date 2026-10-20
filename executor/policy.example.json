@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "fs": {
+    "allow_roots": [
+      "C:/Users/YOU/work",
+      "D:/projects"
+    ],
+    "deny_globs": [
+      "**/.ssh/**",
+      "**/.aws/**",
+      "**/.env",
+      "**/*.pem",
+      "**/*.key",
+      "**/Cookies/**",
+      "**/Login Data*",
+      "**/*password*"
+    ],
+    "max_read_bytes": 1048576,
+    "max_write_bytes": 10485760,
+    "max_list_entries": 2000,
+    "follow_symlinks": false
+  },
+  "shell": {
+    "allow_binaries": [
+      "git",
+      "python",
+      "node",
+      "npm",
+      "dir",
+      "ls",
+      "type",
+      "cat"
+    ],
+    "deny_args_patterns": [
+      "rm\\s+-rf\\s+/",
+      "format\\s+[a-zA-Z]:",
+      "shutdown",
+      "reboot"
+    ],
+    "timeout_s": 120,
+    "max_output_bytes": 262144
+  },
+  "proc": {
+    "allow_kill": false
+  },
+  "ui": {
+    "enabled": false
+  }
+}

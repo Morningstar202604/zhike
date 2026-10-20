@@ -16,6 +16,8 @@ import { useShell } from './components/ResponsiveShell'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import type { AgentConfig, KbEntry, ToolDef, InjectionRule, MemoryEntry, InjectionLogEntry } from './types/api'
 import { usePagination } from './lib/pagination'
+import { isAuthError } from './lib/queries'
+import TokenGate from './components/TokenGate'
 import './pages2.css'
 
 const TABS = [
@@ -40,8 +42,10 @@ export default function Settings() {
   const upd = useUpdateConfig()
 
   if (isLoading) return <Spinner full label="加载配置…" />
+  // 401/403/503 都以令牌门禁承接：以前这里渲染 ErrorBanner，用户无法就地登录
+  if (error && isAuthError(error)) return <TokenGate error={error} onAuthed={() => refetch()} />
   if (error) return <div className="p-8"><ErrorBanner message={(error as Error).message} onRetry={() => refetch()} /></div>
-  if (!cfg) return <div className="p-8"><Spinner full /></div>
+  if (!cfg) return <TokenGate onAuthed={() => refetch()} />
 
   const active = TABS.find((t) => t.key === tab)!
 

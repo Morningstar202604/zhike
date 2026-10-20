@@ -10,7 +10,7 @@ QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-77%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-138%20passed-brightgreen)
 
 </div>
 
@@ -27,6 +27,8 @@ QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 
 - **零重依赖**：向量库可选不装、存储用 SQLite、一条命令起服务
 
 架构与完整决策见 [docs/UPGRADE_PLAN.md](docs/UPGRADE_PLAN.md)，**部署手册见 [DEPLOY.md](DEPLOY.md)**（Docker Compose 一键脚本 + CF Tunnel 矩阵 + 验收清单）。
+
+**演进路线见 [docs/PLAN-AGENT-EVOLUTION.md](docs/PLAN-AGENT-EVOLUTION.md)**：从「客服机器人」到「控 QQ 账号 + 控电脑」的分级权限 Agent（T0 只读 → T3 自主，对齐 opencode 这类本地编程 Agent 的自主度），含 16 条已复现缺陷的修法、五个阶段的任务与验收标准。
 
 ## 架构
 
@@ -90,7 +92,9 @@ Docker 一键（NapCat + core + gateway）：见 `deploy/docker-compose.yml`。
 | `CS_AGENT_DB` | SQLite 路径 | cs_agent.db |
 | `LLM_HOSTS` | 域名解析覆盖（域=IP,域=IP）：校园/内网 DNS 解析不了自定义 API 域时使用 | 空 |
 | `CS_AGENT_STATIC_DIR` | 单端口模式：前端 dist 目录（空=纯 API） | 空 |
-| `CS_AGENT_CORS_ORIGINS` | CORS 白名单（逗号分隔；空=*） | 空 |
+| `CS_AGENT_CORS_ORIGINS` | CORS 白名单（逗号分隔）；留空时默认只放行 `localhost:5173`（vite dev），生产需显式配置 | 空（=localhost:5173） |
+| `CS_AGENT_KB` | 知识库 JSON 路径（容器里指向持久卷，否则重建镜像会丢知识库） | `core/data/kb.json` |
+| `CS_AGENT_RETRIEVAL_DB` | 检索索引库路径（FTS5 / sqlite-vec 缓存） | `core/data/retrieval.db` |
 | `ONEBOT_WS_URL` | NapCat 的 OneBot v11 WS 地址 | ws://127.0.0.1:3001 |
 | `CORE_BASE_URL` | 网关回源核心服务地址 | http://127.0.0.1:8000 |
 
@@ -119,8 +123,9 @@ LLM 配好后可用 `POST /api/admin/llm-test`（管理页）实测连通性与�
 ## 测试与验证
 
 ```bash
-python -m pytest tests -q                    # 69 用例：管线/摄取/安全/网关映射/存储/前端兼容/统计/控制台
-python scripts/e2e_check.py http://127.0.0.1:8010   # 18 项在线能力体检（对运行中的服务）
+python -m pytest tests -q                    # 138 用例：管线/摄取/安全/网关映射/存储/前端兼容/统计/控制台/阶段0回归
+# 在线体检需要与服务端一致的令牌（缺令牌时脚本退出码 2 并给出提示）
+ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010   # 18 项在线能力体检
 CORE_BASE_URL=http://127.0.0.1:8010 python scripts/fake_napcat.py  # QQ 全链路（伪装 NapCat，含心跳）
 python scripts/mock_llm.py 9099              # 本地 Mock LLM（OpenAI 兼容），配 base_url=http://127.0.0.1:9099/v1 可验通 LLM 管线
 ```

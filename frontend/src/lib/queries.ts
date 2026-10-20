@@ -22,27 +22,52 @@ function baseHeaders(url?: string): Record<string, string> {
   return h
 }
 
+/** 带 HTTP 状态码的错误：401/503 用来区分「未登录/管理接口被禁用」，而不是当成普通失败。 */
+export class HttpError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+    this.name = 'HttpError'
+  }
+}
+
+export function isAuthError(e: unknown): boolean {
+  return e instanceof HttpError && (e.status === 401 || e.status === 403 || e.status === 503)
+}
+
+async function fail(r: Response): Promise<never> {
+  const detail = await r.json().catch(() => ({} as { detail?: string }))
+  throw new HttpError(r.status, (detail as { detail?: string }).detail || `请求失败（HTTP ${r.status}）`)
+}
+
 const http = {
-  get: async <T>(url: string): Promise<T> => (await fetch(url, { headers: baseHeaders(url) })).json() as Promise<T>,
+  get: async <T>(url: string): Promise<T> => {
+    const r = await fetch(url, { headers: baseHeaders(url) })
+    // 必须校验状态码：此前直接 .json()，401 的 {"detail":...} 被当成配置数据，
+    // 导致「需要令牌」分支永远触发不了、界面白屏空转。
+    if (!r.ok) await fail(r)
+    return r.json() as Promise<T>
+  },
   post: async <T>(url: string, body?: unknown): Promise<T> => {
     const r = await fetch(url, { method: 'POST', headers: baseHeaders(url), body: body === undefined ? undefined : JSON.stringify(body) })
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'request failed')
+    if (!r.ok) await fail(r)
     return r.json() as Promise<T>
   },
   put: async <T>(url: string, body?: unknown): Promise<T> => {
     const r = await fetch(url, { method: 'PUT', headers: baseHeaders(url), body: body === undefined ? undefined : JSON.stringify(body) })
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'request failed')
+    if (!r.ok) await fail(r)
     return r.json() as Promise<T>
   },
   del: async <T>(url: string): Promise<T> => {
     const r = await fetch(url, { method: 'DELETE', headers: baseHeaders(url) })
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'request failed')
+    if (!r.ok) await fail(r)
     return r.json() as Promise<T>
   },
   postForm: async <T>(url: string, form: FormData): Promise<T> => {
     const t = useAppStore.getState().adminToken
     const r = await fetch(url, { method: 'POST', headers: t ? { 'X-Admin-Token': t } : {}, body: form })
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'request failed')
+    if (!r.ok) await fail(r)
     return r.json() as Promise<T>
   },
 }
@@ -221,6 +246,101 @@ export function useAdminInjection() {
   return useQuery({ queryKey: qk.admin.injection, queryFn: () => http.get<{ entries: InjectionLogEntry[] }>('/api/admin/injection-log') })
 }
 
+// ---- 动作层 ----
+export interface ActionLogEntry {
+  id: string
+  action: string
+  risk: number
+  params: Record<string, unknown>
+  principal: string
+  effective_tier: number | null
+  session_id: string | null
+  status: string
+  approval_id: string | null
+  result?: unknown
+  error?: string | null
+  created_at: string
+  executed_at?: string | null
+  duration_ms?: number | null
+}
+
+export interface ActionCatalog {
+  actions: { name: string; summary: string; risk: number; risk_label: string; group: string; requires_approval: boolean }[]
+  risks: { L0: number; L1: number; L2: number }
+  agent_tier: number
+  tier_label: string
+  l2_enabled: boolean
+}
+
+export interface ApprovalEntry {
+  id: string
+  action_log_id: string
+  action: string
+  summary: string
+  status: string
+  expires_at: string
+  created_at: string
+}
+
+export function useActionCatalog() {
+  return useQuery({ queryKey: ['actions', 'catalog'], queryFn: () => http.get<ActionCatalog>('/api/actions/catalog') })
+}
+
+export function useActionLogs(params: { status?: string; action?: string; risk?: number } = {}) {
+  const qs = new URLSearchParams()
+  if (params.status) qs.set('status', params.status)
+  if (params.action) qs.set('action', params.action)
+  if (params.risk !== undefined) qs.set('risk', String(params.risk))
+  qs.set('limit', '200')
+  return useQuery({
+    queryKey: ['actions', 'logs', params.status || '', params.action || '', params.risk ?? ''],
+    queryFn: () => http.get<{ entries: ActionLogEntry[] }>(`/api/actions/logs?${qs.toString()}`),
+    refetchInterval: 15_000,
+  })
+}
+
+export function useApprovals(status = 'pending') {
+  return useQuery({
+    queryKey: ['approvals', status],
+    queryFn: () => http.get<{ entries: ApprovalEntry[] }>(`/api/approvals?status=${status}`),
+    refetchInterval: 10_000,
+  })
+}
+
+export function useApprovalMutations() {
+  const qc = useQueryClient()
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['approvals'] })
+    qc.invalidateQueries({ queryKey: ['actions'] })
+  }
+  return {
+    approve: useMutation({
+      mutationFn: (id: string) => http.post<{ status: string }>(`/api/approvals/${id}/approve`),
+      onSuccess: invalidate,
+    }),
+    deny: useMutation({
+      mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+        http.post<{ status: string }>(`/api/approvals/${id}/deny`, { reason: reason || '' }),
+      onSuccess: invalidate,
+    }),
+  }
+}
+
+export function useAuditVerify() {
+  return useMutation({
+    mutationFn: () => http.get<{ ok: boolean; checked: number; broken_at: number | null }>('/api/admin/audit/verify'),
+  })
+}
+
+export function useExecutorHealth() {
+  return useQuery({
+    queryKey: ['actions', 'executor'],
+    queryFn: () => http.get<{ online: boolean; connected?: boolean; self_id?: string; error?: string }>('/api/executor/health'),
+    refetchInterval: 20_000,
+  })
+}
+
+
 // ---- health ----
 export function useAgentHealth() {
   return useQuery({
@@ -240,3 +360,53 @@ export function useOperatorQueues() {
 }
 
 export { http }
+
+// ---- Agent 多步任务 ----
+export interface AgentRunStep {
+  id: number
+  step_no: number
+  thought: string
+  action: string | null
+  observation: string
+  status: string
+  duration_ms: number
+  created_at: string
+}
+
+export interface AgentRun {
+  id: string
+  session_id: string | null
+  principal: string
+  goal: string
+  status: string
+  tier: number | null
+  started_at: string
+  ended_at?: string | null
+}
+
+export function useAgentRuns(status?: string) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : ''
+  return useQuery({
+    queryKey: ['agent', 'runs', status || 'all'],
+    queryFn: () => http.get<{ entries: AgentRun[] }>(`/api/agent/runs${qs}`),
+    refetchInterval: 10_000,
+  })
+}
+
+export function useAgentRunDetail(runId: string | null) {
+  return useQuery({
+    queryKey: ['agent', 'run', runId],
+    queryFn: () => http.get<{ run: Record<string, unknown>; steps: AgentRunStep[] }>(`/api/agent/runs/${runId}`),
+    enabled: !!runId,
+  })
+}
+
+export function useStartAgentRun() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { goal: string; principal?: string; max_steps?: number }) =>
+      http.post<{ run_id: string; status: string; answer: string; usage: Record<string, number>; steps: unknown[] }>(
+        '/api/agent/run', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent'] }),
+  })
+}

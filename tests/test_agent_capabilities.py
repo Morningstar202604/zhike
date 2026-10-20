@@ -78,7 +78,10 @@ def test_run_stream_llm_deltas_and_final(monkeypatch, tmp_path):
     monkeypatch.setattr(llm_mod, "react_stream", fake_stream)
     events = asyncio.run(_collect(pipeline.run_stream(pipeline.ChannelMessage(text="在吗"), [], "v1")))
     kinds = [k for k, _ in events]
-    assert kinds == ["delta", "delta", "delta", "final"]
+    # LLM 正常产出 final 时不应再补发一次 delta：
+    # 补发会让前端把「流式半截 + 完整文本」拼起来重复显示（已修复）
+    assert kinds == ["delta", "delta", "final"], f"实际事件序列：{kinds}"
+    assert events[0][1] == "你好，" and events[1][1] == "世界"
     final = events[-1][1]
     assert final.text == "你好，世界" and final.mode == "llm_react"
 

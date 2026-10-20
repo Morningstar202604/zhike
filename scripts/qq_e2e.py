@@ -146,7 +146,10 @@ async def main() -> int:
     tmp = tempfile.mkdtemp(prefix="zhike_qq_e2e_")
     env = {**os.environ, "CS_AGENT_DB": os.path.join(tmp, "e2e.db")}
     env.pop("USER_LLM_API_KEY", None)  # 规则模式，行为确定性
-    env.pop("CHANNEL_TOKEN", None)
+    # CHANNEL_TOKEN：core 现在强制要求渠道令牌（未设置则 /v1/ingest 返回 503）。
+    # 演练里统一设一个固定值，core 与 gateway 共用，保证链路能打通。
+    env["CHANNEL_TOKEN"] = "qq-e2e-channel-token"
+    env.setdefault("ADMIN_TOKEN", "qq-e2e-admin-token")
     procs: list[subprocess.Popen] = []
     actions: list[dict | None] = []
     try:
@@ -187,9 +190,27 @@ async def main() -> int:
                 p.kill()
 
     def _is_reply(a: dict | None, msg_type: str) -> bool:
-        # 适配器统一走 send_msg，以 params.message_type 区分私聊/群聊
-        return bool(a and a.get("action") == "send_msg" and (a.get("params") or {}).get("message_type") == msg_type)
+        """判断是否为指定类型的回复。
 
+        适配器层现在用更精确的 OneBot API：
+        send_private_msg / send_group_msg（旧的 matcher.send 走 send_msg）。
+        两种都接受，避免依赖具体实现细节。
+        """
+        if not a:
+            return False
+        action = a.get("action")
+        params = a.get("params") or {}
+        if action == "send_msg":
+            return params.get("message_type") == msg_type
+        if msg_type == "private":
+            return action == "send_private_msg"
+        if msg_type == "group":
+            return action == "send_group_msg"
+        return False
+
+    # 排障：把三条实际回复打印出来，断言失败时能直接看到内容
+    for i, a in enumerate(actions):
+        print(f"  [{i}] {_msg_text(a)[:80] if a else '(无动作)'}")
     checks = [
         ("私聊 KB 问答", _is_reply(actions[0], "private") and "退货" in _msg_text(actions[0])),
         ("群聊 @+图片→转人工", _is_reply(actions[1], "group") and "转接人工" in _msg_text(actions[1])),
