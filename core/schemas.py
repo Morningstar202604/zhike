@@ -14,6 +14,8 @@ class LlmToolCall(BaseModel):
 
 class LlmReply(BaseModel):
     """LLM 必须返回的 JSON schema。所有字段都给安全默认值，校验失败也能降级。"""
+    # 模型的推理过程（提示词要求输出，用于前端"思考中"折叠展示）
+    thought: str = ""
     answer: str = ""
     citations: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -59,6 +61,7 @@ class LlmReply(BaseModel):
         tool = data.get("tool")
         tool_args = data.get("tool_args")
         return cls(
+            thought=str(data.get("thought", "") or "")[:2000],
             answer=answer,
             citations=citations,
             confidence=confidence,

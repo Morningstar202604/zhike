@@ -8,7 +8,7 @@ import type { ActionLogEntry } from './lib/queries'
 import { PageHead, EmptyState } from './ui'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import TokenGate from './components/TokenGate'
-import { ACTION_STATUS, RISK_LABEL } from './lib/labels'
+import { ACTION_LABEL, ACTION_STATUS, RISK_LABEL, label } from './lib/labels'
 import './pages2.css'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -182,7 +182,10 @@ export default function ActionsCenter() {
               {entries.map((e) => (
                 <tr key={e.id} className="cursor-pointer" onClick={() => setDetail(e)}>
                   <td className="muted">{fmtTime(e.created_at)}</td>
-                  <td><code style={{ fontSize: 11 }}>{e.action}</code></td>
+                  <td>
+                    <span className="font-medium">{label(ACTION_LABEL, e.action)}</span>
+                    <code className="muted" style={{ fontSize: 10.5, marginLeft: 6 }}>{e.action}</code>
+                  </td>
                   <td><span className={`badge ${RISK_TONE[e.risk] || 'muted'}`}>{RISK_LABEL[e.risk] || e.risk}</span></td>
                   <td className="raw" title={e.principal}>{e.principal}</td>
                   <td className="muted">{e.effective_tier ?? '-'}</td>
@@ -205,7 +208,10 @@ export default function ActionsCenter() {
               <button className="btn ghost sm" onClick={() => setDetail(null)}><XCircle size={14} /></button>
             </div>
             <div className="drawer-body space-y-3 text-xs">
-              <div><span className="text-muted">动作：</span><code>{detail.action}</code></div>
+              <div>
+                <span className="text-muted">动作：</span>{label(ACTION_LABEL, detail.action)}
+                <code className="muted" style={{ marginLeft: 6 }}>{detail.action}</code>
+              </div>
               <div><span className="text-muted">状态：</span>
                 <span className={`badge ${STATUS_TONE[detail.status] || 'muted'}`}>{STATUS_LABEL[detail.status] || detail.status}</span>
               </div>

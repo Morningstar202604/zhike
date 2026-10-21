@@ -19,10 +19,12 @@ import {
   FeedbackRow,
   InjectBanner,
   MsgMeta,
+  ThoughtBlock,
 } from './ui'
 import { useWs } from './hooks/useWs'
 import { ensureVisitorId, useAppStore } from './store/appStore'
 import Logo from './components/Logo'
+import Markdown from './components/Markdown'
 import { useShell } from './components/ResponsiveShell'
 import { http } from './lib/queries'
 import './pages.css'
@@ -65,7 +67,14 @@ const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeed
             className="user-img"
           />
         )}
-        <div className="bubble">{m.deleted ? '（已删除）' : m.content}</div>
+        {m.role === 'agent' && m.thought && !m.deleted && <ThoughtBlock text={m.thought} />}
+        <div className="bubble">
+          {m.deleted
+            ? '（已删除）'
+            : m.streaming || m.role === 'visitor'
+              ? m.content
+              : <Markdown text={m.content} />}
+        </div>
         {m.role === 'agent' && !m.deleted && <MsgMeta msg={m} />}
         {m.ts && <span className="msg-time">{formatTime(m.ts)}</span>}
         {/* 消息操作：复制 / 删除。删除只影响本地视图，不请求后端（与主流对话应用一致） */}
@@ -231,6 +240,7 @@ export default function VisitorChat() {
           role: m.role === 'agent' ? 'agent' : m.role === 'operator' ? 'operator' : m.role === 'system' ? 'system' : 'visitor',
           content: m.content,
           refs: m.refs || [],
+          thought: m.thought || '',
           ts: m.created_at,
           message_id: m.id,
         })),
@@ -314,6 +324,7 @@ export default function VisitorChat() {
         ctx_used: data.ctx_used,
         message_id: data.message_id,
         mode: data.mode,
+        thought: data.thought,
         latency_ms: Math.round(performance.now() - t0),
       }
       setMessages((prev) => [...prev.slice(0, -1), msg])
@@ -425,13 +436,6 @@ export default function VisitorChat() {
   // 移动端：左侧会话栏收起，新对话入口移到顶部
   return (
     <div className={`chat-app ${isMobile ? 'chat-app-mobile' : ''}`}>
-      {isMobile && (
-        <div className="mobile-side-trigger">
-          <button className="btn ghost sm" onClick={newChat} disabled={loading}>
-            <Plus size={14} /> 新对话
-          </button>
-        </div>
-      )}
       {/* 左侧：会话栏（移动端隐藏） */}
       <aside className={`side ${isMobile ? 'side-mobile' : ''}`}>
         <div className="side-head">
@@ -511,8 +515,9 @@ export default function VisitorChat() {
                 已转人工{operatorName ? ` · ${operatorName}` : ''}{ticketId}
               </span>
             )}
-            <button className="btn ghost sm" onClick={newChat} title="重新开始">
+            <button className="btn ghost sm" onClick={newChat} title="开始新对话" disabled={loading}>
               <RefreshCw size={14} />
+              <span className="new-chat-label">新对话</span>
             </button>
           </div>
         </div>

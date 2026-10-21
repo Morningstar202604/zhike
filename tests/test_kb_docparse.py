@@ -94,3 +94,34 @@ def test_kb_doc_import_markdown(client, monkeypatch, tmp_path):
     assert len(new) == 2
     assert all(e["id"].startswith("KB") for e in new)
     retrieval._KB_CACHE = None
+
+
+def test_extract_xlsx_to_markdown():
+    """Excel 每个工作表 → 一个 ## 小节，行内单元格用 | 分隔。"""
+    import io
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "价格表"
+    ws.append(["商品", "价格"])
+    ws.append(["A 款", 199])
+    ws.append([None, None])
+    ws2 = wb.create_sheet("说明")
+    ws2.append(["运费规则", "满 99 包邮"])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    text = docparse.extract_text("价目.xlsx", buf.getvalue())
+    assert "## 价格表" in text and "## 说明" in text
+    assert "商品 | 价格" in text and "A 款 | 199" in text
+    assert "运费规则 | 满 99 包邮" in text
+    # 空行不产生空内容
+    assert "None" not in text
+
+
+def test_extract_xlsx_corrupt_raises_readable():
+    with pytest.raises(RuntimeError) as ei:
+        docparse.extract_text("坏.xlsx", b"not an excel file")
+    assert "Excel 解析失败" in str(ei.value)

@@ -202,10 +202,13 @@ export function useAdminChannels() {
     refetchInterval: 15_000,
   })
 }
-export function useAdminSessions(status?: string) {
-  const qs = status ? `?status=${encodeURIComponent(status)}` : ''
+export function useAdminSessions(status?: string, q?: string) {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (q) params.set('q', q)
+  const qs = params.toString() ? `?${params.toString()}` : ''
   return useQuery({
-    queryKey: ['admin', 'sessions', status || 'all'],
+    queryKey: ['admin', 'sessions', status || 'all', q || ''],
     queryFn: () => http.get<{ total: number; items: SessionRow[] }>(`/api/admin/sessions${qs}`),
     refetchInterval: 10_000,
   })

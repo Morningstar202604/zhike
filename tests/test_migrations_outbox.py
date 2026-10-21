@@ -17,7 +17,7 @@ def test_fresh_db_reaches_latest_version(tmp_path, monkeypatch):
     store._SCHEMA_READY.clear()
     store.init_db()
     assert store.schema_version() == migrations.LATEST_VERSION
-    assert migrations.LATEST_VERSION >= 6
+    assert migrations.LATEST_VERSION >= 7
 
 
 def test_migration_is_idempotent(tmp_path, monkeypatch):
@@ -63,8 +63,12 @@ def test_migration_failure_rolls_back(tmp_path, monkeypatch):
     monkeypatch.setattr(migrations, "MIGRATIONS", migrations.MIGRATIONS + [(99, "坏迁移", boom)])
     monkeypatch.setattr(migrations, "LATEST_VERSION", 99)
 
+    # 版本号动态取当前值，不写死：新增迁移后这个用例不该因为数字变化而失败
+    base = store.schema_version()
     with store.get_conn() as conn:
-        conn.execute("UPDATE meta SET value = '6' WHERE key = 'schema_version'")
+        # 显式提交版本回退，确保 rollback 只撤销迁移本身、不回滚这个 setup
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(base),))
+        conn.commit()
         result = migrations.migrate(conn)
 
     assert result["ok"] is False
@@ -73,7 +77,7 @@ def test_migration_failure_rolls_back(tmp_path, monkeypatch):
     # 关键断言：版本号没有前进。无论是显式 rollback 还是连接关闭时隐式回滚，
     # 结果都必须一致——这里验证的是「结果」，不是「实现手段」。
     with store.get_conn() as conn:
-        assert migrations.current_version(conn) == 6, "失败后版本号不能前进"
+        assert migrations.current_version(conn) == base, "失败后版本号不能前进"
 
 
 def test_migration_creates_outbox_table(tmp_path, monkeypatch):

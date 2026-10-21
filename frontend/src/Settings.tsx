@@ -593,7 +593,7 @@ function KbPanel() {
         <input
           ref={fileRef}
           type="file"
-          accept=".md,.markdown,.txt,.pdf,.docx"
+          accept=".md,.markdown,.txt,.pdf,.docx,.xlsx"
           style={{ display: 'none' }}
           onChange={(e) => {
             const f = e.target.files?.[0]

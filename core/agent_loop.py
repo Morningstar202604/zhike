@@ -215,9 +215,15 @@ async def _loop_body(*, run_id, principal, budget, tools, messages, usage, start
         usage["cost"] += float(decision.get("usage", {}).get("cost") or 0.0)
         thought = str(decision.get("thought") or "")
         tool_name = decision.get("tool")
-        final_text = str(decision.get("final") or "")
+        # final 兼容 answer 别名；两者都空且没给工具时不能假装"任务完成"（已复现：
+        # 普通对话式模型只返回 answer，旧逻辑会把空字符串兜底成「任务已完成。」）
+        final_text = str(decision.get("final") or decision.get("answer") or "").strip()
 
         # ---- 结束条件 ----
+        if not tool_name and not final_text:
+            store.agent_step_add(run_id, step_no, thought, None, None, "", "failed",
+                                 int((time.time() - step_started) * 1000))
+            return finish("error", "模型没有给出最终答复，任务中止。", "empty_final")
         if not tool_name:
             store.agent_step_add(run_id, step_no, thought, None, None, final_text, "done",
                                  int((time.time() - step_started) * 1000))

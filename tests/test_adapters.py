@@ -336,3 +336,19 @@ def test_onebot_adapter_conforms_to_protocol():
     for member in ("capabilities", "parse", "send", "execute", "verify"):
         assert hasattr(a, member), f"缺少成员 {member}"
     assert isinstance(a, ChannelAdapter)
+
+
+def test_mock_adapter_verify_rejects_when_unconfigured(monkeypatch):
+    """未配置密钥时必须拒绝，不能靠 `or True` 放行任意来源。"""
+    monkeypatch.delenv("MOCK_CHANNEL_TOKEN", raising=False)
+    a = MockChannelAdapter()
+    assert a.verify({"x-mock-token": "demo"}) is False
+    assert a.verify({}) is False
+
+
+def test_mock_adapter_verify_checks_token(monkeypatch):
+    monkeypatch.setenv("MOCK_CHANNEL_TOKEN", "s3cret")
+    a = MockChannelAdapter()
+    assert a.verify({"x-mock-token": "s3cret"}) is True
+    assert a.verify({"x-mock-token": "s3cret2"}) is False
+    assert a.verify({"X-Mock-Token": "s3cret"}) is False

@@ -54,7 +54,32 @@ def extract_text(filename: str, data: bytes) -> str:
             else:
                 lines.append(t)
         return "\n\n".join(lines)
-    raise RuntimeError("不支持的文档类型（支持 .md / .txt / .pdf / .docx）")
+    if name.endswith((".xlsx", ".xlsm")):
+        try:
+            import io
+
+            import openpyxl
+        except ImportError as e:
+            raise RuntimeError("Excel 解析需要依赖：pip install openpyxl") from e
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        except Exception as e:
+            raise RuntimeError(f"Excel 解析失败：{type(e).__name__}: {str(e)[:80]}") from e
+        chunks = []
+        for ws in wb.worksheets:
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                cells = [str(c).strip() for c in row if c is not None and str(c).strip()]
+                if cells:
+                    rows.append(" | ".join(cells))
+            if rows:
+                chunks.append(f"## {ws.title}\n\n" + "\n".join(rows))
+        try:
+            wb.close()
+        except Exception:
+            pass
+        return "\n\n".join(chunks)
+    raise RuntimeError("不支持的文档类型（支持 .md / .txt / .pdf / .docx / .xlsx）")
 
 
 def _pack(long_text: str, title: str) -> list[tuple[str, str]]:

@@ -65,3 +65,68 @@ def test_db_path_follows_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CS_AGENT_DB", str(tmp_path / "lazy.db"))
     store.create_session("s-lazy", "v-lazy")
     assert store.get_session("s-lazy")["visitor_id"] == "v-lazy"
+
+def test_message_thought_roundtrip(tmp_path, monkeypatch):
+    """thought 必须落库并原样读回：否则历史回放的折叠块会消失（已复现）。"""
+    monkeypatch.setenv("CS_AGENT_DB", str(tmp_path / "thought.db"))
+    store._SCHEMA_READY.clear()
+    store.init_db()
+    store.create_session("s-thought", "v1")
+    store.add_message("s-thought", "visitor", "问题")
+    store.add_message("s-thought", "agent", "回答", refs=["KB001"], thought="先查 KB 再回答")
+    msgs = store.get_messages("s-thought")
+    assert msgs[1]["thought"] == "先查 KB 再回答"
+    # 没有 thought 的消息必须是空串而不是 None / 缺字段
+    assert msgs[0]["thought"] == ""
+
+
+def test_old_db_gets_thought_column(tmp_path, monkeypatch):
+    """老库（v6，无 thought 列）升级后必须补列且历史消息可读。"""
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT,
+            content TEXT, refs TEXT, tool_used TEXT, created_at TEXT
+        );
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+        INSERT INTO meta VALUES ('schema_version', '6');
+        INSERT INTO messages (session_id, role, content, refs, created_at)
+            VALUES ('old', 'visitor', '升级前的消息', '[]', '2026-01-01');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("CS_AGENT_DB", str(db))
+    store._SCHEMA_READY.clear()
+    store.init_db()
+    msgs = store.get_messages("old")
+    assert msgs and msgs[0]["content"] == "升级前的消息"
+    assert msgs[0]["thought"] == ""
+    store.add_message("old", "agent", "新消息", thought="推理")
+    assert store.get_messages("old")[-1]["thought"] == "推理"
+
+
+def test_admin_sessions_search(tmp_path, monkeypatch):
+    """会话搜索：命中访客 ID / 会话 ID / 消息内容，且状态过滤与搜索可叠加。"""
+    monkeypatch.setenv("CS_AGENT_DB", str(tmp_path / "search.db"))
+    store._SCHEMA_READY.clear()
+    store.init_db()
+    store.create_session("s-alpha", "qq:10001")
+    store.add_message("s-alpha", "visitor", "我要查物流进度")
+    store.create_session("s-beta", "web:xyz")
+    store.add_message("s-beta", "visitor", "发票怎么开")
+
+    assert store.admin_sessions(q="10001")["total"] == 1
+    assert store.admin_sessions(q="alpha")["total"] == 1
+    assert store.admin_sessions(q="物流")["total"] == 1
+    assert store.admin_sessions(q="不存在的关键词")["total"] == 0
+    store.mark_escalated("s-alpha", "visitor_requested")
+    assert store.admin_sessions(status="pending_agent", q="物流")["total"] == 1
+    assert store.admin_sessions(status="ongoing", q="物流")["total"] == 0
+    # 通配符必须被当作字面量，不能整表命中
+    assert store.admin_sessions(q="%")["total"] == 0
