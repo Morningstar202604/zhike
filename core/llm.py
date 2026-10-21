@@ -56,18 +56,35 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
         parts.append("访客相关记忆：\n" + ctx["memory_block"])
     if ctx["summary"]:
         parts.append(ctx["summary"])
-    body = ""
-    for p in parts:
-        if len(body) + len(p) + 2 > budget:
-            break
-        body += p + "\n\n"
-    system += body
-    system += (
+    # 固定尾巴（ReAct 指令）必须先占预算，否则内容块会把总长顶出去
+    tail = (
         f"ReAct 最大步数 {react_steps}。请只输出 JSON：\n"
         '{"thought": str, "tool": name或null, "tool_args": {..}或null, '
         '"answer": str, "citations": [id], "confidence": 0-1, '
         '"escalate": bool, "escalate_reason": str}'
     )
+    # 可用于内容块的额度 = 总预算 - persona - 固定尾巴
+    content_budget = max(120, budget - len(ctx["persona"]) - len(tail) - 4)
+
+    body = ""
+    n = max(len(parts), 1)
+    overhead = len("…（已截断）")
+    # 预算不足时宁可每个模块只放一小段，也不能整块丢掉：
+    # 丢掉工具清单会让模型以为"没有工具可用"，丢掉记忆会让它重复问已知信息。
+    per_part = max(60, (content_budget - 2 * n) // n - overhead)
+    for idx, part in enumerate(parts):
+        remaining = content_budget - len(body) - 2
+        if remaining <= 30:
+            # 预算耗尽：塞一个极短占位，让模型知道该模块存在
+            head = part.split("：", 1)[0][:12]
+            stub = f"{head}：…（预算不足）"
+            body += stub + "\n"
+            continue
+        quota = remaining if idx == len(parts) - 1 else min(per_part, remaining)
+        chunk = part if len(part) <= quota else part[:quota] + "…（已截断）"
+        body += chunk + "\n\n"
+    system += body
+    system += tail
 
     messages = [{"role": "system", "content": system}]
     for m in ctx["history"]:

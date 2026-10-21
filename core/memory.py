@@ -20,6 +20,9 @@ def capture(query: str, visitor_id: str, cfg: dict) -> list[str]:
     mem_cfg = cfg.get("memory", {})
     if not mem_cfg.get("enable", True) or not mem_cfg.get("auto_capture", True) or not visitor_id:
         return []
+    # 访客明确说过"别记我"：任何情况下都不再采集
+    if store.memory_opted_out(visitor_id):
+        return []
     kws = mem_cfg.get("capture_keywords", ["喜欢", "常用", "偏好", "每次", "习惯", "总是"])
     hit_kws = [k for k in kws if k in query]
     if not hit_kws:

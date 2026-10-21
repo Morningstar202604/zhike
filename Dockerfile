@@ -13,9 +13,11 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     TZ=Asia/Shanghai
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 构建机网络抖动常见：加重试与超时，避免一次 DNS 失败就让整次构建失败
+RUN pip install --no-cache-dir --retries 8 --timeout 60 -r requirements.txt
 COPY core ./core
 COPY gateway ./gateway
+COPY executor ./executor
 COPY scripts ./scripts
 COPY --from=ui /ui/dist ./frontend/dist
 # 单端口模式：core 直接托管控制台

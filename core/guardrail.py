@@ -21,7 +21,11 @@ _BUILTIN_PATTERNS = [
 _OUTPUT_PATTERNS = [
     re.compile(r"你是知客|你的系统提示|system prompt|你的指令是", re.IGNORECASE),
     re.compile(r"base_url|api_key|sk-[a-zA-Z0-9]{10,}", re.IGNORECASE),
-    re.compile(r"我被要求(忽略|不|禁止).{0,15}(回答|讨论|提及)", re.IGNORECASE),
+    # "我被要求忽略/不能回答…"这类拒答话术：原文要求后面必须跟"回答/讨论/提及"，
+    # 但模型常常只说"我被要求忽略这个问题"就结束，那样会漏网。
+    # 这里放宽为：出现"我被要求/我被指示" + 限制性动词即命中。
+    re.compile(r"我被(要求|指示|设定为?|告知).{0,10}(忽略|不(要|能|得|可)|禁止|拒绝|回避)", re.IGNORECASE),
+    re.compile(r"(忽略|无视)(之前|以上|前面)的?(指令|要求|规则)", re.IGNORECASE),
 ]
 
 _CACHE: tuple[int, list[tuple[re.Pattern, str]]] | None = None

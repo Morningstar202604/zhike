@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import type { EChartsOption } from './lib/echarts'
 import {
   Inbox, MessageSquare, FileText, Users, BookOpen, ShieldAlert, Activity,
@@ -7,6 +7,8 @@ import {
   Radio, ScrollText, MessagesSquare, BarChart3,
 } from 'lucide-react'
 import { useAdminOverview, useAdminStats, useAdminReport, useAgentHealth, useAdminChannels, useConfig, useUpdateConfig } from './lib/queries'
+import { isAuthError } from './lib/queries'
+import TokenGate from './components/TokenGate'
 import type { ChannelStatus } from './types/api'
 import { useAppStore } from './store/appStore'
 import { StatCard, EmptyState, PageHead } from './ui'
@@ -26,15 +28,25 @@ export default function Dashboard() {
   const { data: cfgRes } = useConfig()
   const upd = useUpdateConfig()
   const adminToken = useAppStore((s) => s.adminToken)
-  const setAdminToken = useAppStore((s) => s.setAdminToken)
-  const [tokenInput, setTokenInput] = useState('')
 
   const ov = overview.data
   const st = stats.data
   const h = health.data
   const cfg = cfgRes?.config
   const chs = channelsQ.data?.channels
-  const needsToken = /令牌/.test((overview.error as Error | null)?.message || '') || /令牌/.test((stats.error as Error | null)?.message || '')
+  // 401/403 表示令牌不对，503 表示服务端没配令牌——两种都要给登录/提示入口，不能白屏
+  const authError = isAuthError(overview.error) ? overview.error
+    : isAuthError(stats.error) ? stats.error
+    : isAuthError(cfgRes === undefined ? health.error : undefined) ? health.error
+    : null
+
+  const refreshAll = () => {
+    overview.refetch(); stats.refetch(); health.refetch(); channelsQ.refetch()
+  }
+
+  if (authError) {
+    return <TokenGate error={authError} onAuthed={refreshAll} />
+  }
 
   const setEngine = (mode: 'auto' | 'rule' | 'llm') => {
     if (!cfg) return
@@ -178,30 +190,6 @@ export default function Dashboard() {
         }
       />
 
-      {needsToken && (
-        <div className="bg-panel border border-line-2 rounded-xl p-4 flex flex-wrap items-center gap-3">
-          <Lock size={16} className="text-warn" />
-          <span className="text-sm">管理功能需要令牌（服务端设置了 ADMIN_TOKEN）</span>
-          <input
-            type="password"
-            className="flex-1 min-w-[160px]"
-            placeholder="输入 ADMIN_TOKEN"
-            value={tokenInput}
-            onChange={(e) => setTokenInput(e.target.value)}
-          />
-          <button
-            className="btn sm"
-            onClick={() => { setAdminToken(tokenInput.trim()); setTimeout(() => { overview.refetch(); stats.refetch() }, 50) }}
-            disabled={!tokenInput.trim()}
-          >
-            登录
-          </button>
-          {adminToken && (
-            <button className="btn ghost sm" onClick={() => { setAdminToken(''); setTokenInput('') }}>清除</button>
-          )}
-        </div>
-      )}
-
       <div className="bg-panel border border-line-2 rounded-xl p-4 flex flex-wrap items-center gap-x-6 gap-y-2">
         <div className="flex items-center gap-2">
           <Bot size={16} className="text-brand" />
@@ -239,7 +227,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {stats.error && !needsToken && <ErrorBanner message={(stats.error as Error).message} onRetry={() => stats.refetch()} />}
+      {stats.error && !isAuthError(stats.error) && <ErrorBanner message={(stats.error as Error).message} onRetry={() => stats.refetch()} />}
 
       {st && (
         <div className="grid gap-4 md:grid-cols-2">

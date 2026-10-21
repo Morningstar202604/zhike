@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MessagesSquare, X, RefreshCw, Headset, Inbox } from 'lucide-react'
-import { http, useAdminSessions, useCloseSession } from './lib/queries'
+import { http, useAdminSessions, useCloseSession, isAuthError } from './lib/queries'
+import TokenGate from './components/TokenGate'
 import type { AgentMsg, SessionRow } from './types/api'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import { EmptyState, PageHead } from './ui'
@@ -96,7 +97,12 @@ export default function SessionsCenter() {
       />
 
       {sessions.isLoading && <Spinner full label="加载会话…" />}
-      {sessions.error && <ErrorBanner message={(sessions.error as Error).message} onRetry={() => sessions.refetch()} />}
+      {sessions.error && isAuthError(sessions.error) && (
+        <TokenGate error={sessions.error} onAuthed={() => sessions.refetch()} />
+      )}
+      {sessions.error && !isAuthError(sessions.error) && (
+        <ErrorBanner message={(sessions.error as Error).message} onRetry={() => sessions.refetch()} />
+      )}
 
       {!sessions.isLoading && items.length === 0 && (
         <EmptyState icon={<Inbox size={22} />} title="没有匹配的会话" desc="换一个筛选条件，或去对话页/群里产生一条新会话。" />

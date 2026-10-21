@@ -35,9 +35,7 @@ def _build_mcp():
     @mcp.tool()
     def query_order(order_id: str) -> str:
         """按订单号查询物流/发货状态。入参 order_id 形如 ORD12345678。"""
-        cfg = config.get_config()
-        builtin = {t["id"]: t for t in tools_mod.list_tools(cfg) if t.get("builtin")}
-        fn = tools_mod.active_tools(cfg).get("query_order")
+        fn = tools_mod.active_tools(config.get_config()).get("query_order")
         if not fn:
             return "订单查询工具未启用。"
         return json.dumps(fn(order_id=order_id), ensure_ascii=False)
