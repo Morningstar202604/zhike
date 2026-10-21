@@ -12,6 +12,7 @@ import {
   X,
   RefreshCw,
   Globe,
+  Square,
 } from 'lucide-react'
 
 export function Avatar({ kind = 'agent', size = 34 }) {
@@ -52,6 +53,14 @@ export function toolLabel(name) {
   return TOOL_LABEL[name] || name
 }
 
+const MODE_LABEL = {
+  rule_react: '规则引擎',
+  rule_fallback: '规则兜底',
+  llm_react: 'LLM',
+  guardrail: '安全拦截',
+  fallback: '异常兜底',
+}
+
 export function MsgMeta({ msg }) {
   if (!msg) return null
   const chips = []
@@ -61,9 +70,12 @@ export function MsgMeta({ msg }) {
     const c = msg.ctx_used
     if (c.kb && c.kb.hits && c.kb.hits.length) chips.push(`KB×${c.kb.hits.length}`)
     if (c.memory && c.memory.hits && c.memory.hits.length) chips.push(`记忆×${c.memory.hits.length}`)
+    if (c.web && c.web.hits) chips.push(`联网×${c.web.hits}`)
     if (c.history && c.history.summarized) chips.push('历史摘要')
-    if (c.history && c.history.relevant_only) chips.push('相关性筛选')
   }
+  // 引擎模式与耗时：Codex 会显示这类运行信息，便于用户判断回答来源
+  if (msg.mode) chips.push(MODE_LABEL[msg.mode] || msg.mode)
+  if (msg.latency_ms) chips.push(`${(msg.latency_ms / 1000).toFixed(1)}s`)
   if (!chips.length) return null
   return (
     <span className="msg-meta">
@@ -106,20 +118,6 @@ export function InjectBanner({ text, onClose }) {
   )
 }
 
-export function QuickChips({ items, onPick, disabled }) {
-  if (!items.length) return null
-  return (
-    <div className="quick-row">
-      {items.map((q, i) => (
-        <button key={i} className="quick" onClick={() => onPick(q)} disabled={disabled}>
-          <Sparkles size={12} />
-          {q.text || q}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 export function Composer({
   value,
   onChange,
@@ -136,6 +134,8 @@ export function Composer({
   webSearch = false,
   onToggleWebSearch,
   webSearchEnabled = false,
+  /** 传入则在生成中显示「停止」按钮 */
+  onStop,
 }) {
   const ref = React.useRef(null)
 
@@ -205,15 +205,22 @@ export function Composer({
         <span className="composer-count">
           {value.length}/{maxLength}
         </span>
-        <button
-          className="send-btn"
-          onClick={() => onSend()}
-          disabled={loading || !hasContent || disabled}
-          title="发送（Enter），换行用 Shift+Enter"
-        >
-          <Send size={15} />
-          <span>{loading ? '发送中' : '发送'}</span>
-        </button>
+        {loading && onStop ? (
+          <button className="send-btn stop" onClick={onStop} title="停止生成">
+            <Square size={13} />
+            <span>停止</span>
+          </button>
+        ) : (
+          <button
+            className="send-btn"
+            onClick={() => onSend()}
+            disabled={loading || !hasContent || disabled}
+            title="发送（Enter），换行用 Shift+Enter"
+          >
+            <Send size={15} />
+            <span>发送</span>
+          </button>
+        )}
       </div>
       <div className="composer-hint">
         <kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>Esc</kbd> 清空
