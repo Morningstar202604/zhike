@@ -1286,10 +1286,15 @@ def create_app() -> FastAPI:
         principal: str | None = None
         session_id: str | None = None
         max_steps: int | None = None
+        # true 时立即返回 run_id，任务在后台跑；控制台据此轮询进度并支持取消。
+        # 默认 false 保持同步语义（脚本/自动化调用可直接拿结果）。
+        background: bool = False
 
     # 运行中的取消信号：run_id -> threading.Event
     # 单 worker 部署下够用；多 worker 时改为查库标志（见计划阶段 3）
     app.state.run_cancels = {}
+    # 后台任务句柄：避免 asyncio 回收未完成的任务（fire-and-forget 会被 GC 掉）
+    app.state.run_tasks = {}
 
     @app.post("/api/agent/run")
     async def agent_run(body: AgentRunIn,
@@ -1321,22 +1326,48 @@ def create_app() -> FastAPI:
         async def llm_call(messages, tools):
             return await agent_llm.call_llm(messages, tools)
 
+        async def execute_run():
+            try:
+                return await agent_loop.run_agent(
+                    goal=body.goal.strip(),
+                    principal_raw=principal_raw,
+                    llm_call=llm_call,
+                    session_id=body.session_id,
+                    budget=budget or None,
+                    cancel_event=cancel,
+                    run_id=run_id,
+                )
+            finally:
+                app.state.run_cancels.pop(run_id, None)
+
+        if body.background:
+            # 立即返回：多步任务最长可跑 120s，同步等待会让反向代理超时，
+            # 而且 run_id 要到跑完才拿到，取消接口在 UI 上等于不存在（已复现）。
+            task = asyncio.create_task(execute_run())
+            app.state.run_tasks[run_id] = task
+
+            def _cleanup(t, _rid=run_id):
+                app.state.run_tasks.pop(_rid, None)
+                if t.cancelled():
+                    return
+                exc = t.exception()
+                if exc:  # 后台任务的异常无人 await，必须自己记日志
+                    ev.error("background agent run failed: %s: %s",
+                             type(exc).__name__, str(exc)[:200])
+
+            task.add_done_callback(_cleanup)
+            return {
+                "run_id": run_id, "status": "running", "answer": "",
+                "usage": {"steps": 0, "tool_calls": 0, "tokens": 0, "cost": 0.0},
+                "steps": [], "error": "",
+            }
+
         try:
-            result = await agent_loop.run_agent(
-                goal=body.goal.strip(),
-                principal_raw=principal_raw,
-                llm_call=llm_call,
-                session_id=body.session_id,
-                budget=budget or None,
-                cancel_event=cancel,
-                run_id=run_id,
-            )
+            result = await execute_run()
         except Exception as e:
-            app.state.run_cancels.pop(run_id, None)
             ev.error("agent run failed: %s: %s", type(e).__name__, str(e)[:200])
             raise HTTPException(500, f"任务执行失败：{type(e).__name__}")
 
-        app.state.run_cancels.pop(result.run_id, None)
         return {
             "run_id": result.run_id,
             "status": result.status,

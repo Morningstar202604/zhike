@@ -7,8 +7,9 @@ import { ESCALATE_REASON, label } from './lib/labels'
 import { useWs } from './hooks/useWs'
 import { useAppStore, ensureOpId } from './store/appStore'
 import { useShell } from './components/ResponsiveShell'
-import { Avatar, MsgMeta } from './ui'
+import { Avatar, MsgMeta, ThoughtBlock } from './ui'
 import { Spinner, ErrorBanner } from './components/Spinner'
+import './pages.css'
 import './pages2.css'
 
 function normRole(r) {
@@ -203,6 +204,7 @@ export default function OperatorDesk() {
               <div key={i} className={`msg-row ${m.role}`}>
                 <Avatar kind={m.role === 'visitor' ? 'visitor' : m.role === 'operator' ? 'operator' : 'agent'} size={30} />
                 <div className="msg-body">
+                  {m.role === 'agent' && m.thought && <ThoughtBlock text={m.thought} />}
                   <div className="bubble">
                     {m.role === 'visitor' ? m.content : <Markdown text={m.content} />}
                   </div>

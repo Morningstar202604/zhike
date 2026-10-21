@@ -1,10 +1,15 @@
 import { useState } from 'react'
-import { Play, RefreshCw, ListChecks, CheckCircle2, XCircle, Clock } from 'lucide-react'
-import { useAgentRuns, useAgentRunDetail, useStartAgentRun, isAuthError } from './lib/queries'
+import {
+  Play, RefreshCw, ListChecks, Clock, XCircle, Square, Loader2, ChevronRight,
+} from 'lucide-react'
+import {
+  useAgentRuns, useAgentRunDetail, useStartAgentRun, useCancelAgentRun, isAuthError,
+} from './lib/queries'
 import type { AgentRun } from './lib/queries'
 import { PageHead, EmptyState } from './ui'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import TokenGate from './components/TokenGate'
+import { ACTION_LABEL, label } from './lib/labels'
 import './pages2.css'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -23,6 +28,14 @@ const STATUS_TONE: Record<string, string> = {
   budget_exceeded: 'warn',
   cancelled: 'muted',
   error: 'danger',
+}
+
+const STEP_LABEL: Record<string, string> = {
+  done: '完成',
+  denied: '被拒绝',
+  pending_approval: '待审批',
+  failed: '失败',
+  blocked: '已拦截',
 }
 
 const STEP_TONE: Record<string, string> = {
@@ -44,12 +57,56 @@ function fmtTime(iso?: string | null): string {
   }
 }
 
+function fmtDuration(start?: string | null, end?: string | null): string {
+  if (!start) return '-'
+  const from = new Date(start).getTime()
+  const to = end ? new Date(end).getTime() : Date.now()
+  if (Number.isNaN(from)) return '-'
+  const s = Math.max(0, (to - from) / 1000)
+  return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m${Math.round(s % 60)}s`
+}
+
+type Usage = { steps?: number; tool_calls?: number; tokens?: number; cost?: number }
+
+function StepCard({ step }: { step: { id: number; step_no: number; thought: string; action: string | null; observation: string; status: string; duration_ms: number } }) {
+  // 观察内容默认折叠：一屏能看完整条任务轨迹，需要时再展开细节
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="run-step">
+      <div className="run-step-head">
+        <span className="run-step-no">{step.step_no}</span>
+        <span className={`badge ${STEP_TONE[step.status] || 'muted'}`}>{STEP_LABEL[step.status] || step.status}</span>
+        {step.action
+          ? <span className="run-step-action">{label(ACTION_LABEL, step.action)} <code>{step.action}</code></span>
+          : <span className="run-step-action muted">直接回答</span>}
+        <span className="run-step-ms"><Clock size={11} /> {step.duration_ms}ms</span>
+      </div>
+      {step.thought && <div className="run-step-thought">{step.thought}</div>}
+      {step.observation && (
+        <>
+          <button
+            type="button"
+            className={`run-step-toggle ${open ? 'open' : ''}`}
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+          >
+            <ChevronRight size={11} />
+            {open ? '收起观察结果' : '查看观察结果'}
+          </button>
+          {open && <pre className="run-step-obs">{step.observation}</pre>}
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function AgentRuns() {
   const [goal, setGoal] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
   const runs = useAgentRuns()
   const detail = useAgentRunDetail(selected)
   const start = useStartAgentRun()
+  const cancel = useCancelAgentRun()
 
   const authErr = isAuthError(runs.error) ? runs.error : null
   if (authErr) {
@@ -57,6 +114,26 @@ export default function AgentRuns() {
   }
 
   const entries = runs.data?.entries ?? []
+  const run = detail.data?.run as
+    | { id: string; goal: string; status: string; principal: string; tier?: number; started_at: string; ended_at?: string; usage_json?: Usage; budget_json?: Record<string, number>; error?: string; result?: { answer?: string } }
+    | undefined
+  const steps = detail.data?.steps ?? []
+  const running = run?.status === 'running'
+
+  const submit = () => {
+    const g = goal.trim()
+    if (!g) return
+    start.mutate(
+      { goal: g, principal: 'admin', background: true },
+      {
+        onSuccess: (d) => {
+          setGoal('')
+          setSelected(d.run_id)
+          runs.refetch()
+        },
+      },
+    )
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto w-full space-y-4 pb-24 md:pb-10">
@@ -76,28 +153,17 @@ export default function AgentRuns() {
             placeholder="例如：看一下 C:/work 目录里有什么，把结构整理成一段说明"
             value={goal}
             onChange={(e) => setGoal(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') start.mutate({ goal, principal: 'admin' }) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
+            disabled={start.isPending}
           />
-          <button
-            className="btn"
-            disabled={!goal.trim() || start.isPending}
-            onClick={() => start.mutate({ goal, principal: 'admin' })}
-          >
-            {start.isPending ? '执行中…' : '开始'}
+          <button className="btn" disabled={!goal.trim() || start.isPending} onClick={submit}>
+            {start.isPending ? '提交中…' : '开始'}
           </button>
         </div>
         <p className="text-[11px] text-muted">
-          任务受步数/工具调用/时长预算限制；破坏性动作仍会停下来等人工确认。
+          任务在后台运行，进度实时刷新，可随时取消；破坏性动作仍会停下来等人工确认。
         </p>
         {start.error && <ErrorBanner message={(start.error as Error).message} onRetry={() => start.reset()} />}
-        {start.data && (
-          <div className="text-xs">
-            <span className={`badge ${STATUS_TONE[start.data.status] || 'muted'}`}>
-              {STATUS_LABEL[start.data.status] || start.data.status}
-            </span>
-            <span className="ml-2">{start.data.answer}</span>
-          </div>
-        )}
       </div>
 
       {runs.isLoading && <Spinner full label="加载任务…" />}
@@ -114,7 +180,7 @@ export default function AgentRuns() {
         <div className="tbl-wrap">
           <table className="dt">
             <thead>
-              <tr><th>开始</th><th>目标</th><th>触发者</th><th>状态</th><th>档位</th><th></th></tr>
+              <tr><th>开始</th><th>目标</th><th>触发者</th><th>状态</th><th>档位</th><th>耗时</th><th></th></tr>
             </thead>
             <tbody>
               {entries.map((r: AgentRun) => (
@@ -122,9 +188,19 @@ export default function AgentRuns() {
                   <td className="muted">{fmtTime(r.started_at)}</td>
                   <td className="raw" title={r.goal}>{r.goal}</td>
                   <td className="raw">{r.principal}</td>
-                  <td><span className={`badge ${STATUS_TONE[r.status] || 'muted'}`}>{STATUS_LABEL[r.status] || r.status}</span></td>
+                  <td>
+                    <span className={`badge ${STATUS_TONE[r.status] || 'muted'}`}>
+                      {r.status === 'running' && <Loader2 size={10} className="spin" />}
+                      {STATUS_LABEL[r.status] || r.status}
+                    </span>
+                  </td>
                   <td className="muted">{r.tier ?? '-'}</td>
-                  <td><button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); setSelected(r.id) }}>步骤</button></td>
+                  <td className="muted">{fmtDuration(r.started_at, r.ended_at)}</td>
+                  <td>
+                    <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); setSelected(r.id) }}>
+                      {r.status === 'running' ? '查看进度' : '步骤'}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -136,30 +212,55 @@ export default function AgentRuns() {
         <div className="drawer-mask" onClick={() => setSelected(null)}>
           <div className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawer-head">
-              <h3>任务步骤</h3>
-              <button className="btn ghost sm" onClick={() => setSelected(null)}><XCircle size={14} /></button>
+              <h3>任务详情</h3>
+              <button className="btn ghost sm" onClick={() => setSelected(null)} aria-label="关闭">
+                <XCircle size={14} />
+              </button>
             </div>
             <div className="drawer-body space-y-3">
-              {detail.isLoading && <Spinner label="加载步骤…" />}
+              {detail.isLoading && <Spinner label="加载任务…" />}
               {detail.error && <ErrorBanner message={(detail.error as Error).message} onRetry={() => detail.refetch()} />}
-              {(detail.data?.steps ?? []).map((s) => (
-                <div key={s.id} className="bg-panel border border-line-2 rounded-lg p-3 text-xs space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="badge muted">第 {s.step_no} 步</span>
-                    {s.action && <code style={{ fontSize: 11 }}>{s.action}</code>}
-                    <span className={`badge ${STEP_TONE[s.status] || 'muted'}`}>{s.status}</span>
-                    <span className="text-muted ml-auto"><Clock size={11} /> {s.duration_ms}ms</span>
+
+              {run && (
+                <>
+                  <div className="run-summary">
+                    <div className="run-goal">{run.goal}</div>
+                    <div className="run-facts">
+                      <span className={`badge ${STATUS_TONE[run.status] || 'muted'}`}>
+                        {run.status === 'running' && <Loader2 size={10} className="spin" />}
+                        {STATUS_LABEL[run.status] || run.status}
+                      </span>
+                      <span className="badge muted">档位 {run.tier ?? '-'}</span>
+                      <span className="badge muted">{fmtDuration(run.started_at, run.ended_at)}</span>
+                      {run.usage_json && (
+                        <span className="badge muted">
+                          {run.usage_json.steps ?? 0} 步 · {run.usage_json.tool_calls ?? 0} 次工具
+                          {run.usage_json.tokens ? ` · ${run.usage_json.tokens} tokens` : ''}
+                        </span>
+                      )}
+                    </div>
+                    {run.error && <div className="hint err">{run.error}</div>}
+                    {run.status === 'done' && run.result?.answer && (
+                      <div className="run-answer">{run.result.answer}</div>
+                    )}
+                    {running && (
+                      <button
+                        className="btn secondary sm"
+                        onClick={() => cancel.mutate(run.id)}
+                        disabled={cancel.isPending}
+                      >
+                        <Square size={11} /> {cancel.isPending ? '取消中…' : '取消任务'}
+                      </button>
+                    )}
+                    {cancel.error && <ErrorBanner message={(cancel.error as Error).message} onRetry={() => cancel.reset()} />}
                   </div>
-                  {s.thought && <div className="text-muted">思考：{s.thought}</div>}
-                  {s.observation && (
-                    <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 11, maxHeight: 160, overflow: 'auto' }}>
-                      {s.observation}
-                    </pre>
+
+                  {steps.length === 0 && running && (
+                    <div className="run-waiting"><Loader2 size={14} className="spin" /> Agent 正在规划第一步…</div>
                   )}
-                </div>
-              ))}
-              {detail.data && detail.data.steps.length === 0 && (
-                <div className="empty">该任务没有记录步骤</div>
+                  {steps.length === 0 && !running && <div className="empty">该任务没有记录步骤</div>}
+                  {steps.map((s) => <StepCard key={s.id} step={s} />)}
+                </>
               )}
             </div>
           </div>

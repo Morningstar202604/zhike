@@ -401,15 +401,39 @@ export function useAgentRunDetail(runId: string | null) {
     queryKey: ['agent', 'run', runId],
     queryFn: () => http.get<{ run: Record<string, unknown>; steps: AgentRunStep[] }>(`/api/agent/runs/${runId}`),
     enabled: !!runId,
+    // 运行中的任务需要实时进度：1.5 秒轮询，结束后自动停止
+    refetchInterval: (q) => {
+      const st = (q.state.data?.run as { status?: string } | undefined)?.status
+      return st === 'running' ? 1500 : false
+    },
   })
 }
 
 export function useStartAgentRun() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { goal: string; principal?: string; max_steps?: number }) =>
+    mutationFn: (body: { goal: string; principal?: string; max_steps?: number; background?: boolean }) =>
       http.post<{ run_id: string; status: string; answer: string; usage: Record<string, number>; steps: unknown[] }>(
         '/api/agent/run', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agent'] }),
+  })
+}
+
+export function useCancelAgentRun() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (runId: string) => http.post<{ run_id: string; status: string }>(`/api/agent/runs/${runId}/cancel`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent'] }),
+  })
+}
+
+
+// ---- 联网搜索可用性（未配置时不显示误导性的开关） ----
+export function useWebSearchStatus() {
+  return useQuery({
+    queryKey: ['websearch', 'status'],
+    queryFn: () => http.get<{ available: boolean; provider: string; hint?: string | null }>('/api/websearch/status'),
+    staleTime: 60_000,
+    retry: false,
   })
 }
