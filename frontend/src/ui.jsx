@@ -13,6 +13,8 @@ import {
   RefreshCw,
   Globe,
   Square,
+  Brain,
+  ChevronRight,
 } from 'lucide-react'
 
 export function Avatar({ kind = 'agent', size = 34 }) {
@@ -269,6 +271,32 @@ export function EmptyState({ icon, title, desc, action = null }) {
       {title && <div className="empty-title">{title}</div>}
       {desc && <div className="empty-desc">{desc}</div>}
       {action}
+    </div>
+  )
+}
+
+
+/**
+ * 思考过程折叠块。
+ * 默认收起（避免长推理干扰阅读），点击展开看模型当时的推理。
+ * 与 Codex 的 "Thought for Xs" 同构。
+ */
+export function ThoughtBlock({ text }) {
+  const [open, setOpen] = React.useState(false)
+  if (!text || !text.trim()) return null
+  return (
+    <div className="thought-block">
+      <button
+        type="button"
+        className="thought-head"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <Brain size={12} />
+        <span>{open ? '隐藏思考过程' : '查看思考过程'}</span>
+        <ChevronRight size={12} className={`chev ${open ? 'open' : ''}`} />
+      </button>
+      {open && <div className="thought-body">{text}</div>}
     </div>
   )
 }

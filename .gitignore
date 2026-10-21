@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 .aqg/
 *.db
+*.db-shm
+*.db-wal
 .env
 node_modules/
 dist/

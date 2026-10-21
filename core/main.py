@@ -373,7 +373,8 @@ def create_app() -> FastAPI:
             )
         except Exception as e:  # 管线内部异常不能变成 500，也不能让访客干等
             reply = _safe_reply(e)
-        msg_id = store.add_message(sid, "agent", reply.text, refs=reply.citations, tool_used=reply.tool_used)
+        msg_id = store.add_message(sid, "agent", reply.text, refs=reply.citations,
+                                   tool_used=reply.tool_used, thought=reply.thought)
         ev.info(
             f"reply session={sid[:8]} mode={reply.mode} tool={reply.tool_used} "
             f"escalate={reply.escalate} citations={reply.citations}"
@@ -415,6 +416,7 @@ def create_app() -> FastAPI:
                 "mode": reply.mode,
                 "tool_used": reply.tool_used,
                 "tool_result": reply.tool_result,
+                "thought": reply.thought,
             },
         }
 
@@ -459,6 +461,7 @@ def create_app() -> FastAPI:
             "tool_result": reply.tool_result,
             "memory_note": reply.memory_note,
             "ctx_used": reply.ctx_used,
+            "thought": reply.thought,
             "message_id": msg_id,
         }
 
@@ -506,7 +509,8 @@ def create_app() -> FastAPI:
             if reply is None:
                 # run_stream 正常结束却没产出 final（契约破坏或空实现）：退回安全话术，不让请求 500
                 reply = _safe_reply(RuntimeError("pipeline stream produced no final reply"))
-            msg_id = store.add_message(sid, "agent", reply.text, reply.citations, tool_used=reply.tool_used)
+            msg_id = store.add_message(sid, "agent", reply.text, reply.citations,
+                                       tool_used=reply.tool_used, thought=reply.thought)
             if reply.escalate:
                 store.mark_escalated(sid, reply.escalate_reason)
                 ticket_id = store.create_ticket(sid)
@@ -528,6 +532,7 @@ def create_app() -> FastAPI:
                 "tool_result": reply.tool_result,
                 "memory_note": reply.memory_note,
                 "ctx_used": reply.ctx_used,
+                "thought": reply.thought,
                 "message_id": msg_id,
             })
 

@@ -35,6 +35,8 @@ class AgentReply:
     tool_result: dict | None = None
     memory_note: str | None = None
     ctx_used: dict | None = None
+    # 模型推理过程（LLM 模式下有值，规则模式为空）
+    thought: str = ""
     # 访客明确要求忘记自己时置 True：调用方不得再把本轮文本写回记忆
     opt_out: bool = False
 
@@ -253,6 +255,7 @@ def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
         tool_result=tool_result,
         ctx_used=ctx["used"],
         mode="llm_react",
+        thought=(parsed.thought or "")[:2000],
     )
     threshold = cfg.get("escalation", {}).get("confidence_threshold", 0.6)
     if answer.confidence < threshold and not answer.escalate:

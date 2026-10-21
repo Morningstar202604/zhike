@@ -7,6 +7,9 @@
 """
 from __future__ import annotations
 
+import hmac
+import os
+
 from gateway.adapters.base import (
     CAP_SEND_TEXT,
     NormalizedMessage,
@@ -58,7 +61,15 @@ class MockChannelAdapter:
 
     # ---- 5. 来源校验 ----
     def verify(self, headers: dict) -> bool:
-        return headers.get("x-mock-token") == "demo" or True  # 示例：真实实现要真校验
+        """共享密钥校验。未配置 MOCK_CHANNEL_TOKEN 时一律拒绝（默认安全）。
+
+        这里刻意不用 `or True` 之类的示例写法：复制这个骨架的人会把漏洞一起复制走。
+        """
+        expected = os.environ.get("MOCK_CHANNEL_TOKEN", "")
+        if not expected:
+            return False
+        got = (headers or {}).get("x-mock-token", "")
+        return hmac.compare_digest(str(got).encode(), expected.encode())
 
 
 def build() -> MockChannelAdapter:

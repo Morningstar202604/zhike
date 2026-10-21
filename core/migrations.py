@@ -78,6 +78,13 @@ def _v6_audit_retention(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_approvals_created ON approvals(created_at)")
 
 
+def _v7_message_thought(conn: sqlite3.Connection) -> None:
+    """0007：messages.thought 持久化模型推理过程，历史回放不丢折叠块。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()}
+    if "thought" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN thought TEXT")
+
+
 MIGRATIONS: list[Migration] = [
     (1, "基线：标记已有结构", _v1_baseline),
     (2, "审计链 actor 索引", _v2_audit_index),
@@ -85,6 +92,7 @@ MIGRATIONS: list[Migration] = [
     (4, "限流 ts 索引", _v4_rate_cleanup_index),
     (5, "跨进程事件 outbox 表", _v5_outbox),
     (6, "审计保留期索引", _v6_audit_retention),
+    (7, "消息表 thought 列", _v7_message_thought),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

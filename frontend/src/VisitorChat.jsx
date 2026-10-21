@@ -19,6 +19,7 @@ import {
   FeedbackRow,
   InjectBanner,
   MsgMeta,
+  ThoughtBlock,
 } from './ui'
 import { useWs } from './hooks/useWs'
 import { ensureVisitorId, useAppStore } from './store/appStore'
@@ -65,6 +66,7 @@ const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeed
             className="user-img"
           />
         )}
+        {m.role === 'agent' && m.thought && !m.deleted && <ThoughtBlock text={m.thought} />}
         <div className="bubble">{m.deleted ? '（已删除）' : m.content}</div>
         {m.role === 'agent' && !m.deleted && <MsgMeta msg={m} />}
         {m.ts && <span className="msg-time">{formatTime(m.ts)}</span>}
@@ -231,6 +233,7 @@ export default function VisitorChat() {
           role: m.role === 'agent' ? 'agent' : m.role === 'operator' ? 'operator' : m.role === 'system' ? 'system' : 'visitor',
           content: m.content,
           refs: m.refs || [],
+          thought: m.thought || '',
           ts: m.created_at,
           message_id: m.id,
         })),
@@ -314,6 +317,7 @@ export default function VisitorChat() {
         ctx_used: data.ctx_used,
         message_id: data.message_id,
         mode: data.mode,
+        thought: data.thought,
         latency_ms: Math.round(performance.now() - t0),
       }
       setMessages((prev) => [...prev.slice(0, -1), msg])

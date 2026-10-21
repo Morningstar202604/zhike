@@ -40,6 +40,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             content TEXT,
             refs TEXT,
             tool_used TEXT,
+            thought TEXT,
             created_at TEXT
         );
         CREATE TABLE IF NOT EXISTS tickets (
@@ -394,12 +395,13 @@ def check_session_secret(session_id: str, secret: str) -> bool:
 
 
 def add_message(session_id: str, role: str, content: str, refs: list | None = None,
-                tool_used: str | None = None) -> int:
+                tool_used: str | None = None, thought: str = "") -> int:
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO messages (session_id, role, content, refs, tool_used, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (session_id, role, content, json.dumps(refs or []), tool_used, _now()),
+            "INSERT INTO messages (session_id, role, content, refs, tool_used, thought, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_id, role, content, json.dumps(refs or []), tool_used,
+             (thought or None), _now()),
         )
         return cur.lastrowid or 0
 
@@ -413,15 +415,15 @@ def get_messages(session_id: str, limit: int | None = None) -> list[dict]:
     with get_conn() as conn:
         if limit and limit > 0:
             rows = conn.execute(
-                "SELECT id, role, content, refs, tool_used, created_at FROM ("
-                "  SELECT id, role, content, refs, tool_used, created_at "
+                "SELECT id, role, content, refs, tool_used, thought, created_at FROM ("
+                "  SELECT id, role, content, refs, tool_used, thought, created_at "
                 "  FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?"
                 ") ORDER BY id",
                 (session_id, limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, role, content, refs, tool_used, created_at "
+                "SELECT id, role, content, refs, tool_used, thought, created_at "
                 "FROM messages WHERE session_id = ? ORDER BY id",
                 (session_id,),
             ).fetchall()
@@ -432,6 +434,7 @@ def get_messages(session_id: str, limit: int | None = None) -> list[dict]:
             "content": r["content"],
             "refs": json.loads(r["refs"] or "[]"),
             "tool_used": r["tool_used"],
+            "thought": r["thought"] or "",
             "created_at": r["created_at"],
         }
         for r in rows

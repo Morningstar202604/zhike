@@ -418,3 +418,37 @@
 .msg-row.deleted .bubble { opacity: .45; text-decoration: line-through; }
 .send-btn.stop { background: var(--danger); }
 .send-btn.stop:hover { background: #b91c1c; }
+
+/* ============ 思考过程折叠块（对齐 Codex 的 "Thought" 展示） ============ */
+.thought-block {
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  overflow: hidden;
+  margin-bottom: 2px;
+}
+.thought-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 11px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-family: var(--font);
+  text-align: left;
+}
+.thought-head:hover { background: var(--panel); }
+.thought-head .chev { margin-left: auto; color: var(--muted); transition: transform .15s; }
+.thought-head .chev.open { transform: rotate(90deg); }
+.thought-body {
+  padding: 8px 12px 10px;
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--muted);
+  white-space: pre-wrap;
+  border-top: 1px solid var(--line-2);
+}
