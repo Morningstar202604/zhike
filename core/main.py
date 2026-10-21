@@ -548,6 +548,7 @@ def create_app() -> FastAPI:
                 "ctx_used": reply.ctx_used,
                 "thought": reply.thought,
                 "message_id": msg_id,
+                "visitor_message_id": visitor_msg_id,
             })
 
         return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
