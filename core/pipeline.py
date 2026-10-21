@@ -195,7 +195,9 @@ def _rule_react(query: str, ctx: dict, cfg: dict) -> AgentReply:
         top_score, top = hits[0]
         conf = 0.6 + min(top_score, 0.6) + 0.05 * min(len(hits), 2)
         return AgentReply(
-            text=f"【{top['title']}】{top['answer']}（依据 {top['id']}）",
+            # 面向用户的自然表达：不再把内部标题和 KB 编号直接甩给用户。
+            # 引用信息由 citations 字段承载，前端会以徽章形式展示。
+            text=top["answer"],
             citations=[e["id"] for _, e in hits[:3]],
             confidence=min(conf, 0.95),
             memory_note=ctx["used"].get("memory", {}).get("greeting", ""),

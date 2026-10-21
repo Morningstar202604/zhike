@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Copy,
   Trash2,
+  RotateCcw,
 } from 'lucide-react'
 import {
   Avatar,
@@ -45,7 +46,7 @@ function saveSessions(list) {
 }
 
 // 消息行：memo 避免长列表时整列重渲染
-const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeedback, feedback, onDelete, onCopy }) {
+const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeedback, feedback, onDelete, onCopy, onRegenerate }) {
   if (m.role === 'system') {
     return (
       <div className="msg-row system">
@@ -73,6 +74,11 @@ const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeed
             <button className="msg-action-btn" onClick={() => onCopy(m.content)} title="复制内容">
               <Copy size={11} /> 复制
             </button>
+            {m.role === 'agent' && last && onRegenerate && (
+              <button className="msg-action-btn" onClick={onRegenerate} title="基于上一个问题重新回答">
+                <RotateCcw size={11} /> 重新生成
+              </button>
+            )}
             <button className="msg-action-btn danger" onClick={() => onDelete(index)} title="从对话中删除这条">
               <Trash2 size={11} /> 删除
             </button>
@@ -105,6 +111,7 @@ export default function VisitorChat() {
   const [feedback, setFeedback] = useState('')
   const [injectMsg, setInjectMsg] = useState('')
   const [webSearch, setWebSearch] = useState(false)
+  const abortRef = useRef(null)
   const bodyRef = useRef(null)
   const visitorId = useRef(null)
   const { mobile } = useShell()
@@ -253,6 +260,30 @@ export default function VisitorChat() {
     setDraft('visitor', '')
   }
 
+  const stop = useCallback(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setLoading(false)
+    setMessages((prev) => {
+      // 去掉空的流式占位气泡
+      const last = prev[prev.length - 1]
+      if (last && last.streaming && !last.content) return prev.slice(0, -1)
+      return prev.map((m) => (m.streaming ? { ...m, streaming: false } : m))
+    })
+  }, [])
+
+  const regenerate = useCallback(async () => {
+    // 找到最后一条访客消息，删掉之后的 agent 回复，重发
+    const idx = [...messages].reverse().findIndex((m) => m.role === 'visitor')
+    if (idx < 0) return
+    const realIdx = messages.length - 1 - idx
+    const text = messages[realIdx].content
+    setMessages((prev) => prev.slice(0, realIdx + 1))
+    setLastMsg(null)
+    setFeedback('')
+    await send(text)
+  }, [messages])
+
   const send = async (text) => {
     const content = (text ?? input).trim()
     if (!content && !image) return
@@ -271,6 +302,7 @@ export default function VisitorChat() {
     // 流式气泡占位（delta 增量填充，done 事件权威替换）
     setMessages((prev) => [...prev, { role: 'agent', content: '', refs: [], ts: new Date().toISOString(), streaming: true }])
     let streamBuf = ''
+    const t0 = performance.now()
     const finalize = (data) => {
       const msg = {
         role: 'agent',
@@ -281,6 +313,8 @@ export default function VisitorChat() {
         tool_result: data.tool_result,
         ctx_used: data.ctx_used,
         message_id: data.message_id,
+        mode: data.mode,
+        latency_ms: Math.round(performance.now() - t0),
       }
       setMessages((prev) => [...prev.slice(0, -1), msg])
       setLastMsg(msg)
@@ -296,8 +330,11 @@ export default function VisitorChat() {
     setLoading(true)
     try {
       const sec = useAppStore.getState().getSessionSecret(sid)
+      const controller = new AbortController()
+      abortRef.current = controller
       const resp = await fetch(`/api/sessions/${sid}/chat/stream`, {
         method: 'POST',
+        signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
           ...(sec ? { 'X-Session-Secret': sec } : {}),
@@ -352,6 +389,7 @@ export default function VisitorChat() {
         setError(e2.message || '网络异常，请检查连接后重试')
       }
     } finally {
+      abortRef.current = null
       setLoading(false)
     }
   }
@@ -522,6 +560,7 @@ export default function VisitorChat() {
               feedback={feedback}
               onDelete={deleteMessage}
               onCopy={copyMessage}
+              onRegenerate={regenerate}
             />
           ))}
 
@@ -554,6 +593,7 @@ export default function VisitorChat() {
             loading={loading}
             onToggleWebSearch={() => setWebSearch((v) => !v)}
             webSearchEnabled={webSearch}
+            onStop={stop}
           />
         </div>
       </main>

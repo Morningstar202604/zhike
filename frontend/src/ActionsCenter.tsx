@@ -107,7 +107,7 @@ export default function ActionsCenter() {
           <span className={`badge ${cat.l2_enabled ? 'danger' : 'muted'}`}>
             破坏性 {cat.risks.L2} · {cat.l2_enabled ? '已启用' : '未启用'}
           </span>
-          <span className={`badge ${execHealth.data?.online ? 'ok' : 'muted'}`}>
+          <span className={`badge shrink-0 ${execHealth.data?.online ? 'ok' : 'muted'}`}>
             <Radio size={11} /> 网关{execHealth.data?.online ? '在线' : execHealth.data?.error ? '离线' : '…'}
           </span>
           <button className="btn ghost sm ml-auto" onClick={() => audit.mutate()} disabled={audit.isPending}>

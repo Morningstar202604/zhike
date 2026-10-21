@@ -389,21 +389,23 @@
 .tool-toggle.on { background: var(--brand-soft); border-color: var(--brand-2); color: var(--brand); font-weight: 550; }
 
 /* 消息操作（hover 显示，触屏常显） */
+/* 操作按钮：默认半透明常驻（让用户知道有这些操作），hover 变实。
+   早先做成 opacity:0 只在 hover 显示，实测用户根本发现不了。 */
 .msg-actions {
   display: flex;
   gap: 2px;
   margin-top: 2px;
-  opacity: 0;
+  opacity: .6;
   transition: opacity .12s;
 }
 .msg-row:hover .msg-actions { opacity: 1; }
-@media (hover: none) { .msg-actions { opacity: 1; } }
+@media (hover: none) { .msg-actions { opacity: .8; } }
 .msg-action-btn {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--ink-2);
   background: transparent;
   border: none;
   padding: 2px 6px;
@@ -414,3 +416,5 @@
 .msg-action-btn:hover { background: var(--panel-2); color: var(--ink); }
 .msg-action-btn.danger:hover { color: var(--danger); }
 .msg-row.deleted .bubble { opacity: .45; text-decoration: line-through; }
+.send-btn.stop { background: var(--danger); }
+.send-btn.stop:hover { background: #b91c1c; }

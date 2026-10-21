@@ -401,3 +401,6 @@ table.dt .raw { max-width: 300px; overflow: hidden; text-overflow: ellipsis; whi
   .page-title { font-size: 18px; }
   .set-main-head { flex-direction: column; align-items: flex-start; gap: 8px; }
 }
+
+/* 坐席台左右面板：占满可用高度，内部各自滚动 */
+.op-pane { min-height: 0; display: flex; flex-direction: column; }
