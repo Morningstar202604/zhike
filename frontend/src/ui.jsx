@@ -11,6 +11,7 @@ import {
   CircleCheck,
   X,
   RefreshCw,
+  Globe,
 } from 'lucide-react'
 
 export function Avatar({ kind = 'agent', size = 34 }) {
@@ -131,8 +132,23 @@ export function Composer({
   placeholder = '输入您的问题…',
   disabled,
   imageTip = '上传图片（多模态）',
+  /** 联网搜索开关（可选）。传入则显示按钮；不传则不显示。 */
+  webSearch = false,
+  onToggleWebSearch,
+  webSearchEnabled = false,
 }) {
   const ref = React.useRef(null)
+
+  // 输入框随内容自动增高（最多 6 行），像主流 Agent 对话那样
+  React.useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 132) + 'px'
+  }, [value])
+
+  const hasContent = !!(value.trim() || image)
+
   return (
     <div className="composer">
       <div className="composer-top">
@@ -140,6 +156,19 @@ export function Composer({
           <ImagePlus size={16} />
           <input type="file" accept="image/*" style={{ display: 'none' }} onChange={onPickImage} />
         </label>
+        {onToggleWebSearch && (
+          <button
+            type="button"
+            className={`tool-toggle ${webSearchEnabled ? 'on' : ''}`}
+            onClick={onToggleWebSearch}
+            title={webSearchEnabled ? '联网搜索：已开启（回答会参考实时信息）' : '联网搜索：关闭'}
+            aria-pressed={webSearchEnabled}
+          >
+            <Globe size={13} />
+            <span>联网搜索</span>
+          </button>
+        )}
+        {webSearch && <span className="badge info" style={{ fontSize: 10 }}>已开启</span>}
         {image && (
           <div className="composer-img">
             <img src={image} alt="预览" />
@@ -161,19 +190,34 @@ export function Composer({
               e.preventDefault()
               onSend()
             }
+            // Esc 清空输入，与主流编辑器一致
+            if (e.key === 'Escape' && value) {
+              e.preventDefault()
+              onChange('')
+            }
           }}
           placeholder={placeholder}
           maxLength={maxLength}
           rows={1}
           disabled={disabled}
+          aria-label="消息输入框"
         />
         <span className="composer-count">
           {value.length}/{maxLength}
         </span>
-        <button className="send-btn" onClick={() => onSend()} disabled={loading || !value.trim() || disabled}>
+        <button
+          className="send-btn"
+          onClick={() => onSend()}
+          disabled={loading || !hasContent || disabled}
+          title="发送（Enter），换行用 Shift+Enter"
+        >
           <Send size={15} />
-          <span>发送</span>
+          <span>{loading ? '发送中' : '发送'}</span>
         </button>
+      </div>
+      <div className="composer-hint">
+        <kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>Esc</kbd> 清空
+        {onToggleWebSearch && webSearchEnabled && <span style={{ marginLeft: 8, color: 'var(--brand)' }}>· 联网搜索已开</span>}
       </div>
     </div>
   )

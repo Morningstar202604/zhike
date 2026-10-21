@@ -247,6 +247,8 @@ def create_app() -> FastAPI:
     class MessageIn(BaseModel):
         content: str
         image: str | None = None
+        # 联网搜索：由前端开关传入
+        web_search: bool = False
 
     class FeedbackIn(BaseModel):
         message_id: int | None = None
@@ -355,7 +357,8 @@ def create_app() -> FastAPI:
             mode="fallback",
         )
 
-    async def _handle_inbound(sid: str, text: str, image: str | None, visitor_key: str):
+    async def _handle_inbound(sid: str, text: str, image: str | None, visitor_key: str,
+                              web_search: bool = False):
         _preflight(sid, text, visitor_key)
         ev.info(f"ingest visitor={visitor_key} text={text[:60]}")
         # 管线只需要最近若干轮：全量读取会让长会话的上下文构建从 18ms 涨到 37ms。
@@ -364,7 +367,7 @@ def create_app() -> FastAPI:
         store.add_message(sid, "visitor", text or "（附图）")
         try:
             reply = await pipeline.run(
-                pipeline.ChannelMessage(text=text, image_b64=image or ""),
+                pipeline.ChannelMessage(text=text, image_b64=image or "", web_search=web_search),
                 history,
                 visitor_key,
             )
@@ -441,7 +444,8 @@ def create_app() -> FastAPI:
         ip_key = f"ip:{request.client.host if request.client else 'unknown'}"
         if not limiter.allow(ip_key):
             raise HTTPException(429, "rate limited")
-        reply, msg_id, ticket_id = await _handle_inbound(sid, content, body.image, visitor_id)
+        reply, msg_id, ticket_id = await _handle_inbound(
+            sid, content, body.image, visitor_id, web_search=body.web_search)
         return {
             "role": "agent",
             "text": reply.text,
@@ -488,7 +492,8 @@ def create_app() -> FastAPI:
             reply, msg_id, ticket_id = None, None, None
             try:
                 async for kind, payload in pipeline.run_stream(
-                    pipeline.ChannelMessage(text=content, image_b64=body.image or ""),
+                    pipeline.ChannelMessage(text=content, image_b64=body.image or "",
+                                            web_search=body.web_search),
                     history,
                     visitor_id,
                 ):
@@ -1238,6 +1243,20 @@ def create_app() -> FastAPI:
     @app.get("/api/admin/outbox", dependencies=[Depends(require_admin)])
     def admin_outbox():
         return {"stats": store.outbox_stats()}
+
+    @app.get("/api/websearch/status")
+    def websearch_status():
+        """联网搜索可用性（前端用它决定是否显示开关）。"""
+        from core import websearch
+
+        return {
+            "available": websearch.available(),
+            "provider": websearch.provider(),
+            "hint": None if websearch.available() else (
+                "未配置搜索服务。设置 SEARCH_PROVIDER + 对应密钥后启用："
+                "TAVILY_API_KEY / SERPER_API_KEY / SEARXNG_URL"
+            ),
+        }
 
     @app.get("/api/channels/adapters", dependencies=[Depends(require_admin)])
     def channel_adapters():

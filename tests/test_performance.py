@@ -350,3 +350,77 @@ def test_recent_context_still_works(client):
     r = client.post(f"/api/sessions/{sid}/messages", json={"content": "它怎么弄"}, headers=h)
     assert r.status_code == 200
     assert r.json()["text"], "多轮对话必须有回复"
+
+
+# ============================================================
+# 联网搜索
+# ============================================================
+
+def test_websearch_unavailable_without_config(monkeypatch):
+    """未配置搜索服务时必须明确返回不可用，不能假装能搜。"""
+    from core import websearch
+
+    for k in ("SEARCH_PROVIDER", "TAVILY_API_KEY", "SERPER_API_KEY", "SEARXNG_URL"):
+        monkeypatch.delenv(k, raising=False)
+    assert websearch.available() is False
+    assert websearch.provider() == ""
+    result = asyncio.run(websearch.search("测试"))
+    assert result["ok"] is False
+    assert "未配置" in result["error"]
+
+
+def test_websearch_detects_provider(monkeypatch):
+    from core import websearch
+
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
+    monkeypatch.delenv("SEARCH_PROVIDER", raising=False)
+    assert websearch.provider() == "tavily"
+    assert websearch.available() is True
+
+
+def test_websearch_formats_context(monkeypatch):
+    from core import websearch
+
+    result = {
+        "ok": True, "provider": "tavily",
+        "results": [
+            {"title": "标题一", "url": "https://a.test", "snippet": "摘要一"},
+            {"title": "标题二", "url": "https://b.test", "snippet": "摘要二"},
+        ],
+    }
+    block = websearch.format_for_context(result)
+    assert "标题一" in block and "https://a.test" in block
+    assert "标题二" in block
+
+
+def test_websearch_empty_query():
+    from core import websearch
+
+    r = asyncio.run(websearch.search("   "))
+    assert r["ok"] is False and "空查询" in r["error"]
+
+
+def test_websearch_failure_does_not_break_context(monkeypatch):
+    """搜索失败不能拖垮对话：build_context_async 要返回正常 ctx。"""
+    from core import pipeline, websearch
+
+    async def boom(*a, **kw):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(websearch, "search", boom)
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    cfg = {
+        "retrieval": {"kb_top_k": 3, "min_overlap": 0.0, "embedding": "off"},
+        "context": {"modules": {}, "char_budget": 2400},
+        "memory": {},
+    }
+    ctx = asyncio.run(pipeline.build_context_async("测试", [], cfg, "v", web_search=True))
+    assert ctx["web_block"] == ""
+    assert ctx["used"]["web"]["error"] is not None
+
+
+def test_websearch_status_endpoint(client):
+    r = client.get("/api/websearch/status")
+    assert r.status_code == 200
+    d = r.json()
+    assert "available" in d and "provider" in d

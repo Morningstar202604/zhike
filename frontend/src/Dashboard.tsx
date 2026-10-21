@@ -35,6 +35,8 @@ export default function Dashboard() {
   const cfg = cfgRes?.config
   const chs = channelsQ.data?.channels
   // 401/403 表示令牌不对，503 表示服务端没配令牌——两种都要给登录/提示入口，不能白屏
+  // 空数据判定：24 小时内没有任何消息
+  const isEmpty = !!st && st.messages_by_hour.every((m) => !m.visitor && !m.agent && !m.operator)
   const authError = isAuthError(overview.error) ? overview.error
     : isAuthError(stats.error) ? stats.error
     : isAuthError(cfgRes === undefined ? health.error : undefined) ? health.error
@@ -229,7 +231,43 @@ export default function Dashboard() {
 
       {stats.error && !isAuthError(stats.error) && <ErrorBanner message={(stats.error as Error).message} onRetry={() => stats.refetch()} />}
 
-      {st && (
+      {/* 空数据时不要渲染 8 个空图表：占满整屏且全是"暂无数据"，用户看不到有用信息。
+          改成一张引导卡 + 渠道连接状态（后者即使无对话也有意义）。 */}
+      {st && isEmpty && (
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="md:col-span-2 bg-panel border border-line-2 rounded-xl p-8 flex flex-col items-center justify-center text-center" style={{ minHeight: 280 }}>
+            <div className="w-12 h-12 rounded-xl grid place-items-center mb-4" style={{ background: 'var(--brand-soft)', color: 'var(--brand)' }}>
+              <MessageSquare size={22} />
+            </div>
+            <h3 className="text-base font-semibold mb-1">还没有对话数据</h3>
+            <p className="text-xs text-muted mb-4" style={{ maxWidth: 380, lineHeight: 1.8 }}>
+              发一条测试消息，图表就会实时亮起来。<br />
+              QQ 渠道需要先启动 NapCat 与网关。
+            </p>
+            <div className="flex gap-2">
+              <Link to="/" className="btn sm">打开访客对话</Link>
+              <Link to="/settings/params" className="btn secondary sm">配置模型</Link>
+            </div>
+          </div>
+          <ChartCard title="渠道连接" icon={<Radio size={15} />}>
+            {chs && chs.length > 0 ? (
+              <div className="flex flex-col justify-center gap-4 px-2" style={{ height: 240 }}>
+                {chs.map((c) => (
+                  <div key={c.channel} className="flex items-center gap-3 text-sm">
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${c.status === 'online' ? 'bg-ok' : c.status === 'stale' ? 'bg-warn' : c.status === 'builtin' ? 'bg-brand' : 'bg-danger'}`} />
+                    <span className="font-medium w-[110px]">{c.channel}</span>
+                    <span className="text-xs text-muted">{channelText(c)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="h-[240px] grid place-items-center text-xs text-muted">加载中…</div>
+            )}
+          </ChartCard>
+        </div>
+      )}
+
+      {st && !isEmpty && (
         <div className="grid gap-4 md:grid-cols-2">
           <ChartCard title="近 24 小时消息量" icon={<MessageSquare size={15} />}>
             <EChart option={hourOption ?? emptyOpt} height={250} />
@@ -274,18 +312,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {st && st.messages_by_hour.every((m) => !m.visitor && !m.agent && !m.operator) && (
-        <EmptyState
-          icon={<MessageSquare size={22} />}
-          title="还没有对话数据"
-          desc={
-            <span>
-              打开<Link to="/" className="text-brand mx-1 hover:underline">访客对话页</Link>
-              发一条消息，或通过 QQ 群 @机器人，图表就会实时亮起来。
-            </span>
-          }
-        />
-      )}
+
     </div>
   )
 }

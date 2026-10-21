@@ -9,6 +9,8 @@ import {
   Headset,
   MessageCircle,
   ShieldCheck,
+  Copy,
+  Trash2,
 } from 'lucide-react'
 import {
   Avatar,
@@ -19,6 +21,7 @@ import {
 } from './ui'
 import { useWs } from './hooks/useWs'
 import { ensureVisitorId, useAppStore } from './store/appStore'
+import Logo from './components/Logo'
 import { useShell } from './components/ResponsiveShell'
 import { http } from './lib/queries'
 import './pages.css'
@@ -42,7 +45,7 @@ function saveSessions(list) {
 }
 
 // 消息行：memo 避免长列表时整列重渲染
-const MsgRow = memo(function MsgRow({ m, last, escalated, loading, onFeedback, feedback }) {
+const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeedback, feedback, onDelete, onCopy }) {
   if (m.role === 'system') {
     return (
       <div className="msg-row system">
@@ -51,7 +54,7 @@ const MsgRow = memo(function MsgRow({ m, last, escalated, loading, onFeedback, f
     )
   }
   return (
-    <div className={`msg-row ${m.role}`}>
+    <div className={`msg-row ${m.role} ${m.deleted ? 'deleted' : ''}`}>
       <Avatar kind={m.role} size={30} />
       <div className="msg-body">
         {m.image && (
@@ -61,10 +64,21 @@ const MsgRow = memo(function MsgRow({ m, last, escalated, loading, onFeedback, f
             className="user-img"
           />
         )}
-        <div className="bubble">{m.content}</div>
-        {m.role === 'agent' && <MsgMeta msg={m} />}
+        <div className="bubble">{m.deleted ? '（已删除）' : m.content}</div>
+        {m.role === 'agent' && !m.deleted && <MsgMeta msg={m} />}
         {m.ts && <span className="msg-time">{formatTime(m.ts)}</span>}
-        {m.role === 'agent' && (
+        {/* 消息操作：复制 / 删除。删除只影响本地视图，不请求后端（与主流对话应用一致） */}
+        {!m.deleted && !m.streaming && (
+          <div className="msg-actions">
+            <button className="msg-action-btn" onClick={() => onCopy(m.content)} title="复制内容">
+              <Copy size={11} /> 复制
+            </button>
+            <button className="msg-action-btn danger" onClick={() => onDelete(index)} title="从对话中删除这条">
+              <Trash2 size={11} /> 删除
+            </button>
+          </div>
+        )}
+        {m.role === 'agent' && !m.deleted && (
           <FeedbackRow
             onFeedback={onFeedback}
             feedback={feedback}
@@ -90,6 +104,7 @@ export default function VisitorChat() {
   const [lastMsg, setLastMsg] = useState(null)
   const [feedback, setFeedback] = useState('')
   const [injectMsg, setInjectMsg] = useState('')
+  const [webSearch, setWebSearch] = useState(false)
   const bodyRef = useRef(null)
   const visitorId = useRef(null)
   const { mobile } = useShell()
@@ -287,7 +302,7 @@ export default function VisitorChat() {
           'Content-Type': 'application/json',
           ...(sec ? { 'X-Session-Secret': sec } : {}),
         },
-        body: JSON.stringify({ content, image: img || null }),
+        body: JSON.stringify({ content, image: img || null, web_search: webSearch }),
       })
       if (resp.ok && resp.body) {
         const reader = resp.body.getReader()
@@ -330,7 +345,7 @@ export default function VisitorChat() {
     } catch (e) {
       // 回退：整段接口（流式不可用时依旧可用）
       try {
-        const data = await http.post(`/api/sessions/${sid}/messages`, { content, image: img || null })
+        const data = await http.post(`/api/sessions/${sid}/messages`, { content, image: img || null, web_search: webSearch })
         finalize(data)
       } catch (e2) {
         if (!streamBuf) setMessages((prev) => prev.slice(0, -1))
@@ -355,6 +370,16 @@ export default function VisitorChat() {
       }
     } catch {}
   }
+
+  const deleteMessage = useCallback((idx) => {
+    setMessages((prev) => prev.map((m, i) => (i === idx ? { ...m, deleted: true } : m)))
+    setLastMsg(null)
+  }, [])
+
+  const copyMessage = useCallback((text) => {
+    if (!text) return
+    navigator.clipboard?.writeText(text).catch(() => {})
+  }, [])
 
   const hasMessages = messages.length > 0
   const isMobile = mobile
@@ -415,7 +440,16 @@ export default function VisitorChat() {
         <div className="side-foot">
           <div className="agent-status">
             <span className={`dot ${wsState === 'online' ? 'online' : wsState === 'connecting' ? 'connecting' : 'offline'}`} />
-            <span>{wsState === 'online' ? '实时通道在线' : wsState === 'connecting' ? '连接中…' : '已断开，重连中'}</span>
+            {/* 未开始对话时不显示连接状态：那时还没有 WS，显示"已断开"会误导用户 */}
+            <span>
+              {!sessionId
+                ? '开始对话后建立实时通道'
+                : wsState === 'online'
+                  ? '实时通道在线'
+                  : wsState === 'connecting'
+                    ? '连接中…'
+                    : '已断开，重连中'}
+            </span>
           </div>
         </div>
       </aside>
@@ -453,7 +487,7 @@ export default function VisitorChat() {
           {!hasMessages && !loading && (
             <div className="welcome">
               <div className="welcome-logo">
-                <MessageCircle size={36} />
+                <Logo size={56} />
               </div>
               <h2>您好，我是知客，你的在线客服 Agent</h2>
               <p>
@@ -480,11 +514,14 @@ export default function VisitorChat() {
             <MsgRow
               key={i}
               m={m}
+              index={i}
               last={i === messages.length - 1}
               escalated={escalated}
               loading={loading}
               onFeedback={giveFeedback}
               feedback={feedback}
+              onDelete={deleteMessage}
+              onCopy={copyMessage}
             />
           ))}
 
@@ -515,6 +552,8 @@ export default function VisitorChat() {
             onRemoveImage={() => setImage('')}
             image={image}
             loading={loading}
+            onToggleWebSearch={() => setWebSearch((v) => !v)}
+            webSearchEnabled={webSearch}
           />
         </div>
       </main>

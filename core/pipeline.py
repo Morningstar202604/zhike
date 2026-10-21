@@ -19,6 +19,8 @@ class ChannelMessage:
     group_id: str | None = None
     display_name: str = ""
     image_b64: str = ""
+    # 本次请求是否启用联网搜索（由前端/渠道指定，默认关闭）
+    web_search: bool = False
 
 
 @dataclass
@@ -63,6 +65,40 @@ def _summarize_history(history: list[dict]) -> str:
         seen.add(c)
         points.append(f"{m.get('role')}: {c[:40]}")
     return "历史要点：" + "；".join(points[:8])
+
+
+async def build_context_async(query: str, history: list[dict], cfg: dict, visitor_id: str,
+                              web_search: bool = False) -> dict:
+    """build_context 的异步版：额外支持联网搜索。
+
+    搜索失败不影响主流程——把失败原因写进 used["web"]，但不抛异常。
+    """
+    ctx = build_context(query, history, cfg, visitor_id)
+    ctx["web_block"] = ""
+    ctx["used"]["web"] = {"enabled": bool(web_search), "hits": 0, "error": None}
+    if not web_search or not query.strip():
+        return ctx
+
+    from core import websearch
+
+    if not websearch.available():
+        ctx["used"]["web"]["error"] = "未配置搜索服务"
+        return ctx
+
+    try:
+        result = await websearch.search(query, top_k=4)
+    except Exception as e:  # 搜索永远不能拖垮对话
+        ctx["used"]["web"]["error"] = f"{type(e).__name__}"
+        return ctx
+
+    if result.get("ok"):
+        block = websearch.format_for_context(result)
+        ctx["web_block"] = block
+        ctx["used"]["web"]["hits"] = len(result.get("results") or [])
+        ctx["used"]["web"]["provider"] = result.get("provider")
+    else:
+        ctx["used"]["web"]["error"] = result.get("error")
+    return ctx
 
 
 def build_context(query: str, history: list[dict], cfg: dict, visitor_id: str) -> dict:
@@ -141,9 +177,9 @@ def _rule_react(query: str, ctx: dict, cfg: dict) -> AgentReply:
     if tool_name:
         result = tools[tool_name](**tool_args)
         note = result.get("note") or json.dumps(result, ensure_ascii=False)
-        # 工具明确说"没找到"时必须真的转人工——否则对客承诺与系统行为不一致
-        # （lookup_policy 返回 found=False 时文案写着"已转人工"，但 escalate 是 False，已复现）
-        missed = result.get("found") is False
+        # 工具明确说"没找到"或"未接入"时必须真的转人工——
+        # 否则对客承诺与系统行为不一致，或让用户误以为查到了真数据。
+        missed = result.get("found") is False or result.get("connected") is False
         return AgentReply(
             text=note,
             confidence=0.4 if missed else 0.9,
@@ -250,7 +286,7 @@ def _maybe_opt_out_memory(query: str, visitor_id: str) -> str | None:
     return None
 
 
-def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
+async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
     """run()/run_stream() 公共前置：截断、上下文、护栏/转人工/图片规则拦截。拦截时直接返回 AgentReply。"""
     cfg = config.get_config()
     query = (message.text or "").strip()
@@ -261,7 +297,7 @@ def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
     # 记忆 opt-out：访客说"不要记我/忘记我"直接拦截并清记忆
     opt_out_reply = _maybe_opt_out_memory(query, visitor_key)
     if opt_out_reply:
-        ctx = build_context(query, history, cfg, visitor_key)
+        ctx = await build_context_async(query, history, cfg, visitor_key, message.web_search)
         return AgentReply(
             text=opt_out_reply,
             confidence=1.0,
@@ -270,7 +306,7 @@ def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
             opt_out=True,
         )
 
-    ctx = build_context(query, history, cfg, visitor_key)
+    ctx = await build_context_async(query, history, cfg, visitor_key, message.web_search)
 
     if cfg.get("guardrail", {}).get("injection_block", True):
         inj, inj_action = guardrail.detect_injection(query)
@@ -311,7 +347,7 @@ def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
 
 async def run(message: ChannelMessage, history: list[dict], visitor_key: str) -> AgentReply:
     with tracing.span("zhike.pipeline.run", {"channel": message.channel_type, "visitor": visitor_key}):
-        prepared = _prepare(message, history, visitor_key)
+        prepared = await _prepare(message, history, visitor_key)
         if isinstance(prepared, AgentReply):
             return prepared
         cfg, query, ctx = prepared
@@ -338,7 +374,7 @@ async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: 
 
     delta 仅供打字机呈现；final.text 为权威内容（可能因工具调用/降级与流式片段不同，消费方须以终态替换）。
     """
-    prepared = _prepare(message, history, visitor_key)
+    prepared = await _prepare(message, history, visitor_key)
     if isinstance(prepared, AgentReply):
         yield ("delta", prepared.text)
         yield ("final", prepared)
@@ -347,9 +383,12 @@ async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: 
 
     mode = cfg.get("engine", {}).get("mode", "auto")
     final: AgentReply | None = None
+    # 必须在分支外初始化：规则模式（无 LLM Key）走不到 if 内部，
+    # 后面 `if not deltas_sent` 会 UnboundLocalError —— 而规则模式正是默认路径，
+    # 等于「没配 Key 时流式对话必崩」（已复现，前端只看到兜底话术）。
+    deltas_sent = False
     if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
         data = None
-        deltas_sent = False
         try:
             async for ev in llm.react_stream(query, ctx, cfg, message.image_b64):
                 if ev["type"] == "delta":

@@ -167,18 +167,6 @@ function ParamsPanel({ cfg, upd }: { cfg: AgentConfig; upd: ReturnType<typeof us
             </button>
           </div>
         </Row>
-        <Row label="连通测试">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button className="btn sm" onClick={() => llmTest.mutate()} disabled={llmTest.isPending}>
-              <Zap size={13} /> {llmTest.isPending ? '测试中…' : '测试连通'}
-            </button>
-            {llmTest.data && (
-              <span className={`badge ${llmTest.data.ok ? 'ok' : 'danger'}`} title={llmTest.data.reply || ''}>
-                {llmTest.data.ok ? `OK · ${llmTest.data.latency_ms}ms` : (llmTest.data.error || '失败')}
-              </span>
-            )}
-          </div>
-        </Row>
         <Row label="Base URL"><input type="text" value={cfg.llm.base_url} onChange={(e) => set('llm', 'base_url', e.target.value)} /></Row>
         <Row label="Model">
           {modelsLoaded ? (
