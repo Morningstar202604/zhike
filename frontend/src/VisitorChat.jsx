@@ -411,11 +411,8 @@ export default function VisitorChat() {
     try {
       await http.post(`/api/sessions/${sessionId}/feedback`, { rating, message_id: lastMsg.message_id })
       if (rating === 'not_helpful') {
+        // 只切状态：底部已有转接提示条，再插一条系统消息是重复信息（截图确认过）
         setEscalated(true)
-        setMessages((prev) => [
-          ...prev,
-          { role: 'system', content: '已为您转接人工坐席跟进。', ts: new Date().toISOString() },
-        ])
       }
     } catch {}
   }
