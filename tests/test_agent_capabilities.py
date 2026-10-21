@@ -233,10 +233,13 @@ def test_chat_stream_endpoint_sse(client, monkeypatch):
     assert r.status_code == 200
     assert "text/event-stream" in r.headers["content-type"]
     assert "event: delta" in r.text and "event: done" in r.text
-    done_line = [l for l in r.text.split("\n") if l.startswith("data: ") and "message_id" in l][0]
+    # ack 事件也含 message_id，必须按事件名定位 done 块
+    done_block = [blk for blk in r.text.split("\n\n") if blk.startswith("event: done")][0]
+    done_line = [l for l in done_block.split("\n") if l.startswith("data: ")][0]
     d = json.loads(done_line[6:])
     assert d["text"] == "您好，请问有什么可以帮您？"
     assert d["message_id"]
+    assert d["visitor_message_id"], "访客消息 id 必须回传，否则前端无法删除这条提问"
 
 
 def test_chat_stream_persists_messages(client, monkeypatch):

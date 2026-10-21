@@ -332,9 +332,9 @@ def test_pipeline_uses_recent_history_only(client, monkeypatch):
 
     real = store.get_messages
 
-    def spy(session_id, limit=None):
+    def spy(session_id, limit=None, **kw):
         called["limit"] = limit
-        return real(session_id, limit=limit)
+        return real(session_id, limit=limit, **kw)
 
     monkeypatch.setattr(store, "get_messages", spy)
     client.post(f"/api/sessions/{sid}/messages", json={"content": "怎么开发票"},
