@@ -203,7 +203,9 @@ export default function OperatorDesk() {
               <div key={i} className={`msg-row ${m.role}`}>
                 <Avatar kind={m.role === 'visitor' ? 'visitor' : m.role === 'operator' ? 'operator' : 'agent'} size={30} />
                 <div className="msg-body">
-                  <div className="bubble"><Markdown text={m.content} /></div>
+                  <div className="bubble">
+                    {m.role === 'visitor' ? m.content : <Markdown text={m.content} />}
+                  </div>
                   <MsgMeta msg={m} />
                   {m.ts && <span className="msg-time">{formatTime(m.ts)}</span>}
                   {(m.role === 'agent' || m.role === 'operator') && (

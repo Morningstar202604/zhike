@@ -12,6 +12,7 @@ import TokenGate from './components/TokenGate'
 import type { ChannelStatus } from './types/api'
 import { useAppStore } from './store/appStore'
 import { StatCard, EmptyState, PageHead } from './ui'
+import { CHANNEL_LABEL, ESCALATE_REASON, TOOL_LABEL, label } from './lib/labels'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import EChart from './components/EChart'
 import './pages2.css'
@@ -107,7 +108,11 @@ export default function Dashboard() {
     legend: { bottom: 0, textStyle: { color: 'rgba(128,128,145,.9)', fontSize: 11 } },
     series: [{
       type: 'pie', radius: ['42%', '68%'], center: ['50%', '44%'],
-      data: st.channels.map((c, i) => ({ name: c.channel, value: c.count, itemStyle: { color: PALETTE[i % PALETTE.length] } })),
+      data: st.channels.map((c, i) => ({
+        name: label(CHANNEL_LABEL, c.channel),
+        value: c.count,
+        itemStyle: { color: PALETTE[i % PALETTE.length] },
+      })),
       label: { color: 'rgba(128,128,145,.9)', fontSize: 11, formatter: '{b} {c}' },
     }],
   } : undefined
@@ -130,7 +135,11 @@ export default function Dashboard() {
     legend: { type: 'scroll', bottom: 0, textStyle: { color: 'rgba(128,128,145,.9)', fontSize: 11 } },
     series: [{
       type: 'pie', radius: '62%', center: ['50%', '44%'], roseType: 'radius',
-      data: st.escalate_reasons.map((e, i) => ({ name: e.reason, value: e.count, itemStyle: { color: PALETTE[i % PALETTE.length] } })),
+      data: st.escalate_reasons.map((e, i) => ({
+        name: label(ESCALATE_REASON, e.reason),
+        value: e.count,
+        itemStyle: { color: PALETTE[i % PALETTE.length] },
+      })),
       label: { color: 'rgba(128,128,145,.9)', fontSize: 11, formatter: '{b} {c}' },
     }],
   } : undefined
@@ -139,7 +148,7 @@ export default function Dashboard() {
     tooltip: { trigger: 'axis' },
     grid: { left: 110, right: 24, top: 10, bottom: 26 },
     xAxis: { type: 'value', minInterval: 1, ...AXIS, splitLine: { lineStyle: { color: 'rgba(128,128,145,.15)' } } },
-    yAxis: { type: 'category', data: st.tool_usage.map((t) => t.tool).reverse(), ...AXIS },
+    yAxis: { type: 'category', data: st.tool_usage.map((t) => label(TOOL_LABEL, t.tool)).reverse(), ...AXIS },
     series: [{
       name: '调用次数', type: 'bar',
       data: st.tool_usage.map((t) => t.count).reverse(), itemStyle: { color: PALETTE[5], borderRadius: [0, 6, 6, 0] },
@@ -147,7 +156,12 @@ export default function Dashboard() {
   } : undefined
 
   const emptyOpt = {
-    title: { text: '暂无数据', left: 'center', top: 'middle', textStyle: { color: 'rgba(128,128,145,.6)', fontSize: 13, fontWeight: 400 } },
+    title: {
+      text: '暂无数据', subtext: '产生对话后这里会自动统计',
+      left: 'center', top: 'middle',
+      textStyle: { color: 'rgba(128,128,145,.65)', fontSize: 13, fontWeight: 400 },
+      subtextStyle: { color: 'rgba(128,128,145,.45)', fontSize: 11 },
+    },
   }
 
   const funnelOption: EChartsOption | undefined = st ? {
@@ -255,7 +269,7 @@ export default function Dashboard() {
                 {chs.map((c) => (
                   <div key={c.channel} className="flex items-center gap-3 text-sm">
                     <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${c.status === 'online' ? 'bg-ok' : c.status === 'stale' ? 'bg-warn' : c.status === 'builtin' ? 'bg-brand' : 'bg-danger'}`} />
-                    <span className="font-medium w-[110px]">{c.channel}</span>
+                    <span className="font-medium w-[110px]">{label(CHANNEL_LABEL, c.channel)}</span>
                     <span className="text-xs text-muted">{channelText(c)}</span>
                   </div>
                 ))}
@@ -288,7 +302,18 @@ export default function Dashboard() {
             <EChart option={toolOption ?? emptyOpt} height={250} />
           </ChartCard>
           <ChartCard title="反馈构成" icon={<CheckCircle2 size={15} />}>
-            <EChart option={feedbackOption ?? emptyOpt} height={250} />
+            {feedbackOption ? (
+              <EChart option={feedbackOption} height={250} />
+            ) : (
+              <div className="h-[250px] flex flex-col items-center justify-center gap-2 text-center px-6">
+                <div className="w-9 h-9 rounded-lg grid place-items-center" style={{ background: 'var(--ok-soft)', color: '#1a8f52' }}>
+                  <CheckCircle2 size={17} />
+                </div>
+                <div className="text-xs text-muted" style={{ lineHeight: 1.8 }}>
+                  还没有访客评价<br />回答下方的「有用 / 没用」会汇总到这里
+                </div>
+              </div>
+            )}
           </ChartCard>
           <ChartCard title="渠道连接" icon={<Radio size={15} />}>
             {chs && chs.length > 0 ? (
@@ -296,7 +321,7 @@ export default function Dashboard() {
                 {chs.map((c) => (
                   <div key={c.channel} className="flex items-center gap-3 text-sm">
                     <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${c.status === 'online' ? 'bg-ok' : c.status === 'stale' ? 'bg-warn' : c.status === 'builtin' ? 'bg-brand' : 'bg-danger'}`} />
-                    <span className="font-medium w-[110px]">{c.channel}</span>
+                    <span className="font-medium w-[110px]">{label(CHANNEL_LABEL, c.channel)}</span>
                     <span className="text-xs text-muted">{channelText(c)}</span>
                   </div>
                 ))}

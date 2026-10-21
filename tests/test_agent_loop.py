@@ -341,3 +341,19 @@ def test_api_rejects_empty_goal(client):
 
 def test_api_cancel_unknown_run(client):
     assert client.post("/api/agent/runs/nonexistent/cancel").status_code == 404
+
+
+def test_answer_alias_accepted_as_final(fake_tool):
+    """模型用 answer 而不是 final 字段时也必须收下，不能当成"没答复"。"""
+    llm = _script({"thought": "直接回答", "tool": None, "answer": "你好，我在。"})
+    r = __import__("asyncio").run(agent_loop.run_agent("打个招呼", "admin", llm))
+    assert r.status == "done" and r.answer == "你好，我在。"
+
+
+def test_empty_final_is_error_not_fake_success(fake_tool):
+    """既没有工具也没有最终答复时必须报错；旧实现会兜底"任务已完成。"（已复现）。"""
+    llm = _script({"thought": "模型跑题了", "tool": None, "final": ""})
+    r = __import__("asyncio").run(agent_loop.run_agent("做点事", "admin", llm))
+    assert r.status == "error"
+    assert r.error == "empty_final"
+    assert "任务已完成" not in r.answer

@@ -54,6 +54,12 @@ export const CHANNEL_LABEL: Record<string, string> = {
   telegram: 'Telegram',
 };
 
+export const TOOL_LABEL: Record<string, string> = {
+  query_order: '查询订单',
+  initiate_refund: '申请退款',
+  lookup_policy: '查询政策',
+};
+
 export const RISK_LABEL: Record<number, string> = {
   0: '只读',
   1: '可逆写',
