@@ -103,16 +103,30 @@ def kb_hit_invoice():
 
 
 def tool_query_order():
+    """未配置 ORDER_QUERY_URL 时必须诚实报「未接入」并转人工，不能编造物流单号。"""
     d = ingest("订单: ORD12345678 发货了吗", "t1", "t-g1")
-    assert d["reply"]["tool_used"] == "query_order", d["reply"]
-    assert d["reply"]["tool_result"]["order_id"] == "ORD12345678"
-    return f"物流单号 {d['reply']['tool_result']['tracking_no']}"
+    rep = d["reply"]
+    assert rep["tool_used"] == "query_order", rep
+    tr = rep["tool_result"] or {}
+    if tr.get("connected"):
+        assert tr.get("order_id") == "ORD12345678", tr
+        return f"已接入业务系统，状态 {tr.get('status')}"
+    assert tr.get("connected") is False and rep["escalate"] is True, rep
+    assert "tracking_no" not in tr, "未接入时不得返回伪造物流单号"
+    return "未接入 → 如实转人工 ✓"
 
 
 def tool_refund():
     d = ingest("订单: ORD87654321 我要退款", "t2", "t-g1")
-    assert d["reply"]["tool_used"] == "initiate_refund", d["reply"]
-    return d["reply"]["tool_result"]["refund_id"]
+    rep = d["reply"]
+    assert rep["tool_used"] == "initiate_refund", rep
+    tr = rep["tool_result"] or {}
+    if tr.get("connected"):
+        assert tr.get("refund_id"), tr
+        return tr["refund_id"]
+    assert tr.get("connected") is False and rep["escalate"] is True, rep
+    assert "refund_id" not in tr, "未接入时不得返回伪造退款单号"
+    return "未接入 → 如实转人工 ✓"
 
 
 def tool_policy():
@@ -242,8 +256,13 @@ def kb_crud_and_retrieval():
     assert client.post(f"{BASE}/api/kb", json=payload).status_code == 200
     upd = dict(payload, answer="更新后的答案。")
     assert client.put(f"{BASE}/api/kb/{kid}", json=upd).status_code == 200
+    # 用试召回端点判断「立即可检索」：不受当前 LLM 引擎模式影响（LLM 回答未必带引用）
+    rec = client.post(f"{BASE}/api/kb/test", json={"query": f"测试关键词{run_id} 售后专线"})
+    assert rec.status_code == 200, rec.text[:150]
+    ids = [h["id"] for h in rec.json()["hits"]]
+    assert kid in ids, f"新条目未被检索到：{ids}"
     d = ingest(f"{run_id} 的售后专线是多少", "kbc", "kbc-g1")
-    assert kid in d["reply"]["citations"], d["reply"]
+    assert d["reply"]["text"], d["reply"]
     assert client.delete(f"{BASE}/api/kb/{kid}").status_code == 200
     remaining = client.get(f"{BASE}/api/kb").json()["kb"]
     assert all(e["id"] != kid for e in remaining), "删除后仍存在"
@@ -275,14 +294,30 @@ async def ws_push():
         subprotocols=["zhike-admin", ADMIN_TOKEN],
     ) as ws:
         uid = f"ws-{run_id}"
-        sid = ingest("帮我接一条根本不存在的外部线路XYZ", uid, "ws-g1")["session_id"]
+        # 用「转人工」确保一定会产生 new_pending，不依赖知识库是否命中
+        sid = ingest("帮我转人工", uid, "ws-g1")["session_id"]
         raw = await asyncio.wait_for(ws.recv(), timeout=10)
         data = json.loads(raw)
         assert data.get("type") == "new_pending" and data.get("session_id") == sid, data
     return f"坐席端实时收到 new_pending（会话 {sid[:8]}）"
 
 
+def _engine_mode() -> str:
+    return client.get(f"{BASE}/api/agent/health").json().get("engine_mode", "auto")
+
+
+def _set_engine(mode: str) -> None:
+    r = client.put(f"{BASE}/api/config", json={"config": {"engine": {"mode": mode}}})
+    assert r.status_code == 200, r.text[:120]
+
+
+# 检索/工具/升级这些是确定性管线行为，必须在规则模式下验证：
+# LLM 的回答由模型自由生成，用它的措辞判断"KB 命中"只会得到随机结果。
+_orig_mode = "auto"
+
 check("20 健康检查 /healthz + /api/agent/health", health)
+_orig_mode = _engine_mode()
+_set_engine("rule")
 check("01 知识库检索命中（物流）", kb_hit_logistics)
 check("02 知识库检索命中（发票）", kb_hit_invoice)
 check("03 工具·查订单物流（规则路由）", tool_query_order)
@@ -300,6 +335,8 @@ check("14 配置热更新（引擎模式即时生效）", config_hot_reload)
 check("15 知识库 CRUD+新条目立即可检索", kb_crud_and_retrieval)
 check("16 工具注册表 CRUD", tool_registry_crud)
 check("17 WS 实时推送（坐席端）", lambda: asyncio.run(ws_push()))
+# 还原部署原有的引擎模式（体检不应改变线上行为）
+_set_engine(_orig_mode)
 
 _hint = _token_missing_hint()
 if _hint:

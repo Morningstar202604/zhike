@@ -369,3 +369,55 @@ def test_shell_timeout_is_passed_through(policy, workspace, monkeypatch):
         cap.shell_exec(policy, ["python", "-c", "import time; time.sleep(99)"],
                        cwd=str(workspace), timeout_s=2)
     assert captured["timeout"] == 2, "超时参数没有被传给 subprocess"
+
+
+def test_llm_tool_not_connected_escalates(monkeypatch):
+    """LLM 模式下工具返回「未接入」时也必须真的升级转人工。
+
+    旧实现只在规则模式检查 connected=False，LLM 模式下对客说"已转人工"
+    但会话状态没变、也没有工单（已复现）。
+    """
+    from core import pipeline
+
+    called = {}
+
+    def fake_tool(order_id):
+        called["order_id"] = order_id
+        return {"tool": "query_order", "connected": False, "found": False,
+                "note": "订单查询暂未接入自助渠道， 已为您转接人工坐席查询。"}
+
+    ctx = {
+        "kb_block": "", "hits": [], "tools_schema": [], "tools": {"query_order": fake_tool},
+        "memory_block": "", "memory": {}, "history": [], "summary": "",
+        "persona": "你是知客", "modules_on": {}, "used": {},
+    }
+    cfg = {"escalation": {"confidence_threshold": 0.6}, "llm": {}}
+    reply = pipeline._make_llm_reply(
+        {"answer": "好的", "confidence": 0.95, "tool": "query_order",
+         "tool_args": {"order_id": "ORD1"}}, ctx, cfg
+    )
+    assert called["order_id"] == "ORD1"
+    assert reply.escalate is True
+    assert reply.escalate_reason == "knowledge_miss"
+    assert reply.tool_result["connected"] is False
+
+
+def test_llm_tool_success_does_not_escalate(monkeypatch):
+    """工具成功时不能误升级（防止上面那条修复变成"所有工具调用都转人工"）。"""
+    from core import pipeline
+
+    def ok_tool(order_id):
+        return {"tool": "query_order", "connected": True, "found": True,
+                "status": "已发货", "note": "订单已发货。"}
+
+    ctx = {
+        "kb_block": "", "hits": [], "tools_schema": [], "tools": {"query_order": ok_tool},
+        "memory_block": "", "memory": {}, "history": [], "summary": "",
+        "persona": "你是知客", "modules_on": {}, "used": {},
+    }
+    cfg = {"escalation": {"confidence_threshold": 0.6}, "llm": {}}
+    reply = pipeline._make_llm_reply(
+        {"answer": "好的", "confidence": 0.95, "tool": "query_order",
+         "tool_args": {"order_id": "ORD1"}}, ctx, cfg
+    )
+    assert reply.escalate is False
