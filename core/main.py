@@ -1,4 +1,5 @@
 """FastAPI 核心：访客 Web API（旧版前端兼容）+ 渠道摄取 /v1/ingest + 坐席工作台 + 管理面。"""
+import asyncio
 import json
 import logging
 import os
@@ -77,18 +78,48 @@ class Hub:
         self.visitor_conns: dict[str, set] = {}
         self.operator_conns: set = set()
 
+    # 单连接发送超时：卡住的客户端不能拖住整批广播。
+    # 取 2 秒：正常 WS 发送是毫秒级，2 秒足够排完本地缓冲；
+    # 真卡住的连接直接放弃并清理，不让它拖累其他用户。
+    SEND_TIMEOUT_S = 2.0
+
+    async def _send_one(self, ws, payload: dict, timeout: float) -> bool:
+        """给单个连接发消息，返回是否成功。超时/异常都算失败（会被清理）。"""
+        try:
+            await asyncio.wait_for(ws.send_json(payload), timeout=timeout)
+            return True
+        except (asyncio.TimeoutError, Exception):
+            return False
+
     async def publish(self, session_id: str, payload: dict):
-        for ws in list(self.visitor_conns.get(session_id, ())):
-            try:
-                await ws.send_json(payload)
-            except Exception:  # aqg: top-level boundary
+        """推送给某个会话的所有访客连接（并发发送）。
+
+        原实现串行 await：一个慢客户端会阻塞其余所有连接
+        （实测 11 个连接、其中 1 个卡 3 秒 → 整批耗时 3150ms）。
+        改为 gather 并发 + 单连接超时。
+        """
+        conns = list(self.visitor_conns.get(session_id, ()))
+        if not conns:
+            return
+        results = await asyncio.gather(
+            *(self._send_one(ws, payload, self.SEND_TIMEOUT_S) for ws in conns),
+            return_exceptions=True,
+        )
+        for ws, ok in zip(conns, results):
+            if ok is not True:
                 self.visitor_conns.get(session_id, set()).discard(ws)
 
     async def broadcast_to_operators(self, payload: dict):
-        for ws in list(self.operator_conns):
-            try:
-                await ws.send_json(payload)
-            except Exception:  # aqg: top-level boundary
+        """广播给所有坐席连接（并发发送，单个失败不影响其他人）。"""
+        conns = list(self.operator_conns)
+        if not conns:
+            return
+        results = await asyncio.gather(
+            *(self._send_one(ws, payload, self.SEND_TIMEOUT_S) for ws in conns),
+            return_exceptions=True,
+        )
+        for ws, ok in zip(conns, results):
+            if ok is not True:
                 self.operator_conns.discard(ws)
 
     async def _hold(self, ws: WebSocket, on_close):
@@ -327,7 +358,9 @@ def create_app() -> FastAPI:
     async def _handle_inbound(sid: str, text: str, image: str | None, visitor_key: str):
         _preflight(sid, text, visitor_key)
         ev.info(f"ingest visitor={visitor_key} text={text[:60]}")
-        history = store.get_messages(sid)
+        # 管线只需要最近若干轮：全量读取会让长会话的上下文构建从 18ms 涨到 37ms。
+        # 取 60 条（约 30 轮）足够 history_turns 默认 10 轮 + 相关性筛选回溯。
+        history = store.get_messages(sid, limit=60)
         store.add_message(sid, "visitor", text or "（附图）")
         try:
             reply = await pipeline.run(
@@ -450,7 +483,7 @@ def create_app() -> FastAPI:
             yield _sse("meta", {"session_id": sid})
             _preflight(sid, content, visitor_id)
             ev.info(f"ingest(visitor stream) visitor={visitor_id} text={content[:60]}")
-            history = store.get_messages(sid)
+            history = store.get_messages(sid, limit=60)
             store.add_message(sid, "visitor", content or "（附图）")
             reply, msg_id, ticket_id = None, None, None
             try:

@@ -11,6 +11,7 @@ import time
 import pytest
 
 from core import config, http_pool, retrieval, store
+from tests.conftest import create_web_session
 
 
 # ============================================================
@@ -213,3 +214,139 @@ def test_db_query_is_fast(client):
         store.get_session("nonexistent")
     elapsed_ms = (time.perf_counter() - t) * 1000
     assert elapsed_ms < 100, f"200 次查询耗时 {elapsed_ms:.1f}ms，连接未被复用"
+
+
+# ============================================================
+# WS 广播并发（正确性 + 性能）
+# ============================================================
+
+class _FakeWS:
+    def __init__(self, name="ws", delay=0.0, fail=False):
+        self.name = name
+        self.delay = delay
+        self.fail = fail
+        self.received = []
+
+    async def send_json(self, payload):
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.fail:
+            raise RuntimeError("broken connection")
+        self.received.append(payload)
+
+
+def test_broadcast_is_parallel():
+    """一个慢连接不能拖住其他连接——这是正确性问题，不只是性能。"""
+    from core.main import Hub
+
+    async def run():
+        hub = Hub()
+        fast = [_FakeWS(f"f{i}", delay=0.01) for i in range(10)]
+        slow = _FakeWS("slow", delay=30.0)     # 会撞超时
+        hub.operator_conns.update(fast + [slow])
+        t = time.perf_counter()
+        await hub.broadcast_to_operators({"type": "test"})
+        return time.perf_counter() - t, fast, hub
+
+    elapsed, fast, hub = asyncio.run(run())
+    # 串行需要 30s+；并发应接近单连接超时（2s）
+    assert elapsed < 4.0, f"广播被慢连接阻塞：{elapsed:.2f}s"
+    assert all(len(ws.received) == 1 for ws in fast), "快连接都应收到消息"
+    assert len(hub.operator_conns) == 10, "慢连接应被清理"
+
+
+def test_broadcast_isolates_broken_connection():
+    """一个连接报错不影响其他人收到消息。"""
+    from core.main import Hub
+
+    async def run():
+        hub = Hub()
+        good = [_FakeWS(f"g{i}") for i in range(5)]
+        bad = _FakeWS("bad", fail=True)
+        hub.operator_conns.update(good + [bad])
+        await hub.broadcast_to_operators({"type": "x"})
+        return good, hub
+
+    good, hub = asyncio.run(run())
+    assert all(len(ws.received) == 1 for ws in good), "正常连接必须收到"
+    assert len(hub.operator_conns) == 5, "坏连接应被剔除"
+
+
+def test_visitor_publish_is_parallel():
+    from core.main import Hub
+
+    async def run():
+        hub = Hub()
+        fast = [_FakeWS(f"v{i}", delay=0.01) for i in range(6)]
+        slow = _FakeWS("slow", delay=30.0)
+        hub.visitor_conns["s1"] = set(fast + [slow])
+        t = time.perf_counter()
+        await hub.publish("s1", {"type": "msg"})
+        return time.perf_counter() - t, fast, hub
+
+    elapsed, fast, hub = asyncio.run(run())
+    assert elapsed < 4.0, f"访客推送被慢连接阻塞：{elapsed:.2f}s"
+    assert all(len(ws.received) == 1 for ws in fast)
+    assert len(hub.visitor_conns["s1"]) == 6, "慢连接应被清理"
+
+
+def test_publish_empty_session_is_noop():
+    from core.main import Hub
+
+    async def run():
+        hub = Hub()
+        await hub.publish("nonexistent", {"type": "x"})
+        await hub.broadcast_to_operators({"type": "x"})
+
+    asyncio.run(run())   # 不应抛异常
+
+
+# ============================================================
+# 消息历史分页
+# ============================================================
+
+def test_get_messages_limit_returns_recent(client):
+    """limit 必须返回最近的 N 条，且按时间正序。"""
+    store.create_session("hist-1", "v")
+    for i in range(100):
+        store.add_message("hist-1", "visitor", f"msg-{i}")
+    recent = store.get_messages("hist-1", limit=10)
+    assert len(recent) == 10
+    assert recent[0]["content"] == "msg-90", "应是最近 10 条且正序"
+    assert recent[-1]["content"] == "msg-99"
+
+
+def test_get_messages_no_limit_returns_all(client):
+    store.create_session("hist-2", "v")
+    for i in range(20):
+        store.add_message("hist-2", "visitor", f"m{i}")
+    assert len(store.get_messages("hist-2")) == 20
+
+
+def test_pipeline_uses_recent_history_only(client, monkeypatch):
+    """对话接口不应全量加载历史——2000 条会让上下文构建慢 40 倍。"""
+    sid, secret = create_web_session(client, "hist-3")
+    for i in range(300):
+        store.add_message(sid, "visitor" if i % 2 == 0 else "agent", f"旧消息 {i}")
+    called = {}
+
+    real = store.get_messages
+
+    def spy(session_id, limit=None):
+        called["limit"] = limit
+        return real(session_id, limit=limit)
+
+    monkeypatch.setattr(store, "get_messages", spy)
+    client.post(f"/api/sessions/{sid}/messages", json={"content": "怎么开发票"},
+                headers={"X-Session-Secret": secret})
+    assert called.get("limit") == 60, f"管线应限制历史条数，实际 limit={called.get('limit')}"
+
+
+def test_recent_context_still_works(client):
+    """限制历史后，多轮对话的上下文仍要正确工作。"""
+    sid, secret = create_web_session(client, "hist-4")
+    h = {"X-Session-Secret": secret}
+    client.post(f"/api/sessions/{sid}/messages", json={"content": "我要退货"}, headers=h)
+    r = client.post(f"/api/sessions/{sid}/messages", json={"content": "它怎么弄"}, headers=h)
+    assert r.status_code == 200
+    assert r.json()["text"], "多轮对话必须有回复"
