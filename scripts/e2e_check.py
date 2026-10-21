@@ -249,24 +249,48 @@ def config_hot_reload():
     return "改 rule 即刻生效并回滚 ✓"
 
 
+def _cleanup_stale_e2e_kb() -> int:
+    """清掉历史体检残留（tag=e2e）。上次体检中途失败会留下条目，不能让它污染知识库。"""
+    try:
+        items = client.get(f"{BASE}/api/kb").json().get("kb", [])
+    except Exception:
+        return 0
+    removed = 0
+    for e in items:
+        if "e2e" in (e.get("tags") or []):
+            try:
+                if client.delete(f"{BASE}/api/kb/{e['id']}").status_code == 200:
+                    removed += 1
+            except Exception:
+                pass
+    return removed
+
+
 def kb_crud_and_retrieval():
     kid = f"KB-E2E-{run_id}"
     payload = {"id": kid, "text": f"测试关键词{run_id} 售后专线", "title": "端到端测试条目",
                "answer": "这是能力体检写入的临时条目，稍后删除。", "tags": ["e2e"]}
-    assert client.post(f"{BASE}/api/kb", json=payload).status_code == 200
-    upd = dict(payload, answer="更新后的答案。")
-    assert client.put(f"{BASE}/api/kb/{kid}", json=upd).status_code == 200
-    # 用试召回端点判断「立即可检索」：不受当前 LLM 引擎模式影响（LLM 回答未必带引用）
-    rec = client.post(f"{BASE}/api/kb/test", json={"query": f"测试关键词{run_id} 售后专线"})
-    assert rec.status_code == 200, rec.text[:150]
-    ids = [h["id"] for h in rec.json()["hits"]]
-    assert kid in ids, f"新条目未被检索到：{ids}"
-    d = ingest(f"{run_id} 的售后专线是多少", "kbc", "kbc-g1")
-    assert d["reply"]["text"], d["reply"]
-    assert client.delete(f"{BASE}/api/kb/{kid}").status_code == 200
-    remaining = client.get(f"{BASE}/api/kb").json()["kb"]
-    assert all(e["id"] != kid for e in remaining), "删除后仍存在"
-    return "新增→检索命中→更新→删除 ✓"
+    try:
+        assert client.post(f"{BASE}/api/kb", json=payload).status_code == 200
+        upd = dict(payload, answer="更新后的答案。")
+        assert client.put(f"{BASE}/api/kb/{kid}", json=upd).status_code == 200
+        # 用试召回端点判断「立即可检索」：不受当前 LLM 引擎模式影响（LLM 回答未必带引用）
+        rec = client.post(f"{BASE}/api/kb/test", json={"query": f"测试关键词{run_id} 售后专线"})
+        assert rec.status_code == 200, rec.text[:150]
+        ids = [h["id"] for h in rec.json()["hits"]]
+        assert kid in ids, f"新条目未被检索到：{ids}"
+        d = ingest(f"{run_id} 的售后专线是多少", "kbc", "kbc-g1")
+        assert d["reply"]["text"], d["reply"]
+        assert client.delete(f"{BASE}/api/kb/{kid}").status_code == 200
+        remaining = client.get(f"{BASE}/api/kb").json()["kb"]
+        assert all(e["id"] != kid for e in remaining), "删除后仍存在"
+        return "新增→检索命中→更新→删除 ✓"
+    finally:
+        # 断言中途失败也要清理：否则体检会把测试条目永久留在生产知识库里（已发生）
+        try:
+            client.delete(f"{BASE}/api/kb/{kid}")
+        except Exception:
+            pass
 
 
 def tool_registry_crud():
@@ -316,6 +340,9 @@ def _set_engine(mode: str) -> None:
 _orig_mode = "auto"
 
 check("20 健康检查 /healthz + /api/agent/health", health)
+_cleaned = _cleanup_stale_e2e_kb()
+if _cleaned:
+    print(f"[清理] 删除历史体检残留 KB 条目 {_cleaned} 条")
 _orig_mode = _engine_mode()
 _set_engine("rule")
 check("01 知识库检索命中（物流）", kb_hit_logistics)

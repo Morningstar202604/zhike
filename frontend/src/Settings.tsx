@@ -9,7 +9,7 @@ import {
 import {
   useConfig, useUpdateConfig, useKb, useKbMutations, useKbImport, useKbTest, useKbDocImport, exportKb, useTools, useToolMutations,
   useInjectionRules, useInjectionRuleMutations, useLlmTest, useLlmModels,
-  useAdminOverview, useAdminMemory, useAdminInjection,
+  useAdminOverview, useAdminMemory, useAdminInjection, useAdminReport, useAdminStats,
 } from './lib/queries'
 import { StatCard, EmptyState } from './ui'
 import { useShell } from './components/ResponsiveShell'
@@ -17,6 +17,7 @@ import { Spinner, ErrorBanner } from './components/Spinner'
 import type { AgentConfig, KbEntry, ToolDef, InjectionRule, MemoryEntry, InjectionLogEntry } from './types/api'
 import { usePagination } from './lib/pagination'
 import { isAuthError } from './lib/queries'
+import { TOOL_LABEL } from './lib/labels'
 import TokenGate from './components/TokenGate'
 import './pages2.css'
 
@@ -752,7 +753,21 @@ function KbForm({ initial, onDone }: { initial: KbEntry | null; onDone: () => vo
 /* ============ 数据概览 ============ */
 function DataPanel() {
   const { data: ov, isLoading } = useAdminOverview()
+  const { data: report } = useAdminReport()
+  const { data: stats } = useAdminStats()
   if (isLoading || !ov) return <Spinner full label="加载数据…" />
+
+  const days = report?.daily ?? []
+  // 汇总口径统一走后端 totals：升级率分母是会话数（不是回复数），前后端各算一套必然对不上
+  const totalSessions = report?.totals.sessions ?? 0
+  const totalReplies = report?.totals.agent_replies ?? 0
+  const totalKb = report?.totals.kb_hits ?? 0
+  const totalEsc = report?.totals.escalations ?? 0
+  const kbRate = report?.totals.kb_hit_rate != null ? Math.round(report.totals.kb_hit_rate * 100) : 0
+  const escRate = report?.totals.escalate_rate != null ? Math.round(report.totals.escalate_rate * 100) : 0
+  const dayMax = Math.max(1, ...days.map((x) => Math.max(x.sessions, x.agent_replies)))
+  const toolMax = Math.max(1, ...(stats?.tool_usage ?? []).map((x) => x.count))
+
   return (
     <>
       <div className="stat-grid">
@@ -764,7 +779,88 @@ function DataPanel() {
         <StatCard icon={<ShieldAlert size={18} />} value={ov.injection} label="注入拦截" tone="danger" />
         <StatCard icon={<Activity size={18} />} value={ov.feedback.total} label={`反馈 · 好评率 ${(ov.feedback.help_rate * 100).toFixed(1)}%`} tone="ok" />
       </div>
+
+      <div className="grp" style={{ marginTop: 14 }}>
+        <div className="grp-head">
+          <h3>近 7 天经营指标</h3>
+          <span className="gh-note">按日聚合</span>
+        </div>
+        <div className="grp-body">
+          <div className="rep-grid">
+            <RepItem label="新增会话" value={totalSessions} sub="7 天累计" />
+            <RepItem label="Agent 回复" value={totalReplies} sub="7 天累计" />
+            <RepItem
+              label="KB 命中率"
+              value={`${kbRate}%`}
+              sub={`${totalKb} 条回答引用了知识库`}
+              tone={kbRate >= 60 ? 'ok' : kbRate > 0 ? 'warn' : 'muted'}
+            />
+            <RepItem
+              label="转人工率"
+              value={`${escRate}%`}
+              sub={`${totalEsc} 次升级`}
+              tone={escRate > 40 ? 'warn' : 'ok'}
+            />
+          </div>
+          {days.length > 0 && (
+            <>
+              <div className="rep-bars">
+                {days.map((d) => (
+                  <div
+                    className="rep-day"
+                    key={d.day}
+                    title={`${d.day}：会话 ${d.sessions} · 回复 ${d.agent_replies} · 升级 ${d.escalations}`}
+                  >
+                    <div className="rep-bar-pair">
+                      <span className="rep-bar sessions" style={{ height: `${(d.sessions / dayMax) * 100}%` }} />
+                      <span className="rep-bar replies" style={{ height: `${(d.agent_replies / dayMax) * 100}%` }} />
+                    </div>
+                    <span className="rep-day-label">{d.day.slice(5)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="rep-legend">
+                <span><i className="dot sessions" /> 新会话</span>
+                <span><i className="dot replies" /> Agent 回复</span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {stats && stats.tool_usage.length > 0 && (
+        <div className="grp" style={{ marginTop: 14 }}>
+          <div className="grp-head">
+            <h3>工具调用分布</h3>
+            <span className="gh-note">近 24 小时</span>
+          </div>
+          <div className="grp-body">
+            <div className="tool-dist">
+              {stats.tool_usage.map((t) => (
+                <div className="tool-dist-row" key={t.tool}>
+                  <span className="tool-dist-name">{TOOL_LABEL[t.tool] || t.tool}</span>
+                  <span className="tool-dist-track">
+                    <span style={{ width: `${(t.count / toolMax) * 100}%` }} />
+                  </span>
+                  <span className="tool-dist-count">{t.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </>
+  )
+}
+
+function RepItem({ label, value, sub, tone = 'brand' }: { label: string; value: string | number; sub: string; tone?: string }) {
+  const color = tone === 'ok' ? '#1a8f52' : tone === 'warn' ? '#b5731b' : tone === 'muted' ? 'var(--muted)' : 'var(--brand)'
+  return (
+    <div className="rep-item">
+      <span className="rep-label">{label}</span>
+      <span className="rep-value" style={{ color }}>{value}</span>
+      <span className="rep-sub">{sub}</span>
+    </div>
   )
 }
 
@@ -781,10 +877,12 @@ function Pager({ page, maxPage, total, onChange, label }: { page: number; maxPag
 /* ============ 长期记忆 ============ */
 function MemPanel() {
   const { data: memRes, isLoading } = useAdminMemory()
-  if (isLoading) return <Spinner full label="加载记忆…" />
   const mem: MemoryEntry[] = memRes?.entries ?? []
-  if (!mem.length) return <EmptyState icon={<Brain size={22} />} title="暂无长期记忆" desc="访客产生偏好或多次咨询后会自动沉淀在这里。" />
+  // usePagination 必须在任何 return 之前调用：否则"加载中 → 有数据"时
+  // hook 数量变化，React 直接抛 #310 并整页白屏（已复现）。
   const pg = usePagination(mem)
+  if (isLoading) return <Spinner full label="加载记忆…" />
+  if (!mem.length) return <EmptyState icon={<Brain size={22} />} title="暂无长期记忆" desc="访客产生偏好或多次咨询后会自动沉淀在这里。" />
   return (
     <>
       <div className="tbl-wrap">
@@ -810,10 +908,11 @@ function MemPanel() {
 /* ============ 注入日志 ============ */
 function InjPanel() {
   const { data: injRes, isLoading } = useAdminInjection()
-  if (isLoading) return <Spinner full label="加载注入日志…" />
   const inj: InjectionLogEntry[] = injRes?.entries ?? []
-  if (!inj.length) return <EmptyState icon={<ShieldAlert size={22} />} title="暂无注入拦截记录" desc="护栏被触发后会出现在这里。" />
+  // 同 MemPanel：hooks 必须在早退之前
   const pg = usePagination(inj)
+  if (isLoading) return <Spinner full label="加载注入日志…" />
+  if (!inj.length) return <EmptyState icon={<ShieldAlert size={22} />} title="暂无注入拦截记录" desc="护栏被触发后会出现在这里。" />
   return (
     <>
       <div className="tbl-wrap">
