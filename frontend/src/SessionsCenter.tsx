@@ -5,6 +5,7 @@ import { http, useAdminSessions, useCloseSession, isAuthError } from './lib/quer
 import TokenGate from './components/TokenGate'
 import type { AgentMsg, SessionRow } from './types/api'
 import { Spinner, ErrorBanner } from './components/Spinner'
+import { ESCALATE_REASON, SESSION_STATUS, CHANNEL_LABEL, label } from './lib/labels'
 import { EmptyState, PageHead } from './ui'
 import './pages2.css'
 
@@ -16,12 +17,7 @@ const FILTERS = [
   { key: 'closed', label: '已关闭' },
 ]
 
-const STATUS_LABELS: Record<string, string> = {
-  ongoing: '进行中',
-  pending_agent: '待接管',
-  agent_handled: '坐席处理中',
-  closed: '已关闭',
-}
+const STATUS_LABELS = SESSION_STATUS
 
 const STATUS_TONE: Record<string, string> = {
   ongoing: 'info',
@@ -126,15 +122,15 @@ export default function SessionsCenter() {
               {items.map((s) => (
                 <tr key={s.id} className="cursor-pointer" onClick={() => open(s)}>
                   <td className="muted">{fmtTime(s.started_at)}</td>
-                  <td><span className="badge info">{s.channel}</span></td>
+                  <td><span className="badge info">{label(CHANNEL_LABEL, s.channel)}</span></td>
                   <td className="raw" title={s.visitor_id}>{(s.visitor_id || '-').slice(0, 24)}</td>
                   <td>
                     <span className={`badge ${STATUS_TONE[s.status] || 'muted'}`}>
-                      {STATUS_LABELS[s.status] || s.status}
+                      {label(STATUS_LABELS, s.status)}
                     </span>
                   </td>
                   <td>{s.message_count}</td>
-                  <td className="muted">{s.escalate_reason || '-'}</td>
+                  <td className="muted">{label(ESCALATE_REASON, s.escalate_reason, '-')}</td>
                   <td>
                     <button
                       className="btn ghost sm"
@@ -182,7 +178,7 @@ export default function SessionsCenter() {
                 </div>
               ))}
               {active.escalate_reason && (
-                <div className="text-xs text-muted">升级原因：{active.escalate_reason} · 开始 {fmtTime(active.started_at)}</div>
+                <div className="text-xs text-muted">升级原因：{label(ESCALATE_REASON, active.escalate_reason)} · 开始 {fmtTime(active.started_at)}</div>
               )}
             </div>
           </div>

@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from 'react'
 import { Inbox, ClipboardList, Radio, X, Headset, Ticket, User, RefreshCw } from 'lucide-react'
 import { http, useOperatorQueues, isAuthError } from './lib/queries'
 import TokenGate from './components/TokenGate'
+import { ESCALATE_REASON, label } from './lib/labels'
 import { useWs } from './hooks/useWs'
 import { useAppStore, ensureOpId } from './store/appStore'
 import { useShell } from './components/ResponsiveShell'
@@ -161,7 +162,7 @@ export default function OperatorDesk() {
                 <span><User size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} /> 会话 #{String(s.id).slice(0, 8)}</span>
                 <span className="badge warn">待接管</span>
               </div>
-              <div className="op-card-meta">原因：{s.escalate_reason || '-'}</div>
+              <div className="op-card-meta">原因：{label(ESCALATE_REASON, s.escalate_reason, '-')}</div>
               <div className="op-actions">
                 <button className="btn sm" onClick={(e) => { e.stopPropagation(); take(s.id) }}>接管并对话</button>
               </div>
