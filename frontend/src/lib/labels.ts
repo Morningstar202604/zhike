@@ -54,6 +54,19 @@ export const CHANNEL_LABEL: Record<string, string> = {
   telegram: 'Telegram',
 };
 
+export const ACTION_LABEL: Record<string, string> = {
+  'fs.read': '读取文件',
+  'fs.write': '写入文件',
+  'fs.list': '列出目录',
+  'fs.stat': '文件信息',
+  'fs.mkdir': '新建目录',
+  'fs.move': '移动/改名',
+  'fs.delete': '删除文件',
+  'shell.exec': '执行命令',
+  'proc.list': '查看进程',
+  'proc.kill': '结束进程',
+};
+
 export const TOOL_LABEL: Record<string, string> = {
   query_order: '查询订单',
   initiate_refund: '申请退款',

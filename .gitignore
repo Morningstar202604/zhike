@@ -11,5 +11,8 @@ dist/
 .pytest_cache/
 *.log
 
+# 执行器策略（本机路径，不共享）
+/policy.json
+
 # 运行时锁文件（知识库跨进程写锁）
 *.lock
