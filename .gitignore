@@ -8,3 +8,6 @@ node_modules/
 dist/
 .pytest_cache/
 *.log
+
+# 运行时锁文件（知识库跨进程写锁）
+*.lock
