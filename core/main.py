@@ -845,6 +845,8 @@ def create_app() -> FastAPI:
         tmp = p.with_name(f"{p.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"kb": items}, f, ensure_ascii=False, indent=2)
+            # 末尾换行：POSIX 文本文件约定，也让每次改库不产生「无末尾换行」噪音 diff
+            f.write("\n")
         last_err = None
         for attempt in range(3):
             try:
