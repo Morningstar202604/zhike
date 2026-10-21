@@ -110,7 +110,7 @@ export default function ActionsCenter() {
             破坏性 {cat.risks.L2} · {cat.l2_enabled ? '已启用' : '未启用'}
           </span>
           <span className={`badge shrink-0 ${execHealth.data?.online ? 'ok' : 'muted'}`}>
-            <Radio size={11} /> 网关{execHealth.data?.online ? '在线' : execHealth.data?.error ? '离线' : '…'}
+            <Radio size={11} /> 执行器{execHealth.data?.online ? '在线' : execHealth.data?.error ? '离线' : '…'}
           </span>
           <button className="btn ghost sm ml-auto" onClick={() => audit.mutate()} disabled={audit.isPending}>
             <GitBranch size={13} /> {audit.isPending ? '校验中…' : '校验审计链'}
