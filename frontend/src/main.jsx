@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './lib/queryClient'
 import ResponsiveShell from './components/ResponsiveShell'
+import { FeedbackProvider } from './components/Feedback'
 import { Spinner } from './components/Spinner'
 import './index.css'
 import './styles.css'
@@ -22,21 +23,23 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <ResponsiveShell>
-          <Suspense fallback={<Spinner full />}>
-            <Routes>
-              <Route path="/" element={<VisitorChat />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/sessions" element={<SessionsCenter />} />
-              <Route path="/actions" element={<ActionsCenter />} />
-              <Route path="/runs" element={<AgentRuns />} />
-              <Route path="/logs" element={<LogsCenter />} />
-              <Route path="/operator" element={<OperatorDesk />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/settings/:tab" element={<Settings />} />
-            </Routes>
-          </Suspense>
-        </ResponsiveShell>
+        <FeedbackProvider>
+          <ResponsiveShell>
+            <Suspense fallback={<Spinner full />}>
+              <Routes>
+                <Route path="/" element={<VisitorChat />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/sessions" element={<SessionsCenter />} />
+                <Route path="/actions" element={<ActionsCenter />} />
+                <Route path="/runs" element={<AgentRuns />} />
+                <Route path="/logs" element={<LogsCenter />} />
+                <Route path="/operator" element={<OperatorDesk />} />
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/settings/:tab" element={<Settings />} />
+              </Routes>
+            </Suspense>
+          </ResponsiveShell>
+        </FeedbackProvider>
       </BrowserRouter>
     </QueryClientProvider>
   )

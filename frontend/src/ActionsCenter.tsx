@@ -8,6 +8,7 @@ import type { ActionLogEntry } from './lib/queries'
 import { PageHead, EmptyState } from './ui'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import TokenGate from './components/TokenGate'
+import { useFeedback } from './components/Feedback'
 import { ACTION_LABEL, ACTION_STATUS, RISK_LABEL, label } from './lib/labels'
 import './pages2.css'
 
@@ -67,6 +68,7 @@ export default function ActionsCenter() {
   const ap = useApprovalMutations()
   const audit = useAuditVerify()
   const execHealth = useExecutorHealth()
+  const fb = useFeedback()
 
   const authErr = isAuthError(catalog.error) ? catalog.error : isAuthError(logs.error) ? logs.error : null
   if (authErr) {
@@ -141,8 +143,12 @@ export default function ActionsCenter() {
                 <CheckCircle2 size={13} /> 批准
               </button>
               <button className="btn secondary sm"
-                onClick={() => {
-                  const reason = prompt('拒绝原因（可留空）') ?? ''
+                onClick={async () => {
+                  const reason = await fb.prompt('拒绝原因（可留空）', '', {
+                    title: '拒绝动作',
+                    confirmText: '拒绝',
+                  })
+                  if (reason === null) return
                   ap.deny.mutate({ id: a.id, reason })
                 }}
                 disabled={ap.deny.isPending}>

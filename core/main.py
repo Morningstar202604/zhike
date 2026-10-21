@@ -394,12 +394,12 @@ def create_app() -> FastAPI:
     async def ingest(body: IngestIn):
         text = (body.text or "").strip()
         if not text and not body.image_b64:
-            raise HTTPException(400, "empty message")
+            raise HTTPException(400, "消息内容不能为空")
         _check_payload(text, body.image_b64)
         identity = f"{body.channel_type}:{body.channel_user_id}"
         limiter: security.RateLimiter = app.state.limiter
         if not limiter.allow(identity):
-            raise HTTPException(429, "rate limited")
+            raise HTTPException(429, "请求过于频繁，请稍后再试")
         chat_key = body.group_id or body.channel_user_id
         sid = sessions.resolve_session(f"{body.channel_type}:{chat_key}", identity)
         reply, msg_id, ticket_id, _visitor_msg_id = await _handle_inbound(
@@ -447,7 +447,7 @@ def create_app() -> FastAPI:
     async def post_message(sid: str, body: MessageIn, request: Request, _=Depends(_require_session_secret)):
         content = (body.content or "").strip()
         if not content and not body.image:
-            raise HTTPException(400, "empty message")
+            raise HTTPException(400, "消息内容不能为空")
         _check_payload(content, body.image)
         sess = store.get_session(sid)
         if sess and sess["status"] == "closed":
@@ -457,7 +457,7 @@ def create_app() -> FastAPI:
         # 限流 key 用客户端 IP（不再用可伪造的 visitor_id），防一人刷爆全匿名桶
         ip_key = f"ip:{request.client.host if request.client else 'unknown'}"
         if not limiter.allow(ip_key):
-            raise HTTPException(429, "rate limited")
+            raise HTTPException(429, "请求过于频繁，请稍后再试")
         reply, msg_id, ticket_id, visitor_msg_id = await _handle_inbound(
             sid, content, body.image, visitor_id, web_search=body.web_search)
         return {
@@ -486,16 +486,16 @@ def create_app() -> FastAPI:
         """访客流式问答（SSE 范式：delta 增量打字机 → done 权威终态，终态 text 为准）。"""
         content = (body.content or "").strip()
         if not content and not body.image:
-            raise HTTPException(400, "empty message")
+            raise HTTPException(400, "消息内容不能为空")
         _check_payload(content, body.image)
         sess = store.get_session(sid)
         visitor_id = (sess or {}).get("visitor_id", "anonymous")
         limiter: security.RateLimiter = app.state.limiter
         ip_key = f"ip:{request.client.host if request.client else 'unknown'}"
         if not limiter.allow(ip_key):
-            raise HTTPException(429, "rate limited")
+            raise HTTPException(429, "请求过于频繁，请稍后再试")
         if not sess:
-            raise HTTPException(404, "session not found")
+            raise HTTPException(404, "会话不存在")
         if sess["status"] == "closed":
             raise HTTPException(409, "会话已关闭，请开始新会话")
 
@@ -587,7 +587,7 @@ def create_app() -> FastAPI:
     async def operator_reply(sid: str, body: MessageIn):
         content = body.content.strip()
         if not content:
-            raise HTTPException(400, "empty message")
+            raise HTTPException(400, "消息内容不能为空")
         if not store.get_session(sid):
             raise HTTPException(404, "会话不存在")
         store.add_message(sid, "operator", content)
@@ -618,7 +618,7 @@ def create_app() -> FastAPI:
     @app.post("/api/sessions/{sid}/feedback")
     def add_feedback(sid: str, body: FeedbackIn, _=Depends(_require_session_secret)):
         if body.rating not in ("helpful", "not_helpful"):
-            raise HTTPException(400, "rating must be helpful or not_helpful")
+            raise HTTPException(400, "反馈值必须是 helpful 或 not_helpful")
         # message_id 必须属于本会话且是 agent 消息，防止给他人消息打分
         if body.message_id:
             msgs = store.get_messages(sid)
@@ -715,7 +715,7 @@ def create_app() -> FastAPI:
         _validate_tool_args(body.args_json)
         existing = store.get_tool(tool_id)
         if not existing:
-            raise HTTPException(404, "tool not found")
+            raise HTTPException(404, "工具不存在")
         try:
             t = store.upsert_tool(tool_id, body.name or tool_id, body.desc, body.args_json, body.enabled, existing["builtin"])
         except ValueError as e:
@@ -725,7 +725,7 @@ def create_app() -> FastAPI:
     @app.delete("/api/tools/{tool_id}", dependencies=[Depends(require_admin)])
     def delete_tool(tool_id: str):
         if not store.delete_tool(tool_id):
-            raise HTTPException(404, "tool not found")
+            raise HTTPException(404, "工具不存在")
         return {"ok": True}
 
     @app.get("/api/injection-rules", dependencies=[Depends(require_admin)])
@@ -742,7 +742,7 @@ def create_app() -> FastAPI:
         except _re.error as e:
             raise HTTPException(400, f"正则表达式非法：{e}")
         if body.action not in ("block", "log_only"):
-            raise HTTPException(400, "action 必须是 block 或 log_only")
+            raise HTTPException(400, "动作类型必须是 block 或 log_only")
 
     @app.post("/api/injection-rules", dependencies=[Depends(require_admin)])
     def create_rule(body: RuleIn):
@@ -754,13 +754,13 @@ def create_app() -> FastAPI:
         _check_rule(body)
         r = store.update_injection_rule(rule_id, body.expr, body.action, body.enabled)
         if not r:
-            raise HTTPException(404, "rule not found")
+            raise HTTPException(404, "规则不存在")
         return {"rule": r}
 
     @app.delete("/api/injection-rules/{rule_id}", dependencies=[Depends(require_admin)])
     def delete_rule(rule_id: int):
         if not store.delete_injection_rule(rule_id):
-            raise HTTPException(404, "rule not found")
+            raise HTTPException(404, "规则不存在")
         return {"ok": True}
 
     @app.get("/api/kb", dependencies=[Depends(require_admin)])
@@ -864,7 +864,7 @@ def create_app() -> FastAPI:
     def add_kb(body: KbIn):
         def op(items):
             if any(e["id"] == body.id for e in items):
-                raise HTTPException(400, "kb id already exists")
+                raise HTTPException(400, "知识库条目 ID 已存在")
             items.append({"id": body.id, "text": body.text, "title": body.title,
                           "answer": body.answer, "tags": body.tags})
             return None, items
@@ -879,7 +879,7 @@ def create_app() -> FastAPI:
                     items[i] = {"id": kb_id, "text": body.text, "title": body.title,
                                 "answer": body.answer, "tags": body.tags}
                     return None, items
-            raise HTTPException(404, "kb not found")
+            raise HTTPException(404, "知识库条目不存在")
         _, items = _kb_mutate(op)
         return {"kb": items}
 
@@ -888,7 +888,7 @@ def create_app() -> FastAPI:
         def op(items):
             new = [e for e in items if e["id"] != kb_id]
             if len(new) == len(items):
-                raise HTTPException(404, "kb not found")
+                raise HTTPException(404, "知识库条目不存在")
             return None, new
         _, new = _kb_mutate(op)
         return {"kb": new}
@@ -960,7 +960,7 @@ def create_app() -> FastAPI:
         """试召回：按当前生效配置（top-K/门槛/向量开关）跑一次检索，返回命中与分数。"""
         q = (body.query or "").strip()
         if not q:
-            raise HTTPException(400, "empty query")
+            raise HTTPException(400, "检索词不能为空")
         cfg = config.get_config()
         top_k = cfg.get("retrieval", {}).get("kb_top_k", 4)
         min_overlap = cfg.get("retrieval", {}).get("min_overlap", 0.0)
@@ -1038,7 +1038,7 @@ def create_app() -> FastAPI:
         """坐席答案回流：把坐席手工回复存为 KB 条目（id 续号，tag 坐席回流），沉淀为下次的自动答案。"""
         text = (body.text or "").strip()
         if not text:
-            raise HTTPException(400, "empty text")
+            raise HTTPException(400, "内容不能为空")
         title = (body.title or text.strip().splitlines()[0] or text[:30]).strip()[:80]
 
         def op(items):
@@ -1320,7 +1320,7 @@ def create_app() -> FastAPI:
         与 /api/actions/execute 的区别：那个执行单个动作，这个让模型自己规划多步。
         """
         if not body.goal.strip():
-            raise HTTPException(400, "goal 不能为空")
+            raise HTTPException(400, "任务目标不能为空")
         principal_raw = _principal_from(body.principal, x_admin_token, x_agent_token)
 
         # 预算可由请求覆盖步数（其余仍走环境变量）
@@ -1472,7 +1472,7 @@ def create_app() -> FastAPI:
         @app.get("/{full_path:path}", include_in_schema=False)
         def spa_fallback(full_path: str):
             if full_path.startswith(("api/", "v1/", "ws/", "docs", "openapi.json", "healthz")):
-                raise HTTPException(404, "not found")
+                raise HTTPException(404, "资源不存在")
             # realpath 包含性校验：拒绝 ../ 逃出静态目录（防路径穿越读取任意文件）
             candidate = os.path.realpath(os.path.join(static_dir, full_path))
             if full_path and candidate.startswith(static_root + os.sep) and os.path.isfile(candidate):
