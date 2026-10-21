@@ -10,6 +10,8 @@ import logging
 
 import httpx
 
+from core.http_pool import get_client
+
 from core import config as config_mod
 
 lg = logging.getLogger("cs.events")
@@ -41,22 +43,22 @@ async def call_llm(messages: list[dict], tools: list[dict], timeout_s: float = 6
         "response_format": {"type": "json_object"},
     }
 
-    async with httpx.AsyncClient(timeout=timeout_s) as client:
+    client = get_client(base, timeout=timeout_s)
+    resp = await client.post(
+        f"{base}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json=payload,
+    )
+    if resp.status_code in (400, 422):
+        retry = dict(payload)
+        retry.pop("response_format", None)
         resp = await client.post(
             f"{base}/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
-            json=payload,
+            json=retry,
         )
-        if resp.status_code in (400, 422):
-            retry = dict(payload)
-            retry.pop("response_format", None)
-            resp = await client.post(
-                f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=retry,
-            )
-        resp.raise_for_status()
-        data = resp.json()
+    resp.raise_for_status()
+    data = resp.json()
 
     content = (data["choices"][0]["message"]["content"] or "").strip()
     if content.startswith("```"):

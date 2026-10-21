@@ -1,6 +1,7 @@
 """运行时配置中心：默认值来自代码与环境变量，可被 SQLite config 表覆盖，改完即时生效。"""
 import json
 import os
+import threading
 
 from core import store
 from core import crypto
@@ -80,7 +81,37 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+# 配置缓存：key = (配置版本号, LLM API Key 环境变量指纹)
+# 配置在 DB 里变更时版本号递增，缓存自动失效——保证「改完即时生效」。
+_CFG_CACHE: dict = {"key": None, "value": None}
+_CFG_LOCK = threading.Lock()
+
+
+def invalidate_cache() -> None:
+    """配置变更后主动失效（update_config 内部调用）。"""
+    with _CFG_LOCK:
+        _CFG_CACHE["key"] = None
+        _CFG_CACHE["value"] = None
+
+
+def config_version() -> int:
+    """配置版本号：存在 meta 表，每次 set_config 递增。"""
+    return store.config_version()
+
+
 def get_config() -> dict:
+    """读取运行时配置（带缓存）。
+
+    每个对话请求会调用 2-3 次，原来每次都要深拷贝 + 查库 + Fernet 解密。
+    缓存键包含版本号与环境变量指纹：DB 改配置会递增版本，环境变量变更也会失效。
+    """
+    env_key = os.environ.get("USER_LLM_API_KEY", "")
+    key = (config_version(), env_key)
+    with _CFG_LOCK:
+        if _CFG_CACHE["key"] == key and _CFG_CACHE["value"] is not None:
+            # 返回深拷贝：调用方可能修改，不能让他们污染缓存
+            return json.loads(json.dumps(_CFG_CACHE["value"]))
+
     cfg = _defaults()
     stored = store.get_config() or {}
     cfg = _deep_merge(cfg, stored)
@@ -89,14 +120,17 @@ def get_config() -> dict:
     if stored_key:
         stored_key = crypto.decrypt_key(stored_key)
         cfg["llm"]["api_key"] = stored_key
-    env_key = os.environ.get("USER_LLM_API_KEY", "")
     if stored_key and stored_key != "your-api-key-here":
         cfg["llm"]["key_source"] = "ui"
     else:
         cfg["llm"]["api_key"] = env_key
         cfg["llm"]["key_source"] = "env" if env_key else "none"
     cfg["llm"]["has_key"] = bool(cfg["llm"]["api_key"]) and cfg["llm"]["api_key"] != "your-api-key-here"
-    return cfg
+
+    with _CFG_LOCK:
+        _CFG_CACHE["key"] = key
+        _CFG_CACHE["value"] = cfg
+    return json.loads(json.dumps(cfg))
 
 
 # 每个配置分组允许的字段类型（None 表示任意）
@@ -161,4 +195,5 @@ def update_config(patch: dict) -> dict:
     if "api_key" in llm_patch and isinstance(llm_patch["api_key"], str):
         llm_patch["api_key"] = crypto.encrypt_key(llm_patch["api_key"])
     store.set_config(patch)
+    invalidate_cache()
     return get_config()

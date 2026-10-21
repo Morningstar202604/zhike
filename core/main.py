@@ -185,6 +185,13 @@ async def lifespan(app: FastAPI):
         )
     app.state.limiter = ratelimit.SQLiteRateLimiter()
     yield
+    # 退出时关闭共享 HTTP 连接池，避免资源泄漏
+    try:
+        from core import http_pool
+
+        await http_pool.close_all()
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
