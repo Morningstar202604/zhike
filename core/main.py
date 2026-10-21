@@ -363,8 +363,8 @@ def create_app() -> FastAPI:
         ev.info(f"ingest visitor={visitor_key} text={text[:60]}")
         # 管线只需要最近若干轮：全量读取会让长会话的上下文构建从 18ms 涨到 37ms。
         # 取 60 条（约 30 轮）足够 history_turns 默认 10 轮 + 相关性筛选回溯。
-        history = store.get_messages(sid, limit=60)
-        store.add_message(sid, "visitor", text or "（附图）")
+        history = store.get_messages(sid, limit=60, include_deleted=False)
+        visitor_msg_id = store.add_message(sid, "visitor", text or "（附图）")
         try:
             reply = await pipeline.run(
                 pipeline.ChannelMessage(text=text, image_b64=image or "", web_search=web_search),
@@ -388,7 +388,7 @@ def create_app() -> FastAPI:
                 {"type": "new_pending", "session_id": sid, "ticket_id": ticket_id, "reason": reply.escalate_reason}
             )
         _remember(visitor_key, text, reply)
-        return reply, msg_id, ticket_id
+        return reply, msg_id, ticket_id, visitor_msg_id
 
     @app.post("/v1/ingest", dependencies=[Depends(require_channel)])
     async def ingest(body: IngestIn):
@@ -402,7 +402,8 @@ def create_app() -> FastAPI:
             raise HTTPException(429, "rate limited")
         chat_key = body.group_id or body.channel_user_id
         sid = sessions.resolve_session(f"{body.channel_type}:{chat_key}", identity)
-        reply, msg_id, ticket_id = await _handle_inbound(sid, text, body.image_b64, identity)
+        reply, msg_id, ticket_id, _visitor_msg_id = await _handle_inbound(
+            sid, text, body.image_b64, identity)
         return {
             "session_id": sid,
             "message_id": msg_id,
@@ -431,6 +432,17 @@ def create_app() -> FastAPI:
     def get_messages(sid: str, _=Depends(_require_admin_or_session)):
         return {"messages": store.get_messages(sid)}
 
+    @app.delete("/api/sessions/{sid}/messages/{message_id}")
+    def delete_message(sid: str, message_id: int, _=Depends(_require_session_secret)):
+        """访客删除自己会话里的一条消息（软删除）。
+
+        物理删除会破坏审计与投诉取证；软删除后消息不再返回、
+        也不会进入模型上下文（get_messages 仍会带 deleted 标记供前端灰显）。
+        """
+        if not store.delete_message(sid, message_id):
+            raise HTTPException(404, "消息不存在或已删除")
+        return {"ok": True, "message_id": message_id}
+
     @app.post("/api/sessions/{sid}/messages")
     async def post_message(sid: str, body: MessageIn, request: Request, _=Depends(_require_session_secret)):
         content = (body.content or "").strip()
@@ -446,7 +458,7 @@ def create_app() -> FastAPI:
         ip_key = f"ip:{request.client.host if request.client else 'unknown'}"
         if not limiter.allow(ip_key):
             raise HTTPException(429, "rate limited")
-        reply, msg_id, ticket_id = await _handle_inbound(
+        reply, msg_id, ticket_id, visitor_msg_id = await _handle_inbound(
             sid, content, body.image, visitor_id, web_search=body.web_search)
         return {
             "role": "agent",
@@ -463,6 +475,7 @@ def create_app() -> FastAPI:
             "ctx_used": reply.ctx_used,
             "thought": reply.thought,
             "message_id": msg_id,
+            "visitor_message_id": visitor_msg_id,
         }
 
     def _sse(event: str, data: dict) -> str:
@@ -490,8 +503,9 @@ def create_app() -> FastAPI:
             yield _sse("meta", {"session_id": sid})
             _preflight(sid, content, visitor_id)
             ev.info(f"ingest(visitor stream) visitor={visitor_id} text={content[:60]}")
-            history = store.get_messages(sid, limit=60)
-            store.add_message(sid, "visitor", content or "（附图）")
+            history = store.get_messages(sid, limit=60, include_deleted=False)
+            visitor_msg_id = store.add_message(sid, "visitor", content or "（附图）")
+            yield _sse("ack", {"visitor_message_id": visitor_msg_id})
             reply, msg_id, ticket_id = None, None, None
             try:
                 async for kind, payload in pipeline.run_stream(

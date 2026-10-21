@@ -1,5 +1,5 @@
 """回归：Agent 三能力 — 流式管线 / 视觉多模态 / 混合检索 / SSE 端到端。"""
-from tests.conftest import create_web_session
+from tests.conftest import create_web_session, reset_web_session_auth
 import asyncio
 import json
 
@@ -252,3 +252,22 @@ def test_chat_stream_persists_messages(client, monkeypatch):
     client.post(f"/api/sessions/{sid}/chat/stream", json={"content": "测试持久化"})
     msgs = client.get(f"/api/sessions/{sid}/messages").json()["messages"]
     assert [m["role"] for m in msgs] == ["visitor", "agent"]
+
+
+def test_delete_message_endpoint(client):
+    """访客删除自己的消息：需要会话 secret，删除后历史里标记 deleted。"""
+    sid, _secret = create_web_session(client, "del-v")
+    r = client.post(f"/api/sessions/{sid}/messages", json={"content": "这条要删"})
+    assert r.status_code == 200, r.text
+    mid = r.json()["message_id"]
+
+    r = client.delete(f"/api/sessions/{sid}/messages/{mid}")
+    assert r.status_code == 200, r.text
+    msgs = client.get(f"/api/sessions/{sid}/messages").json()["messages"]
+    target = [m for m in msgs if m["id"] == mid][0]
+    assert target["deleted"] is True
+
+    # 别人没有 secret 不能删
+    reset_web_session_auth(client)
+    r = client.delete(f"/api/sessions/{sid}/messages/{mid}")
+    assert r.status_code == 401
