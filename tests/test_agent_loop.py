@@ -357,3 +357,78 @@ def test_empty_final_is_error_not_fake_success(fake_tool):
     assert r.status == "error"
     assert r.error == "empty_final"
     assert "任务已完成" not in r.answer
+
+
+def test_api_background_returns_immediately_and_completes(client, monkeypatch):
+    """后台模式：接口必须立刻回 running + run_id，随后可通过详情查到终态。
+
+    旧实现同步等待整个任务，run_id 要跑完才拿到，取消按钮在 UI 上永远点不到。
+    """
+    import time as _t
+
+    async def slow_llm(messages, tools):
+        import asyncio as _a
+        await _a.sleep(0.15)
+        return {"thought": "直接答", "tool": None, "final": "后台完成"}
+
+    from core import agent_llm
+    monkeypatch.setattr(agent_llm, "call_llm", slow_llm)
+
+    t0 = _t.time()
+    r = client.post("/api/agent/run", json={"goal": "后台跑", "background": True})
+    elapsed = _t.time() - t0
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "running" and body["run_id"]
+    assert elapsed < 0.15, f"接口不该等任务跑完（耗时 {elapsed:.2f}s）"
+
+    run_id = body["run_id"]
+    deadline = _t.time() + 5
+    status = "running"
+    while _t.time() < deadline:
+        d = client.get(f"/api/agent/runs/{run_id}").json()
+        status = d["run"]["status"]
+        if status != "running":
+            assert d["run"]["result"]["answer"] == "后台完成"
+            break
+        _t.sleep(0.05)
+    assert status == "done", f"后台任务未完成：{status}"
+
+
+def test_api_cancel_running_background_task(client, monkeypatch):
+    """取消必须真的生效：任务状态转 cancelled，且后续步骤不再执行。"""
+    import time as _t
+
+    calls = {"n": 0}
+
+    async def loop_llm(messages, tools):
+        import asyncio as _a
+        calls["n"] += 1
+        await _a.sleep(0.12)
+        return {"thought": "继续", "tool": "fs.list", "args": {"path": "."}}
+
+    from core import agent_llm
+    from core import agent_loop
+    monkeypatch.setattr(agent_llm, "call_llm", loop_llm)
+
+    async def fake_execute(action, params, principal_raw, session_id=None, **kw):
+        return {"status": "executed", "result": {}}
+
+    monkeypatch.setattr(agent_loop.actions_service, "execute", fake_execute)
+
+    body = client.post("/api/agent/run", json={"goal": "长任务", "background": True}).json()
+    run_id = body["run_id"]
+    _t.sleep(0.05)
+    r = client.post(f"/api/agent/runs/{run_id}/cancel")
+    assert r.status_code == 200, r.text
+
+    deadline = _t.time() + 5
+    while _t.time() < deadline:
+        st = client.get(f"/api/agent/runs/{run_id}").json()["run"]["status"]
+        if st != "running":
+            break
+        _t.sleep(0.05)
+    assert st == "cancelled", f"取消后状态为 {st}"
+    n_after = calls["n"]
+    _t.sleep(0.4)
+    assert calls["n"] == n_after, "取消后仍继续调用模型"

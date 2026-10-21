@@ -26,7 +26,7 @@ import { ensureVisitorId, useAppStore } from './store/appStore'
 import Logo from './components/Logo'
 import Markdown from './components/Markdown'
 import { useShell } from './components/ResponsiveShell'
-import { http } from './lib/queries'
+import { http, useWebSearchStatus } from './lib/queries'
 import './pages.css'
 const SCENES = [
   { icon: <Package size={16} />, bg: 'var(--brand-soft)', color: 'var(--brand)', title: '查订单物流', text: '我的订单 ORD12345678 什么时候发货？' },
@@ -120,6 +120,9 @@ export default function VisitorChat() {
   const [feedback, setFeedback] = useState('')
   const [injectMsg, setInjectMsg] = useState('')
   const [webSearch, setWebSearch] = useState(false)
+  // 搜索服务未配置时不显示开关：点开也只会得到「未配置搜索服务」，属于误导
+  const wsStatus = useWebSearchStatus()
+  const webAvailable = wsStatus.data?.available === true
   const abortRef = useRef(null)
   const bodyRef = useRef(null)
   const visitorId = useRef(null)
@@ -350,7 +353,7 @@ export default function VisitorChat() {
           'Content-Type': 'application/json',
           ...(sec ? { 'X-Session-Secret': sec } : {}),
         },
-        body: JSON.stringify({ content, image: img || null, web_search: webSearch }),
+        body: JSON.stringify({ content, image: img || null, web_search: webSearch && webAvailable }),
       })
       if (resp.ok && resp.body) {
         const reader = resp.body.getReader()
@@ -393,7 +396,7 @@ export default function VisitorChat() {
     } catch (e) {
       // 回退：整段接口（流式不可用时依旧可用）
       try {
-        const data = await http.post(`/api/sessions/${sid}/messages`, { content, image: img || null, web_search: webSearch })
+        const data = await http.post(`/api/sessions/${sid}/messages`, { content, image: img || null, web_search: webSearch && webAvailable })
         finalize(data)
       } catch (e2) {
         if (!streamBuf) setMessages((prev) => prev.slice(0, -1))
@@ -593,8 +596,9 @@ export default function VisitorChat() {
             onRemoveImage={() => setImage('')}
             image={image}
             loading={loading}
-            onToggleWebSearch={() => setWebSearch((v) => !v)}
-            webSearchEnabled={webSearch}
+            onToggleWebSearch={webAvailable ? () => setWebSearch((v) => !v) : undefined}
+            webSearchEnabled={webSearch && webAvailable}
+            webSearchHint={wsStatus.data?.hint || undefined}
             onStop={stop}
           />
         </div>

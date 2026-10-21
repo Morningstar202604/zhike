@@ -67,7 +67,10 @@ export function MsgMeta({ msg }) {
   if (!msg) return null
   const chips = []
   if (msg.refs && msg.refs.length) chips.push(`依据 ${msg.refs.join(' / ')}`)
-  if (msg.tool_used && msg.tool_used !== 'injection_guard') chips.push(`工具：${toolLabel(msg.tool_used)}`)
+  // injection_guard / feedback 是内部流程标记，不是用户可感知的工具
+  if (msg.tool_used && !['injection_guard', 'feedback', 'vision'].includes(msg.tool_used)) {
+    chips.push(`工具：${toolLabel(msg.tool_used)}`)
+  }
   if (msg.ctx_used) {
     const c = msg.ctx_used
     if (c.kb && c.kb.hits && c.kb.hits.length) chips.push(`KB×${c.kb.hits.length}`)
@@ -138,6 +141,8 @@ export function Composer({
   webSearchEnabled = false,
   /** 传入则在生成中显示「停止」按钮 */
   onStop,
+  /** 未配置搜索服务时的说明；传入则显示禁用的「联网搜索」按钮 */
+  webSearchHint,
 }) {
   const ref = React.useRef(null)
 
@@ -166,6 +171,14 @@ export function Composer({
             title={webSearchEnabled ? '联网搜索：已开启（回答会参考实时信息）' : '联网搜索：关闭'}
             aria-pressed={webSearchEnabled}
           >
+            <Globe size={13} />
+            <span>联网搜索</span>
+          </button>
+        )}
+        {/* 未配置搜索服务：保留入口但禁用，并在 tooltip 里说清怎么开——直接隐藏会让用户
+            以为没有这个能力，点开又只会得到「未配置」错误。 */}
+        {!onToggleWebSearch && webSearchHint && (
+          <button type="button" className="tool-toggle" disabled title={webSearchHint}>
             <Globe size={13} />
             <span>联网搜索</span>
           </button>

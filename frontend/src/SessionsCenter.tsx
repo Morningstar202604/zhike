@@ -7,6 +7,8 @@ import type { AgentMsg, SessionRow } from './types/api'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import { ESCALATE_REASON, SESSION_STATUS, CHANNEL_LABEL, label } from './lib/labels'
 import { EmptyState, PageHead } from './ui'
+import Markdown from './components/Markdown'
+import './pages.css'
 import './pages2.css'
 
 const FILTERS = [
@@ -24,6 +26,13 @@ const STATUS_TONE: Record<string, string> = {
   pending_agent: 'warn',
   agent_handled: 'ok',
   closed: 'muted',
+}
+
+/** 渠道前缀在「渠道」列已经展示，这里只留可辨识的访客标识（如群号/QQ 号）。 */
+function visitorLabel(vid?: string | null): string {
+  if (!vid) return '-'
+  const body = vid.includes(':') ? vid.slice(vid.indexOf(':') + 1) : vid
+  return body.slice(0, 24) || '-'
 }
 
 function fmtTime(iso?: string | null): string {
@@ -143,7 +152,7 @@ export default function SessionsCenter() {
                 <tr key={s.id} className="cursor-pointer" onClick={() => open(s)}>
                   <td className="muted">{fmtTime(s.started_at)}</td>
                   <td><span className="badge info">{label(CHANNEL_LABEL, s.channel)}</span></td>
-                  <td className="raw" title={s.visitor_id}>{(s.visitor_id || '-').slice(0, 24)}</td>
+                  <td className="raw" title={s.visitor_id}>{visitorLabel(s.visitor_id)}</td>
                   <td>
                     <span className={`badge ${STATUS_TONE[s.status] || 'muted'}`}>
                       {label(STATUS_LABELS, s.status)}
@@ -192,7 +201,7 @@ export default function SessionsCenter() {
                       <span className="text-[10px] text-muted mr-2">
                         {m.role === 'visitor' ? '访客' : m.role === 'operator' ? '坐席' : 'Agent'}
                       </span>
-                      {m.content}
+                      {m.role === 'visitor' ? m.content : <Markdown text={m.content} />}
                     </div>
                   </div>
                 </div>
