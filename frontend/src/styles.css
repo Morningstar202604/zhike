@@ -52,6 +52,13 @@
   /* 字体 */
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
     "HarmonyOS Sans SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace;
+
+  /* 文本别名：页面样式中用 --text / --text-2 指代正文与次级文本，
+     早期只在个别文件里出现过 var() 引用却没定义，回退值掩盖了问题。
+     这里补成与 --ink / --ink-2 一致的语义别名。 */
+  --text: var(--ink);
+  --text-2: var(--ink-2);
 }
 
 * { box-sizing: border-box; }
