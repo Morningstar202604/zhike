@@ -1,5 +1,5 @@
 """回归：Agent 三能力 — 流式管线 / 视觉多模态 / 混合检索 / SSE 端到端。"""
-from tests.conftest import create_web_session
+from tests.conftest import create_web_session, reset_web_session_auth
 import asyncio
 import json
 
@@ -233,10 +233,13 @@ def test_chat_stream_endpoint_sse(client, monkeypatch):
     assert r.status_code == 200
     assert "text/event-stream" in r.headers["content-type"]
     assert "event: delta" in r.text and "event: done" in r.text
-    done_line = [l for l in r.text.split("\n") if l.startswith("data: ") and "message_id" in l][0]
+    # ack 事件也含 message_id，必须按事件名定位 done 块
+    done_block = [blk for blk in r.text.split("\n\n") if blk.startswith("event: done")][0]
+    done_line = [l for l in done_block.split("\n") if l.startswith("data: ")][0]
     d = json.loads(done_line[6:])
     assert d["text"] == "您好，请问有什么可以帮您？"
     assert d["message_id"]
+    assert d["visitor_message_id"], "访客消息 id 必须回传，否则前端无法删除这条提问"
 
 
 def test_chat_stream_persists_messages(client, monkeypatch):
@@ -252,3 +255,22 @@ def test_chat_stream_persists_messages(client, monkeypatch):
     client.post(f"/api/sessions/{sid}/chat/stream", json={"content": "测试持久化"})
     msgs = client.get(f"/api/sessions/{sid}/messages").json()["messages"]
     assert [m["role"] for m in msgs] == ["visitor", "agent"]
+
+
+def test_delete_message_endpoint(client):
+    """访客删除自己的消息：需要会话 secret，删除后历史里标记 deleted。"""
+    sid, _secret = create_web_session(client, "del-v")
+    r = client.post(f"/api/sessions/{sid}/messages", json={"content": "这条要删"})
+    assert r.status_code == 200, r.text
+    mid = r.json()["message_id"]
+
+    r = client.delete(f"/api/sessions/{sid}/messages/{mid}")
+    assert r.status_code == 200, r.text
+    msgs = client.get(f"/api/sessions/{sid}/messages").json()["messages"]
+    target = [m for m in msgs if m["id"] == mid][0]
+    assert target["deleted"] is True
+
+    # 别人没有 secret 不能删
+    reset_web_session_auth(client)
+    r = client.delete(f"/api/sessions/{sid}/messages/{mid}")
+    assert r.status_code == 401

@@ -130,3 +130,27 @@ def test_admin_sessions_search(tmp_path, monkeypatch):
     assert store.admin_sessions(status="ongoing", q="物流")["total"] == 0
     # 通配符必须被当作字面量，不能整表命中
     assert store.admin_sessions(q="%")["total"] == 0
+
+
+def test_message_soft_delete_excluded_from_context(tmp_path, monkeypatch):
+    """删除后：列表仍返回并带 deleted=True（前端灰显），模型上下文里不再出现。"""
+    monkeypatch.setenv("CS_AGENT_DB", str(tmp_path / "del.db"))
+    store._SCHEMA_READY.clear()
+    store.init_db()
+    store.create_session("s-del", "v1")
+    store.add_message("s-del", "visitor", "第一句")
+    mid = store.add_message("s-del", "agent", "要删掉的话")
+    store.add_message("s-del", "visitor", "第三句")
+
+    assert store.delete_message("s-del", mid) is True
+    assert store.delete_message("s-del", mid) is False, "重复删除应返回 False"
+
+    all_msgs = store.get_messages("s-del")
+    assert any(m["id"] == mid and m["deleted"] for m in all_msgs)
+    ctx_msgs = store.get_messages("s-del", include_deleted=False)
+    assert all(m["id"] != mid for m in ctx_msgs)
+    assert len(ctx_msgs) == 2
+
+    # 跨会话不能删别人的消息
+    store.create_session("s-other", "v2")
+    assert store.delete_message("s-other", mid) is False

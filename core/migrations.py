@@ -85,6 +85,17 @@ def _v7_message_thought(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE messages ADD COLUMN thought TEXT")
 
 
+def _v8_message_deleted(conn: sqlite3.Connection) -> None:
+    """0008：messages.deleted 软删除。
+
+    用户点「删除」只应在自己的视图里消失，同时服务端也不再把它喂给模型/坐席回放；
+    物理删除会破坏审计与排查，所以用软删除 + 内容保留。
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(messages)").fetchall()}
+    if "deleted" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+
+
 MIGRATIONS: list[Migration] = [
     (1, "基线：标记已有结构", _v1_baseline),
     (2, "审计链 actor 索引", _v2_audit_index),
@@ -93,6 +104,7 @@ MIGRATIONS: list[Migration] = [
     (5, "跨进程事件 outbox 表", _v5_outbox),
     (6, "审计保留期索引", _v6_audit_retention),
     (7, "消息表 thought 列", _v7_message_thought),
+    (8, "消息软删除标记", _v8_message_deleted),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

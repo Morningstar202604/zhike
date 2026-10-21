@@ -66,7 +66,9 @@ def test_stream_survives_pipeline_without_final(client, monkeypatch):
     r = client.post(f"/api/sessions/{sid}/chat/stream", json={"content": "在吗"})
     assert r.status_code == 200, r.text
     assert "event: done" in r.text
-    done = [ln for ln in r.text.split("\n") if ln.startswith("data: ") and "message_id" in ln][0]
+    # 必须按事件名取 done 块：ack 事件也带 message_id 字段，按子串匹配会取错行
+    done_block = [blk for blk in r.text.split("\n\n") if blk.startswith("event: done")][0]
+    done = [ln for ln in done_block.split("\n") if ln.startswith("data: ")][0]
     payload = json.loads(done[6:])
     assert payload["text"], "必须有兜底文案，不能是空字符串"
     assert payload["escalate"] is True, "管线异常应转人工"

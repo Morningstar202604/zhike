@@ -406,25 +406,28 @@ def add_message(session_id: str, role: str, content: str, refs: list | None = No
         return cur.lastrowid or 0
 
 
-def get_messages(session_id: str, limit: int | None = None) -> list[dict]:
+def get_messages(session_id: str, limit: int | None = None,
+                 include_deleted: bool = True) -> list[dict]:
     """读取会话消息，按时间正序。
 
     limit 给定时只取最近 N 条（倒序查再翻转），避免长会话全量加载：
     实测 2000 条历史会让上下文构建耗时从 18ms 涨到 37ms。
+    include_deleted=False 用于模型上下文：删掉的话不能再被模型看到。
     """
+    cond = "" if include_deleted else " AND deleted = 0"
     with get_conn() as conn:
         if limit and limit > 0:
             rows = conn.execute(
-                "SELECT id, role, content, refs, tool_used, thought, created_at FROM ("
-                "  SELECT id, role, content, refs, tool_used, thought, created_at "
-                "  FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?"
+                "SELECT id, role, content, refs, tool_used, thought, deleted, created_at FROM ("
+                "  SELECT id, role, content, refs, tool_used, thought, deleted, created_at "
+                f"  FROM messages WHERE session_id = ?{cond} ORDER BY id DESC LIMIT ?"
                 ") ORDER BY id",
                 (session_id, limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, role, content, refs, tool_used, thought, created_at "
-                "FROM messages WHERE session_id = ? ORDER BY id",
+                "SELECT id, role, content, refs, tool_used, thought, deleted, created_at "
+                f"FROM messages WHERE session_id = ?{cond} ORDER BY id",
                 (session_id,),
             ).fetchall()
     return [
@@ -435,10 +438,21 @@ def get_messages(session_id: str, limit: int | None = None) -> list[dict]:
             "refs": json.loads(r["refs"] or "[]"),
             "tool_used": r["tool_used"],
             "thought": r["thought"] or "",
+            "deleted": bool(r["deleted"]),
             "created_at": r["created_at"],
         }
         for r in rows
     ]
+
+
+def delete_message(session_id: str, message_id: int) -> bool:
+    """软删除一条消息（只允许删本会话内的）。返回是否命中。"""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE messages SET deleted = 1 WHERE id = ? AND session_id = ? AND deleted = 0",
+            (message_id, session_id),
+        )
+        return cur.rowcount > 0
 
 
 def get_session(session_id: str) -> dict | None:

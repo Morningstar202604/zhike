@@ -125,6 +125,8 @@ export default function VisitorChat() {
   const webAvailable = wsStatus.data?.available === true
   const abortRef = useRef(null)
   const bodyRef = useRef(null)
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
   const visitorId = useRef(null)
   const { mobile } = useShell()
 
@@ -244,6 +246,7 @@ export default function VisitorChat() {
           content: m.content,
           refs: m.refs || [],
           thought: m.thought || '',
+          deleted: !!m.deleted,
           ts: m.created_at,
           message_id: m.id,
         })),
@@ -373,7 +376,21 @@ export default function VisitorChat() {
             const ev = evLine.slice(7)
             let payload
             try { payload = JSON.parse(dataLine.slice(6)) } catch { continue }
-            if (ev === 'delta') {
+            if (ev === 'ack') {
+              // 后端已落库访客消息：把 id 绑到刚插入的气泡，删除/引用才有依据
+              if (payload.visitor_message_id) {
+                setMessages((prev) => {
+                  for (let i = prev.length - 1; i >= 0; i -= 1) {
+                    if (prev[i].role === 'visitor' && !prev[i].message_id) {
+                      const next = prev.slice()
+                      next[i] = { ...next[i], message_id: payload.visitor_message_id }
+                      return next
+                    }
+                  }
+                  return prev
+                })
+              }
+            } else if (ev === 'delta') {
               streamBuf += payload.text
               setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', content: streamBuf, refs: [], ts: new Date().toISOString(), streaming: true }])
             } else if (ev === 'done') {
@@ -420,10 +437,20 @@ export default function VisitorChat() {
     } catch {}
   }
 
-  const deleteMessage = useCallback((idx) => {
-    setMessages((prev) => prev.map((m, i) => (i === idx ? { ...m, deleted: true } : m)))
+  const deleteMessage = useCallback(async (idx) => {
+    const m = messagesRef.current[idx]
+    if (!m) return
+    // 先本地灰显保证手感，再落库；失败则回滚并提示（不能只改视图假装删掉了）
+    setMessages((prev) => prev.map((x, i) => (i === idx ? { ...x, deleted: true } : x)))
     setLastMsg(null)
-  }, [])
+    if (!m.message_id || !sessionId) return
+    try {
+      await http.del(`/api/sessions/${sessionId}/messages/${m.message_id}`)
+    } catch (e) {
+      setMessages((prev) => prev.map((x, i) => (i === idx ? { ...x, deleted: false } : x)))
+      setError(e.message || '删除失败')
+    }
+  }, [sessionId])
 
   const copyMessage = useCallback((text) => {
     if (!text) return

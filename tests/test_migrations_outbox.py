@@ -17,7 +17,7 @@ def test_fresh_db_reaches_latest_version(tmp_path, monkeypatch):
     store._SCHEMA_READY.clear()
     store.init_db()
     assert store.schema_version() == migrations.LATEST_VERSION
-    assert migrations.LATEST_VERSION >= 7
+    assert migrations.LATEST_VERSION >= 8
 
 
 def test_migration_is_idempotent(tmp_path, monkeypatch):
