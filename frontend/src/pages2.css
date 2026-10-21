@@ -486,3 +486,45 @@ table.dt .raw { max-width: 300px; overflow: hidden; text-overflow: ellipsis; whi
 }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ============ 数据概览：7 天指标 + 手工条形图 ============ */
+.rep-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px; margin-bottom: 16px;
+}
+.rep-item {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 14px; border-radius: var(--r-md, 10px);
+  background: var(--panel-2); border: 1px solid var(--line-2);
+}
+.rep-label { font-size: 11.5px; color: var(--muted); }
+.rep-value { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.2; }
+.rep-sub { font-size: 10.5px; color: var(--muted); }
+
+.rep-bars {
+  display: flex; align-items: flex-end; gap: 10px;
+  height: 140px; padding: 0 2px; border-bottom: 1px solid var(--line-2);
+}
+.rep-day { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; min-width: 0; }
+/* 固定像素基准：百分比高度必须有确定高度的父级，否则浏览器按内容 0 处理（已复现为只剩一条线） */
+.rep-bar-pair {
+  height: 112px; display: flex; align-items: flex-end; justify-content: center; gap: 3px;
+}
+.rep-bar { width: 38%; max-width: 16px; border-radius: 3px 3px 0 0; min-height: 1px; transition: height .2s ease; }
+.rep-bar.sessions { background: var(--brand); }
+.rep-bar.replies { background: #22c55e; }
+.rep-day-label { font-size: 10px; color: var(--muted); text-align: center; white-space: nowrap; }
+.rep-legend { display: flex; gap: 14px; margin-top: 8px; font-size: 11px; color: var(--muted); }
+.rep-legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.rep-legend .dot.sessions { background: var(--brand); }
+.rep-legend .dot.replies { background: #22c55e; }
+
+.tool-dist { display: flex; flex-direction: column; gap: 8px; }
+.tool-dist-row { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.tool-dist-name { width: 96px; flex-shrink: 0; color: var(--text-2, var(--ink)); }
+.tool-dist-track {
+  flex: 1; height: 14px; border-radius: 4px; background: var(--panel-2);
+  overflow: hidden; border: 1px solid var(--line-2);
+}
+.tool-dist-track > span { display: block; height: 100%; background: var(--brand); border-radius: 3px; }
+.tool-dist-count { width: 32px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }

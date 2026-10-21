@@ -71,6 +71,10 @@ export const TOOL_LABEL: Record<string, string> = {
   query_order: '查询订单',
   initiate_refund: '申请退款',
   lookup_policy: '查询政策',
+  // 以下是内部流程标记，出现在统计里时也要能读懂
+  feedback: '访客差评升级',
+  injection_guard: '注入拦截',
+  vision: '图片识别',
 };
 
 export const RISK_LABEL: Record<number, string> = {

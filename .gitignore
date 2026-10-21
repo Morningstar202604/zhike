@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 .aqg/
 *.db
+*.db-journal
 *.db-shm
 *.db-wal
 .env
