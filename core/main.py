@@ -908,9 +908,9 @@ def create_app() -> FastAPI:
 
     @app.post("/api/kb/import/document", dependencies=[Depends(require_admin)])
     async def import_kb_document(file: UploadFile):
-        """文档导入管道：PDF/Word/Markdown → 解析 → 标题/段落分块 → KB 条目（id 续号，追加语义）。
+        """文档导入管道：PDF/Word/Excel/Markdown → 解析 → 标题/段落分块 → KB 条目（id 续号，追加语义）。
 
-        PDF/DOCX 解析为可选依赖（requirements-docs.txt），缺失时 400 给出安装提示。
+        PDF/DOCX/XLSX 解析为可选依赖（requirements-docs.txt），缺失时 400 给出安装提示。
         """
         from core import docparse
 

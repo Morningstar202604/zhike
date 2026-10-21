@@ -452,3 +452,62 @@
   white-space: pre-wrap;
   border-top: 1px solid var(--line-2);
 }
+
+/* Markdown 渲染（消息气泡内）：保留聊天气泡的紧凑节奏 */
+.md-body { font-size: 14px; line-height: 1.68; white-space: normal; }
+.md-body > :first-child { margin-top: 0; }
+.md-body > :last-child { margin-bottom: 0; }
+.md-body p { margin: 0 0 8px; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 {
+  margin: 14px 0 7px; font-size: 15px; font-weight: 650; line-height: 1.4;
+}
+.md-body ul, .md-body ol { margin: 4px 0 9px; padding-left: 22px; }
+.md-body ul { list-style: disc; }
+.md-body ol { list-style: decimal; }
+.md-body li { margin: 2px 0; }
+.md-body li::marker { color: var(--muted); }
+.md-body li > p { margin: 0; }
+.md-body a { color: var(--brand); text-decoration: underline; text-underline-offset: 2px; }
+.md-body code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12.5px; padding: 1.5px 5px; border-radius: 5px;
+  background: var(--panel-2); border: 1px solid var(--line-2);
+}
+.md-body pre {
+  margin: 9px 0; padding: 11px 13px; border-radius: 8px; overflow-x: auto;
+  background: #0f141c; border: 1px solid #1e2733;
+}
+.md-body pre { padding-right: 68px; }
+.md-body pre code {
+  display: block; padding: 0; border: 0; background: none; color: #d8e0ea;
+  font-size: 12.5px; line-height: 1.6; white-space: pre;
+}
+.md-body blockquote {
+  margin: 9px 0; padding: 7px 12px; border-left: 3px solid var(--brand);
+  background: var(--brand-soft); border-radius: 0 6px 6px 0; color: var(--text-2);
+}
+.md-body table { border-collapse: collapse; margin: 9px 0; font-size: 13px; display: block; overflow-x: auto; max-width: 100%; }
+.md-body th, .md-body td { border: 1px solid var(--line-2); padding: 5px 10px; text-align: left; }
+.md-body th { background: var(--panel-2); font-weight: 600; }
+.md-body hr { border: 0; border-top: 1px solid var(--line-2); margin: 12px 0; }
+
+/* 代码高亮：只覆盖必要的前景色，保持深色底一致 */
+.hljs-comment, .hljs-quote { color: #6b7c93; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal { color: #c792ea; }
+.hljs-string, .hljs-attr { color: #a5e075; }
+.hljs-number, .hljs-symbol { color: #f78c6c; }
+.hljs-title, .hljs-name, .hljs-section { color: #82aaff; }
+.hljs-built_in, .hljs-type { color: #ffcb6b; }
+.hljs-variable, .hljs-params { color: #d8e0ea; }
+.hljs-meta { color: #89ddff; }
+
+.md-body pre { position: relative; }
+.md-body .code-copy {
+  position: absolute; top: 7px; right: 7px;
+  font-size: 11px; line-height: 1; padding: 5px 8px; border-radius: 5px;
+  color: #c3cddb; background: #1c2734;
+  border: 1px solid rgba(255, 255, 255, .14);
+  opacity: 0; transition: opacity .15s ease;
+}
+.md-body pre:hover .code-copy { opacity: 1; }
+.md-body .code-copy:hover { background: rgba(255, 255, 255, .16); color: #fff; }

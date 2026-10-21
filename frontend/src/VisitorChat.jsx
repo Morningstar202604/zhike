@@ -24,6 +24,7 @@ import {
 import { useWs } from './hooks/useWs'
 import { ensureVisitorId, useAppStore } from './store/appStore'
 import Logo from './components/Logo'
+import Markdown from './components/Markdown'
 import { useShell } from './components/ResponsiveShell'
 import { http } from './lib/queries'
 import './pages.css'
@@ -67,7 +68,13 @@ const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeed
           />
         )}
         {m.role === 'agent' && m.thought && !m.deleted && <ThoughtBlock text={m.thought} />}
-        <div className="bubble">{m.deleted ? '（已删除）' : m.content}</div>
+        <div className="bubble">
+          {m.deleted
+            ? '（已删除）'
+            : m.streaming || m.role === 'visitor'
+              ? m.content
+              : <Markdown text={m.content} />}
+        </div>
         {m.role === 'agent' && !m.deleted && <MsgMeta msg={m} />}
         {m.ts && <span className="msg-time">{formatTime(m.ts)}</span>}
         {/* 消息操作：复制 / 删除。删除只影响本地视图，不请求后端（与主流对话应用一致） */}

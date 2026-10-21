@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from 'react'
 import { Inbox, ClipboardList, Radio, X, Headset, Ticket, User, RefreshCw } from 'lucide-react'
 import { http, useOperatorQueues, isAuthError } from './lib/queries'
 import TokenGate from './components/TokenGate'
+import Markdown from './components/Markdown'
 import { ESCALATE_REASON, label } from './lib/labels'
 import { useWs } from './hooks/useWs'
 import { useAppStore, ensureOpId } from './store/appStore'
@@ -202,7 +203,7 @@ export default function OperatorDesk() {
               <div key={i} className={`msg-row ${m.role}`}>
                 <Avatar kind={m.role === 'visitor' ? 'visitor' : m.role === 'operator' ? 'operator' : 'agent'} size={30} />
                 <div className="msg-body">
-                  <div className="bubble">{m.content}</div>
+                  <div className="bubble"><Markdown text={m.content} /></div>
                   <MsgMeta msg={m} />
                   {m.ts && <span className="msg-time">{formatTime(m.ts)}</span>}
                   {(m.role === 'agent' || m.role === 'operator') && (

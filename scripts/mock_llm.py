@@ -18,6 +18,27 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9099
 
+MARKDOWN_SAMPLE = "\n".join([
+    "## 退货政策",
+    "",
+    "支持 **7 天无理由**退货，需满足：",
+    "",
+    "- 商品未拆封",
+    "- 保留原包装",
+    "",
+    "| 情形 | 处理 |",
+    "|---|---|",
+    "| 质量问题 | 全额退 |",
+    "| 无理由 | 扣运费 |",
+    "",
+    "```python",
+    "def refund(order_id: str) -> bool:",
+    "    return True",
+    "```",
+    "",
+    "详情见 [帮助中心](https://example.com/help)。",
+])
+
 
 def _last_user(messages: list) -> str:
     for m in reversed(messages or []):
@@ -57,6 +78,40 @@ class Handler(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(length) or b"{}")
         query = _last_user(req.get("messages"))
         decision = _decide(query)
+        if "xss" in query.lower():
+            content = json.dumps({
+                "thought": "",
+                "answer": "正常文本<script>window.__xss=1</script><img src=x onerror=\"window.__xss=2\">[坏链接](javascript:alert(1))",
+                "citations": [], "confidence": 0.5, "escalate": False,
+                "escalate_reason": "", "tool": None, "tool_args": None,
+            }, ensure_ascii=False)
+            self._json(200, {
+                "id": "mock-xss", "object": "chat.completion", "model": "mock-chat",
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant", "content": content}}],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            })
+            return
+        if "markdown" in query.lower():
+            content = json.dumps({
+                "thought": "mock: 返回富文本样例",
+                "answer": MARKDOWN_SAMPLE,
+                "citations": ["KB002"],
+                "confidence": 0.93,
+                "escalate": False,
+                "escalate_reason": "",
+                "tool": None,
+                "tool_args": None,
+            }, ensure_ascii=False)
+            self._json(200, {
+                "id": f"mockchat-{time.time():.0f}",
+                "object": "chat.completion",
+                "model": req.get("model", "mock-chat"),
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant", "content": content}}],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            })
+            return
         content = json.dumps({
             "thought": "mock: 关键词路由",
             "answer": f"【Mock LLM】已收到您的问题「{query[:40]}」，这是模拟回答。",
