@@ -132,6 +132,7 @@
 .welcome-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: left; }
 .wc {
   display: flex; align-items: flex-start; gap: 10px;
+  text-align: left;
   background: var(--panel);
   border: 1px solid var(--line-2);
   border-radius: var(--r-md);
@@ -349,6 +350,9 @@
   .stage-head { padding: 10px 16px; }
   .memory-banner { margin: 10px 16px 0; }
   .inject-banner { margin: 10px 16px 0; }
+  /* 手机没有物理键盘，快捷键提示只会挤占输入区 */
+  .composer-hint { display: none; }
+  .new-chat-label { display: none; }
 }
 
 /* ============ 输入区增强（对齐主流 Agent 对话） ============ */
@@ -511,3 +515,12 @@
 }
 .md-body pre:hover .code-copy { opacity: 1; }
 .md-body .code-copy:hover { background: rgba(255, 255, 255, .16); color: #fff; }
+
+/* 手机没有物理键盘，快捷键提示只会挤占输入区（必须放在 .composer-hint 定义之后才生效） */
+@media (max-width: 960px) {
+  .composer-hint { display: none; }
+  .new-chat-label { display: none; }
+  .msg-actions { opacity: 1; }
+  .stage-head { gap: 8px; }
+  .bubble { max-width: 100%; }
+}

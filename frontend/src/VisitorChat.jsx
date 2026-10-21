@@ -436,13 +436,6 @@ export default function VisitorChat() {
   // 移动端：左侧会话栏收起，新对话入口移到顶部
   return (
     <div className={`chat-app ${isMobile ? 'chat-app-mobile' : ''}`}>
-      {isMobile && (
-        <div className="mobile-side-trigger">
-          <button className="btn ghost sm" onClick={newChat} disabled={loading}>
-            <Plus size={14} /> 新对话
-          </button>
-        </div>
-      )}
       {/* 左侧：会话栏（移动端隐藏） */}
       <aside className={`side ${isMobile ? 'side-mobile' : ''}`}>
         <div className="side-head">
@@ -522,8 +515,9 @@ export default function VisitorChat() {
                 已转人工{operatorName ? ` · ${operatorName}` : ''}{ticketId}
               </span>
             )}
-            <button className="btn ghost sm" onClick={newChat} title="重新开始">
+            <button className="btn ghost sm" onClick={newChat} title="开始新对话" disabled={loading}>
               <RefreshCw size={14} />
+              <span className="new-chat-label">新对话</span>
             </button>
           </div>
         </div>
