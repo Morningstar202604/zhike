@@ -230,6 +230,7 @@ def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
     parsed = LlmReply.safe_parse(data)  # 结构化输出校验，替代裸 dict.get
     tool_name = parsed.tool
     tool_result = None
+    tool_missed = False
     if tool_name and tool_name in tools:
         args = parsed.tool_args or {}
         try:
@@ -237,6 +238,9 @@ def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
         except TypeError:
             tool_result = {"tool": tool_name, "status": "bad_args", "note": "工具参数不合法。"}
         parsed.answer = (tool_result or {}).get("note") or parsed.answer or "工具已执行。"
+        # 工具自己说「没接入 / 没查到」时必须真的转人工：否则对客话术承诺了
+        # 「已转人工」，而系统里既没有工单也没有升级状态（LLM 模式下已复现）。
+        tool_missed = (tool_result or {}).get("connected") is False or (tool_result or {}).get("found") is False
 
     # 输出侧护栏：LLM 回答若泄露系统提示/Key，替换为安全话术并转人工
     bad_output = guardrail.detect_output(parsed.answer)
@@ -258,6 +262,9 @@ def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
         thought=(parsed.thought or "")[:2000],
     )
     threshold = cfg.get("escalation", {}).get("confidence_threshold", 0.6)
+    if tool_missed and not answer.escalate:
+        answer.escalate = True
+        answer.escalate_reason = "knowledge_miss"
     if answer.confidence < threshold and not answer.escalate:
         answer.escalate = True
         answer.escalate_reason = answer.escalate_reason or "low_confidence"
