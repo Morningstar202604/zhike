@@ -5,6 +5,7 @@ import {
   LayoutDashboard, MessagesSquare, ScrollText, ShieldAlert, ListChecks,
 } from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
+import Logo from './Logo'
 
 export const NAV = [
   { to: '/dashboard', label: '运行总览', icon: <LayoutDashboard size={17} /> },
@@ -23,15 +24,7 @@ export const useShell = () => useContext(Ctx)
 function Brand() {
   return (
     <div className="shell-brand">
-      <span className="shell-brand-logo">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M12 2l2.1 6.2L20 10l-5.9 1.8L12 18l-2.1-6.2L4 10l5.9-1.8L12 2z" />
-        </svg>
-      </span>
-      <span>
-        <span className="shell-brand-name">知客 Zhike</span>
-        <span className="shell-brand-sub">在线客服 Agent 控制台</span>
-      </span>
+      <Logo size={30} onDark withText subtitle="在线客服 Agent 控制台" />
     </div>
   )
 }
@@ -73,12 +66,7 @@ export default function ResponsiveShell({ children }) {
               <Menu size={19} />
             </button>
             <div className="shell-top-brand">
-              <span className="shell-top-logo">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M12 2l2.1 6.2L20 10l-5.9 1.8L12 18l-2.1-6.2L4 10l5.9-1.8L12 2z" />
-                </svg>
-              </span>
-              知客 Zhike
+              <Logo size={24} withText />
             </div>
             <span style={{ width: 36 }} />
           </header>

@@ -56,6 +56,8 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
         parts.append("可用工具：\n" + json.dumps(ctx["tools_schema"], ensure_ascii=False))
     if modules_on.get("memory", True):
         parts.append("访客相关记忆：\n" + ctx["memory_block"])
+    if ctx.get("web_block"):
+        parts.append("联网搜索结果（仅供参考，引用时说明来源）：\n" + ctx["web_block"])
     if ctx["summary"]:
         parts.append(ctx["summary"])
     # 固定尾巴（ReAct 指令）必须先占预算，否则内容块会把总长顶出去

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="zk-gd" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B7BFF"/>
+      <stop offset="1" stop-color="#8B6BFF"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#zk-gd)"/>
+  <path d="M18 22.5c0-2.5 2-4.5 4.5-4.5h19c2.5 0 4.5 2 4.5 4.5v13c0 2.5-2 4.5-4.5 4.5H31l-8 6v-6h-.5c-2.5 0-4.5-2-4.5-4.5v-13z"
+        fill="#0F1115" fill-opacity=".15"/>
+  <path d="M18 22.5c0-2.5 2-4.5 4.5-4.5h19c2.5 0 4.5 2 4.5 4.5v13c0 2.5-2 4.5-4.5 4.5H31l-8 6v-6h-.5c-2.5 0-4.5-2-4.5-4.5v-13z"
+        fill="#fff"/>
+  <circle cx="26" cy="27" r="2.1" fill="url(#zk-gd)"/>
+  <path d="M33 25.5h8M33 30h8M27 33.5h14" stroke="url(#zk-gd)" stroke-width="2.2" stroke-linecap="round"/>
+</svg>
