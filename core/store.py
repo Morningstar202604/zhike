@@ -686,9 +686,26 @@ def _channel_of(visitor_id: str) -> str:
     return visitor_id.split(":", 1)[0] if visitor_id.startswith(_CHANNEL_PREFIXES) else "webchat"
 
 
-def admin_sessions(limit: int = 50, offset: int = 0, status: str | None = None) -> dict:
-    where = "WHERE s.status = ?" if status else ""
-    params: list = [status] if status else []
+def admin_sessions(limit: int = 50, offset: int = 0, status: str | None = None,
+                   q: str | None = None) -> dict:
+    """会话列表：按状态过滤 + 关键字搜索（访客 ID / 会话 ID / 任意消息内容）。"""
+    clauses, params = [], []
+    if status:
+        clauses.append("s.status = ?")
+        params.append(status)
+    q = (q or "").strip()
+    if q:
+        # LIKE 通配符必须转义：否则用户输入 "%" 会命中整表（已复现）
+        esc = q.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+        like = f"%{esc}%"
+        q_clause = (
+            "(s.visitor_id LIKE ? ESCAPE '\\' OR s.id LIKE ? ESCAPE '\\' OR EXISTS ("
+            " SELECT 1 FROM messages m WHERE m.session_id = s.id"
+            " AND m.content LIKE ? ESCAPE '\\'))"
+        )
+        clauses.append(q_clause)
+        params.extend([like, like, like])
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     with get_conn() as conn:
         total = conn.execute(f"SELECT COUNT(*) c FROM sessions s {where}", params).fetchone()["c"]
         rows = conn.execute(

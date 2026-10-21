@@ -109,3 +109,24 @@ def test_old_db_gets_thought_column(tmp_path, monkeypatch):
     assert msgs[0]["thought"] == ""
     store.add_message("old", "agent", "新消息", thought="推理")
     assert store.get_messages("old")[-1]["thought"] == "推理"
+
+
+def test_admin_sessions_search(tmp_path, monkeypatch):
+    """会话搜索：命中访客 ID / 会话 ID / 消息内容，且状态过滤与搜索可叠加。"""
+    monkeypatch.setenv("CS_AGENT_DB", str(tmp_path / "search.db"))
+    store._SCHEMA_READY.clear()
+    store.init_db()
+    store.create_session("s-alpha", "qq:10001")
+    store.add_message("s-alpha", "visitor", "我要查物流进度")
+    store.create_session("s-beta", "web:xyz")
+    store.add_message("s-beta", "visitor", "发票怎么开")
+
+    assert store.admin_sessions(q="10001")["total"] == 1
+    assert store.admin_sessions(q="alpha")["total"] == 1
+    assert store.admin_sessions(q="物流")["total"] == 1
+    assert store.admin_sessions(q="不存在的关键词")["total"] == 0
+    store.mark_escalated("s-alpha", "visitor_requested")
+    assert store.admin_sessions(status="pending_agent", q="物流")["total"] == 1
+    assert store.admin_sessions(status="ongoing", q="物流")["total"] == 0
+    # 通配符必须被当作字面量，不能整表命中
+    assert store.admin_sessions(q="%")["total"] == 0

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { MessagesSquare, X, RefreshCw, Headset, Inbox } from 'lucide-react'
+import { MessagesSquare, X, RefreshCw, Headset, Inbox, Search } from 'lucide-react'
 import { http, useAdminSessions, useCloseSession, isAuthError } from './lib/queries'
 import TokenGate from './components/TokenGate'
 import type { AgentMsg, SessionRow } from './types/api'
@@ -40,7 +40,9 @@ export default function SessionsCenter() {
   const [active, setActive] = useState<SessionRow | null>(null)
   const [dialog, setDialog] = useState<AgentMsg[]>([])
   const [loadingDialog, setLoadingDialog] = useState(false)
-  const sessions = useAdminSessions(status || undefined)
+  const [query, setQuery] = useState('')
+  const [appliedQuery, setAppliedQuery] = useState('')
+  const sessions = useAdminSessions(status || undefined, appliedQuery || undefined)
   const close = useCloseSession()
 
   const open = async (s: SessionRow) => {
@@ -73,7 +75,7 @@ export default function SessionsCenter() {
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto w-full space-y-4 pb-24 md:pb-10">
       <PageHead
         title="会话中心"
-        sub={`全部会话（含渠道来源）· 10 秒自动刷新 · 共 ${sessions.data?.total ?? '…'} 条`}
+        sub={`${appliedQuery ? `搜索「${appliedQuery}」· ` : '全部会话（含渠道来源）· '}10 秒自动刷新 · 共 ${sessions.data?.total ?? '…'} 条`}
         right={
           <>
             {FILTERS.map((f) => (
@@ -85,6 +87,24 @@ export default function SessionsCenter() {
                 {f.label}
               </button>
             ))}
+            <div className="tb-search">
+              <Search size={13} />
+              <input
+                placeholder="搜访客 / 会话 / 消息内容"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') setAppliedQuery(query.trim())
+                  if (e.key === 'Escape') { setQuery(''); setAppliedQuery('') }
+                }}
+                aria-label="搜索会话"
+              />
+              {appliedQuery && (
+                <button className="tb-search-clear" title="清除搜索" onClick={() => { setQuery(''); setAppliedQuery('') }}>
+                  <X size={11} />
+                </button>
+              )}
+            </div>
             <button className="btn ghost sm" onClick={() => sessions.refetch()} title="立即刷新">
               <RefreshCw size={13} />
             </button>

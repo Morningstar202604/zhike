@@ -1050,8 +1050,9 @@ def create_app() -> FastAPI:
         return {"ok": True}
 
     @app.get("/api/admin/sessions", dependencies=[Depends(require_admin)])
-    def admin_sessions(status: str | None = None, limit: int = 50, offset: int = 0):
-        return store.admin_sessions(limit=limit, offset=offset, status=status)
+    def admin_sessions(status: str | None = None, limit: int = 50, offset: int = 0,
+                       q: str | None = None):
+        return store.admin_sessions(limit=limit, offset=offset, status=status, q=q)
 
     @app.get("/api/admin/channels", dependencies=[Depends(require_admin)])
     def admin_channels():
