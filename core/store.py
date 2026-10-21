@@ -5,6 +5,7 @@ DB 路径每次连接时读环境变量（CS_AGENT_DB），测试无需重载模
 import json
 import os
 import sqlite3
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -254,15 +255,40 @@ def _connect_for_tx() -> sqlite3.Connection:
     return conn
 
 
-@contextmanager
-def get_conn():
-    path = _db_path()
+# 线程本地连接缓存：SQLite 建连接有固定开销（实测约 1.1ms/次），
+# 一次对话请求要访问 10+ 次，累计 12-18ms 全是重复建连。
+# 复用后同线程的连续查询不再付出这个成本。
+_LOCAL = threading.local()
+
+
+def _close_all_connections() -> None:
+    """关闭当前线程持有的连接（测试切换 DB 路径时用）。"""
+    conn = getattr(_LOCAL, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+    _LOCAL.conn = None
+    _LOCAL.path = None
+
+
+def _conn_for(path: str) -> sqlite3.Connection:
+    """取本线程到指定库的连接，路径变化时重建。"""
+    conn = getattr(_LOCAL, "conn", None)
+    if conn is not None and getattr(_LOCAL, "path", None) == path:
+        return conn
+    if conn is not None:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
     # 容器里 DB 指向持久卷路径（如 /data/cs_agent.db），卷首次挂载时目录可能尚不存在，
     # sqlite3.connect 不会自己建目录，会直接抛 "unable to open database file"。
     parent = os.path.dirname(os.path.abspath(path))
     if parent:
         os.makedirs(parent, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=5.0)
+    conn = sqlite3.connect(path, timeout=5.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     # 每连接都要设：busy_timeout 与 foreign_keys 是连接级；journal_mode 是库级持久设置，首次建库时设一次
     conn.execute("PRAGMA busy_timeout=5000")
@@ -275,11 +301,28 @@ def get_conn():
             pass  # :memory: 等不支持 WAL 的场景不影响功能
         _ensure_schema(conn)
         _SCHEMA_READY.add(path)
+    _LOCAL.conn = conn
+    _LOCAL.path = path
+    return conn
+
+
+@contextmanager
+def get_conn():
+    """获取数据库连接（线程本地复用）。
+
+    注意：不再在退出时 close()，连接留给同线程复用；
+    事务提交仍在退出时执行，异常则回滚。
+    """
+    conn = _conn_for(_db_path())
     try:
         yield conn
         conn.commit()
-    finally:
-        conn.close()
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
 
 
 def rules_version() -> int:
@@ -830,6 +873,23 @@ def get_config() -> dict:
     return {r["key"]: json.loads(r["value"] or "{}") for r in rows}
 
 
+def config_version() -> int:
+    """配置版本号：每次 set_config 递增，供上游缓存判断是否失效。"""
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'config_version'").fetchone()
+    try:
+        return int(row["value"]) if row else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bump_config_version(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('config_version', '1') "
+        "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)"
+    )
+
+
 def set_config(patch: dict) -> None:
     with get_conn() as conn:
         for group, value in (patch or {}).items():
@@ -844,6 +904,7 @@ def set_config(patch: dict) -> None:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
                 (group, json.dumps(merged, ensure_ascii=False), _now()),
             )
+        _bump_config_version(conn)
 
 
 def list_tools() -> list[dict]:

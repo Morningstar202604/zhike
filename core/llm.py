@@ -7,6 +7,8 @@ import logging
 
 import httpx
 
+from core.http_pool import get_client
+
 from core import config as config_mod
 
 lg = logging.getLogger("cs.events")
@@ -108,22 +110,22 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
 
 async def _post_chat(base: str, api_key: str, payload: dict) -> str | None:
     """单次 chat/completions 调用（含 4xx 时去掉 response_format 的重试）。失败返回 None。"""
-    async with httpx.AsyncClient(timeout=60) as client:
+    client = get_client(base, timeout=60)
+    resp = await client.post(
+        f"{base}/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json=payload,
+    )
+    if resp.status_code in (400, 422):
+        retry = dict(payload)
+        retry.pop("response_format", None)
         resp = await client.post(
             f"{base}/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
-            json=payload,
+            json=retry,
         )
-        if resp.status_code in (400, 422):
-            retry = dict(payload)
-            retry.pop("response_format", None)
-            resp = await client.post(
-                f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=retry,
-            )
-        resp.raise_for_status()
-        return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+    resp.raise_for_status()
+    return (resp.json()["choices"][0]["message"]["content"] or "").strip()
 
 
 async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict | None:
@@ -253,28 +255,28 @@ async def react_stream(query: str, ctx: dict, cfg: dict, image_b64: str = ""):
     scanner = _AnswerStreamer()
     buf = ""
     try:
-        async with httpx.AsyncClient(timeout=90) as client:
-            async with client.stream(
-                "POST", f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"}, json=payload,
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    chunk = line[5:].strip()
-                    if chunk == "[DONE]":
-                        break
-                    try:
-                        delta = json.loads(chunk)["choices"][0].get("delta", {}) or {}
-                    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-                        continue
-                    piece = delta.get("content")
-                    if piece:
-                        buf += piece
-                        for t in scanner.feed(piece):
-                            if t:
-                                yield {"type": "delta", "text": t}
+        client = get_client(base, timeout=90)
+        async with client.stream(
+            "POST", f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"}, json=payload,
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                chunk = line[5:].strip()
+                if chunk == "[DONE]":
+                    break
+                try:
+                    delta = json.loads(chunk)["choices"][0].get("delta", {}) or {}
+                except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                    continue
+                piece = delta.get("content")
+                if piece:
+                    buf += piece
+                    for t in scanner.feed(piece):
+                        if t:
+                            yield {"type": "delta", "text": t}
     except (httpx.HTTPError, ValueError) as e:
         lg.warning("llm stream failed: %s %s", type(e).__name__, str(e)[:120])
         yield {"type": "error", "error": f"{type(e).__name__}: {e}"}
@@ -311,14 +313,14 @@ async def probe() -> dict:
         return {"configured": True, "ok": False, "error": "未配置 Base URL", "source": source}
     start = _time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 4},
-            )
-            resp.raise_for_status()
-            reply = (resp.json()["choices"][0]["message"]["content"] or "")[:60]
+        client = get_client(base, timeout=15)
+        resp = await client.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 4},
+        )
+        resp.raise_for_status()
+        reply = (resp.json()["choices"][0]["message"]["content"] or "")[:60]
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
         return {"configured": True, "ok": False, "error": f"{type(e).__name__}: {e}",
                 "base_url": base, "model": model, "source": source}
@@ -335,14 +337,14 @@ async def list_models() -> dict:
     if not base:
         return {"configured": True, "ok": False, "models": [], "error": "未配置 Base URL", "source": source}
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(
-                f"{base}/models",
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            resp.raise_for_status()
-            data = resp.json().get("data", [])
-            models = sorted(m.get("id", "") for m in data if isinstance(m, dict) and m.get("id"))
+        client = get_client(base, timeout=20)
+        resp = await client.get(
+            f"{base}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        models = sorted(m.get("id", "") for m in data if isinstance(m, dict) and m.get("id"))
     except (httpx.HTTPError, ValueError) as e:
         return {"configured": True, "ok": False, "models": [],
                 "error": f"{type(e).__name__}: {e}", "base_url": base, "source": source}

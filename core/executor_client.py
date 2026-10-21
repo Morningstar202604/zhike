@@ -12,6 +12,8 @@ import time
 
 import httpx
 
+from core.http_pool import get_client
+
 
 class ExecutorError(RuntimeError):
     pass
@@ -58,8 +60,8 @@ async def invoke(capability: str, params: dict | None = None, timeout_s: float =
         headers["X-Executor-Sig"] = sig
 
     try:
-        async with httpx.AsyncClient(timeout=timeout_s) as client:
-            resp = await client.post(f"{_base()}/invoke", content=payload, headers=headers)
+        client = get_client(timeout=timeout_s)
+        resp = await client.post(f"{_base()}/invoke", content=payload, headers=headers)
     except httpx.TimeoutException as e:
         raise ExecutorTimeout(f"执行器响应超时（{timeout_s}s）") from e
     except httpx.HTTPError as e:
@@ -88,9 +90,9 @@ def _detail(resp: httpx.Response) -> str:
 
 async def health() -> dict:
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{_base()}/healthz")
-            resp.raise_for_status()
-            return {"online": True, **resp.json()}
+        client = get_client(timeout=5)
+        resp = await client.get(f"{_base()}/healthz")
+        resp.raise_for_status()
+        return {"online": True, **resp.json()}
     except Exception as e:
         return {"online": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}

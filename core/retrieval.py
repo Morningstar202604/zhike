@@ -114,11 +114,30 @@ def _get_encoder():
 
 # ---------- SQLite 索引层（FTS5 + vec） ----------
 
+_RET_LOCAL = threading.local()
+
+
 def _ensure_conn() -> sqlite3.Connection | None:
-    """打开检索库；FTS5 / vec 扩展不可用时返回 None（降级到 bigram）。"""
+    """打开检索库（线程本地复用）。
+
+    每次检索都新建连接 + 跑 DDL 的成本约 1.5ms（实测），
+    而复用后降到微秒级——检索是每个对话请求的必经路径，值得缓存。
+    路径变化（测试切换临时库）时自动重建。
+    """
+    db_path = str(RETRIEVAL_DB)
+    conn = getattr(_RET_LOCAL, "conn", None)
+    if conn is not None and getattr(_RET_LOCAL, "path", None) == db_path:
+        return conn
+    if conn is not None:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+        _RET_LOCAL.conn = None
+
     try:
         RETRIEVAL_DB.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(RETRIEVAL_DB), check_same_thread=False)
+        conn = sqlite3.connect(db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         # 索引签名表：跨进程共享"当前索引对应哪版 KB/分词"，避免多 worker 互相重建
         conn.execute("CREATE TABLE IF NOT EXISTS index_meta (k TEXT PRIMARY KEY, v TEXT)")
@@ -138,6 +157,8 @@ def _ensure_conn() -> sqlite3.Connection | None:
             _INDEX_STATE["vec"] = True
         except Exception:
             _INDEX_STATE["vec"] = False
+        _RET_LOCAL.conn = conn
+        _RET_LOCAL.path = db_path
         return conn
     except Exception as e:
         logger.info("retrieval db init failed, fallback to bigram: %s", str(e)[:80])
@@ -319,8 +340,8 @@ def retrieve_scored(query: str, top_k: int, min_overlap: float, use_embedding: b
                     out.append((norm, eid_map[eid]))
                 return out
         finally:
-            if conn is not None and hasattr(conn, "close"):
-                conn.close()
+            # 连接由线程本地缓存持有，不在这里关闭
+            pass
 
     # ---- 兜底：纯 bigram（FTS5/vec 都不可用时） ----
     q_big = bigrams(query)

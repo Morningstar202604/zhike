@@ -11,6 +11,8 @@ import os
 
 import httpx
 
+from core.http_pool import get_client
+
 DEFAULT_URL = "http://127.0.0.1:8011"
 
 
@@ -50,12 +52,12 @@ async def call_action(action: str, params: dict, timeout_s: float = 10.0) -> dic
     """
     timeout = timeout_s or float(os.environ.get("GATEWAY_ACTION_TIMEOUT_S", "10"))
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                action_url(),
-                json={"action": action, "params": params or {}},
-                headers=_headers(),
-            )
+        client = get_client(timeout=timeout)
+        resp = await client.post(
+            action_url(),
+            json={"action": action, "params": params or {}},
+            headers=_headers(),
+        )
     except httpx.TimeoutException as e:
         raise GatewayTimeout(f"网关响应超时（{timeout}s）") from e
     except httpx.HTTPError as e:
@@ -79,9 +81,9 @@ async def call_action(action: str, params: dict, timeout_s: float = 10.0) -> dic
 async def probe() -> dict:
     """探测网关是否在线，供控制台展示。"""
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(status_url(), headers=_headers())
-            resp.raise_for_status()
-            return {"online": True, **resp.json()}
+        client = get_client(timeout=5)
+        resp = await client.get(status_url(), headers=_headers())
+        resp.raise_for_status()
+        return {"online": True, **resp.json()}
     except Exception as e:
         return {"online": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}
