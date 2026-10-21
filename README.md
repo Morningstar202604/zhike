@@ -28,6 +28,17 @@ QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 
 
 架构与完整决策见 [docs/UPGRADE_PLAN.md](docs/UPGRADE_PLAN.md)，**部署手册见 [DEPLOY.md](DEPLOY.md)**（Docker Compose 一键脚本 + CF Tunnel 矩阵 + 验收清单）。
 
+## 可选能力配置
+
+| 能力 | 环境变量 | 不配置时的行为 |
+|---|---|---|
+| 联网搜索 | `SEARCH_PROVIDER` + `TAVILY_API_KEY` / `SERPER_API_KEY` / `SEARXNG_URL` | 前端开关提示"未配置"，对话照常 |
+| 订单查询 | `ORDER_QUERY_URL`（支持 `{order_id}` 占位）、`ORDER_QUERY_TOKEN` | 返回"未接入"并转人工，**不伪造物流信息** |
+| 退款申请 | `REFUND_API_URL`、`REFUND_API_TOKEN` | 同上 |
+| 电脑操作 | `EXECUTOR_POLICY_PATH` + `policy.json` 的 `allow_roots` | 电脑类动作返回 503，对话不受影响 |
+| Agent 自主度 | `AGENT_TIER`（0-3）、`ALLOW_TIER3`、`ALLOWED_ACTIONS_T3` | 默认 T1：只读 + 白名单内可逆写 |
+| 破坏性动作 | `ACTION_L2_ENABLED=false` | 踢人/退群/删文件等一律拒绝 |
+
 **演进路线见 [docs/PLAN-AGENT-EVOLUTION.md](docs/PLAN-AGENT-EVOLUTION.md)**：从「客服机器人」到「控 QQ 账号 + 控电脑」的分级权限 Agent（T0 只读 → T3 自主，对齐 opencode 这类本地编程 Agent 的自主度），含 16 条已复现缺陷的修法、五个阶段的任务与验收标准。
 
 ## 架构

@@ -8,6 +8,7 @@ import type { ActionLogEntry } from './lib/queries'
 import { PageHead, EmptyState } from './ui'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import TokenGate from './components/TokenGate'
+import { ACTION_STATUS, RISK_LABEL } from './lib/labels'
 import './pages2.css'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -30,7 +31,6 @@ const STATUS_TONE: Record<string, string> = {
   created: 'info',
 }
 
-const RISK_LABEL: Record<number, string> = { 0: '只读', 1: '可逆写', 2: '破坏性' }
 const RISK_TONE: Record<number, string> = { 0: 'muted', 1: 'info', 2: 'danger' }
 
 const FILTERS = [
