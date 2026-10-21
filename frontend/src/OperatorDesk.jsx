@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from 'react'
 import { Inbox, ClipboardList, Radio, X, Headset, Ticket, User, RefreshCw } from 'lucide-react'
 import { http, useOperatorQueues, isAuthError } from './lib/queries'
 import TokenGate from './components/TokenGate'
+import { useFeedback } from './components/Feedback'
 import Markdown from './components/Markdown'
 import { ESCALATE_REASON, label } from './lib/labels'
 import { useWs } from './hooks/useWs'
@@ -28,6 +29,7 @@ export default function OperatorDesk() {
   const [reply, setReply] = useState('')
   const [error, setError] = useState('')
   const opId = useAppStore((s) => s.opId)
+  const fb = useFeedback()
   const setDraft = useAppStore((s) => s.setDraft)
   const { mobile } = useShell()
   const bodyRef = useRef(null)
@@ -219,8 +221,8 @@ export default function OperatorDesk() {
                         const text = (m.content || '').trim()
                         if (!text) return
                         http.post('/api/kb/save-note', { text })
-                          .then((d) => alert(`已存入知识库：${d.entry.id}（共 ${d.total} 条）`))
-                          .catch((e) => alert(e.message || '保存失败'))
+                          .then((d) => fb.toast.success(`已存入知识库：${d.entry.id}（共 ${d.total} 条）`))
+                          .catch((e) => fb.toast.error(e.message || '保存失败'))
                       }}
                     >
                       存为知识库

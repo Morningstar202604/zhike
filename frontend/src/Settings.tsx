@@ -19,6 +19,7 @@ import { usePagination } from './lib/pagination'
 import { isAuthError } from './lib/queries'
 import { TOOL_LABEL } from './lib/labels'
 import TokenGate from './components/TokenGate'
+import { useFeedback } from './components/Feedback'
 import './pages2.css'
 
 const TABS = [
@@ -345,6 +346,7 @@ function ParamsPanel({ cfg, upd }: { cfg: AgentConfig; upd: ReturnType<typeof us
 function ToolsPanel() {
   const { data: toolsRes, isLoading, refetch } = useTools()
   const tm = useToolMutations()
+  const fb = useFeedback()
   const [editing, setEditing] = useState<ToolDef | 'new' | null>(null)
   const [newArgs, setNewArgs] = useState('')
 
@@ -369,7 +371,10 @@ function ToolsPanel() {
                 <button className="btn ghost sm" title={t.enabled ? '停用' : '启用'} style={{ color: t.enabled ? 'var(--muted)' : 'var(--ok)' }} onClick={() => tm.toggle.mutate({ id: t.id, enabled: !t.enabled })}>
                   <Activity size={13} /> {t.enabled ? '停用' : '启用'}
                 </button>
-                <button className="btn ghost sm" title="删除" style={{ color: 'var(--danger)' }} onClick={() => { if (confirm(`删除工具 ${t.id}？`)) tm.remove.mutate(t.id) }}><Trash2 size={13} /></button>
+                <button className="btn ghost sm" title="删除" style={{ color: 'var(--danger)' }} onClick={async () => {
+                  const ok = await fb.confirm(`删除工具 ${t.id}？删除后 Agent 将不再具备该能力。`, { confirmText: '删除' })
+                  if (ok) tm.remove.mutate(t.id)
+                }}><Trash2 size={13} /></button>
               </div>
             </div>
             <div className="kc-tags">
@@ -411,6 +416,7 @@ function ToolForm({ initial, isNew, onDone, newArgs, setNewArgs }: {
   newArgs: string; setNewArgs: (s: string) => void
 }) {
   const tm = useToolMutations()
+  const fb = useFeedback()
   const [id, setId] = useState(initial?.id ?? '')
   const [name, setName] = useState(initial?.name ?? '')
   const [desc, setDesc] = useState(initial?.desc ?? '')
@@ -421,13 +427,13 @@ function ToolForm({ initial, isNew, onDone, newArgs, setNewArgs }: {
     try {
       args = JSON.parse(argsText || '{}')
     } catch {
-      alert('args_json 不是合法 JSON')
+      fb.toast.error('args_json 不是合法 JSON')
       return
     }
     if (!id.trim()) return
     const payload: ToolDef = { id: id.trim(), name: name || id.trim(), desc, args_json: args, enabled: initial?.enabled ?? true, builtin: initial?.builtin ?? false }
     const p = isNew ? tm.create.mutateAsync(payload) : tm.update.mutateAsync(payload)
-    p.then(onDone).catch((e) => alert((e as Error).message))
+    p.then(onDone).catch((e) => fb.toast.error((e as Error).message))
   }
 
   return (
@@ -458,6 +464,7 @@ function ToolForm({ initial, isNew, onDone, newArgs, setNewArgs }: {
 
 /* ============ 注入规则管理 ============ */
 function GuardrailPanel() {
+  const fb = useFeedback()
   const { data: rulesRes, isLoading, refetch } = useInjectionRules()
   const rm = useInjectionRuleMutations()
   const [expr, setExpr] = useState('')
@@ -470,7 +477,7 @@ function GuardrailPanel() {
     if (!expr.trim()) return
     rm.create.mutate({ expr: expr.trim(), action, enabled: true }, {
       onSuccess: () => setExpr(''),
-      onError: (e) => alert((e as Error).message),
+      onError: (e) => fb.toast.error((e as Error).message),
     })
   }
 
@@ -528,6 +535,7 @@ function GuardrailPanel() {
 
 /* ============ 知识库管理 ============ */
 function KbPanel() {
+  const fb = useFeedback()
   const { data: kbRes, isLoading } = useKb()
   const km = useKbMutations()
   const kbIo = useKbImport()
@@ -547,12 +555,12 @@ function KbPanel() {
       { text: importText, replace: importReplace },
       {
         onSuccess: (d) => {
-          alert(`导入成功：新增 ${d.added} 条，当前共 ${d.total} 条`)
+          fb.toast.success(`导入成功：新增 ${d.added} 条，当前共 ${d.total} 条`)
           setImporting(false)
           setImportText('')
           setImportReplace(false)
         },
-        onError: (e) => alert((e as Error).message),
+        onError: (e) => fb.toast.error((e as Error).message),
       },
     )
   }
@@ -600,13 +608,13 @@ function KbPanel() {
             const f = e.target.files?.[0]
             if (!f) return
             docIo.mutate(f, {
-              onSuccess: (d: { file: string; added: number; total: number }) => alert(`导入成功：${d.file} 拆出 ${d.added} 条，当前共 ${d.total} 条`),
-              onError: (err: unknown) => alert((err as Error).message),
+              onSuccess: (d: { file: string; added: number; total: number }) => fb.toast.success(`导入成功：${d.file} 拆出 ${d.added} 条，当前共 ${d.total} 条`),
+              onError: (err: unknown) => fb.toast.error((err as Error).message),
             })
             e.target.value = ''
           }}
         />
-        <button className="btn secondary sm" title="导出全部条目为 Markdown" onClick={() => exportKb().catch((e) => alert((e as Error).message))}><Download size={13} /> 导出</button>
+        <button className="btn secondary sm" title="导出全部条目为 Markdown" onClick={() => exportKb().catch((e) => fb.toast.error((e as Error).message))}><Download size={13} /> 导出</button>
         <button className="btn" onClick={() => setEditing('new')}><Plus size={14} /> 新增条目</button>
       </div>
 
@@ -651,7 +659,10 @@ function KbPanel() {
               <span className="kc-title">{e.title}</span>
               <div className="kc-actions" style={{ opacity: 1 }}>
                 <button className="btn ghost sm" aria-label="编辑条目" title="编辑条目" onClick={() => setEditing(e)}><Pencil size={13} /></button>
-                <button className="btn ghost sm" aria-label="删除条目" title="删除条目" style={{ color: 'var(--danger)' }} onClick={() => { if (confirm(`删除 ${e.id}？`)) km.remove.mutate(e.id) }}><Trash2 size={13} /></button>
+                <button className="btn ghost sm" aria-label="删除条目" title="删除条目" style={{ color: 'var(--danger)' }} onClick={async () => {
+                  const ok = await fb.confirm(`删除知识库条目 ${e.id}？删除后相关问答将失去依据。`, { confirmText: '删除' })
+                  if (ok) km.remove.mutate(e.id)
+                }}><Trash2 size={13} /></button>
               </div>
             </div>
             <div className="kc-tags">{(e.tags || []).map((t) => <em key={t}>{t}</em>)}</div>
@@ -722,6 +733,7 @@ function KbPanel() {
 
 function KbForm({ initial, onDone }: { initial: KbEntry | null; onDone: () => void }) {
   const km = useKbMutations()
+  const fb = useFeedback()
   const [id, setId] = useState(initial?.id ?? '')
   const [title, setTitle] = useState(initial?.title ?? '')
   const [text, setText] = useState(initial?.text ?? '')
@@ -732,7 +744,7 @@ function KbForm({ initial, onDone }: { initial: KbEntry | null; onDone: () => vo
   const save = () => {
     const e: KbEntry = { id: id.trim(), title, text, answer, tags: tags.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0) }
     const p = isNew ? km.create.mutateAsync(e) : km.update.mutateAsync(e)
-    p.then(onDone).catch((err) => alert((err as Error).message))
+    p.then(onDone).catch((err) => fb.toast.error((err as Error).message))
   }
 
   return (
