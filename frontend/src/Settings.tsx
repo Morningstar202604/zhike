@@ -360,14 +360,14 @@ function ToolsPanel() {
 
       <div className="kb-grid">
         {tools.map((t) => (
-          <div className={`kb-card ${!t.enabled ? 'opacity-55' : ''}`} key={t.id}>
+          <div className={`kb-card tool-card ${!t.enabled ? 'opacity-55' : ''}`} key={t.id}>
             <div className="kc-head">
               <span className="kc-id">{t.id}</span>
               <span className="kc-title">{t.name}</span>
               <div className="kc-actions" style={{ opacity: 1 }}>
                 <button className="btn ghost sm" title="编辑" onClick={() => setEditing(t)}><Pencil size={13} /></button>
                 <button className="btn ghost sm" title={t.enabled ? '停用' : '启用'} style={{ color: t.enabled ? 'var(--muted)' : 'var(--ok)' }} onClick={() => tm.toggle.mutate({ id: t.id, enabled: !t.enabled })}>
-                  <Activity size={13} /> {t.enabled ? '启用' : '停用'}
+                  <Activity size={13} /> {t.enabled ? '停用' : '启用'}
                 </button>
                 <button className="btn ghost sm" title="删除" style={{ color: 'var(--danger)' }} onClick={() => { if (confirm(`删除工具 ${t.id}？`)) tm.remove.mutate(t.id) }}><Trash2 size={13} /></button>
               </div>
