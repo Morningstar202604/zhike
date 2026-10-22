@@ -13,6 +13,15 @@ from core import config as config_mod
 lg = logging.getLogger("cs.events")
 
 
+def _record_llm(result: str) -> None:
+    try:
+        from core import metrics
+
+        metrics.record_llm(result)
+    except Exception:  # 指标绝不能影响主链路
+        pass
+
+
 def _creds() -> tuple[str, str, str, str]:
     cfg = config_mod.get_config()["llm"]
     key = cfg.get("api_key") or ""
@@ -152,7 +161,9 @@ async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict |
     raw = None
     try:
         raw = await _post_chat(base, api_key, payload)
+        _record_llm("ok" if raw is not None else "fail")
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
+        _record_llm("fail")
         lg.warning("llm request failed: %s %s", type(e).__name__, str(e)[:120])
     # 多模型备援：主模型失败且配了 fallback_model 时换模型重试一次
     fallback = (llm_cfg.get("fallback_model", "") or "").strip()
@@ -160,7 +171,9 @@ async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict |
         lg.info("llm fallback model engaged: %s", fallback)
         try:
             raw = await _post_chat(base, api_key, {**payload, "model": fallback})
+            _record_llm("fallback")
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
+            _record_llm("fail")
             lg.warning("llm fallback failed: %s %s", type(e).__name__, str(e)[:120])
     if raw is None:
         return None

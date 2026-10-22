@@ -496,3 +496,26 @@ def test_security_headers_present(client):
     assert r.headers.get("x-content-type-options") == "nosniff"
     assert r.headers.get("x-frame-options") == "DENY"
     assert "default-src 'self'" in r.headers.get("content-security-policy", "")
+
+
+# ============================================================
+# 6. 指标端点
+# ============================================================
+
+def test_metrics_endpoint_exposes_request_counters(client):
+    client.get("/healthz")
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert "zhike_http_requests_total" in r.text
+    assert 'path="/healthz"' in r.text
+    assert "zhike_uptime_seconds" in r.text
+
+
+def test_metrics_normalizes_path_ids():
+    """指标标签必须模板化，否则每个会话 id 都新增一条时间序列（基数爆炸）。"""
+    from core import metrics
+
+    a = metrics.normalize_path("/api/sessions/81cecda07ad64dd4a8df52ff13d7f6d4/messages")
+    b = metrics.normalize_path("/api/sessions/0123456789abcdef0123456789abcdef/messages")
+    assert a == b == "/api/sessions/{id}/messages"
+    assert metrics.normalize_path("/healthz") == "/healthz"

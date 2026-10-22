@@ -259,6 +259,31 @@ def create_app() -> FastAPI:
     # 跨站 referer 泄露都没有防护）。CSP 需要 'unsafe-inline' 兼容 Vite 注入的样式；
     # connect-src 'self' 够用（前端只连同源 API/WS）。
     @app.middleware("http")
+    async def _metrics_mw(request: Request, call_next):
+        import time as _time
+        from core import metrics as _metrics
+
+        started = _time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            _metrics.record_request(request.method, request.url.path, 500,
+                                    _time.perf_counter() - started)
+            raise
+        _metrics.record_request(request.method, request.url.path, response.status_code,
+                                _time.perf_counter() - started)
+        return response
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics_endpoint():
+        """Prometheus 文本格式指标。生产应只对监控网段开放（反代层限制）。"""
+        from fastapi.responses import PlainTextResponse
+
+        from core import metrics as _metrics
+
+        return PlainTextResponse(_metrics.render(), media_type="text/plain; version=0.0.4")
+
+    @app.middleware("http")
     async def _security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
