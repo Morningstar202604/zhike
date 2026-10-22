@@ -176,7 +176,21 @@ export default function VisitorChat() {
       const payload = st.visitorId
         ? { visitor_id: st.visitorId, visitor_token: st.visitorToken || '' }
         : {}
-      const data = await http.post('/api/sessions', payload)
+      let data
+      try {
+        data = await http.post('/api/sessions', payload)
+      } catch (e) {
+        // 403 = visitor_id 已被占用（同浏览器多标签并发首建，或本地残留旧 id）。
+        // 不能让访客卡死：丢掉本地身份，换一个新的重试一次。
+        if (e?.status === 403 && payload.visitor_id) {
+          st.setVisitorId(null)
+          st.setVisitorToken(null)
+          visitorId.current = null
+          data = await http.post('/api/sessions', {})
+        } else {
+          throw e
+        }
+      }
       // 服务端可能签发新 visitor_id / 令牌（首次访问），必须存回，否则下次换会话就读不到自己的记忆
       if (data.visitor_id) {
         visitorId.current = data.visitor_id
