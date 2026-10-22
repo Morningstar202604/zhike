@@ -103,6 +103,13 @@ async def execute(
 
     dropped = cleaned.pop("__dropped__", None)
 
+    # shell.exec 的参数形状必须在这里就拒绝（400），不能等到权限判定之后：
+    # 破坏性动作默认关闭时会先返回 403，调用方看不到"参数非法"这个真正的错误。
+    if action == "shell.exec":
+        argv = cleaned.get("argv")
+        if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+            raise ActionError("argv 必须是非空字符串数组，不接受整条命令行", 400)
+
     # ---- 2. 幂等：同一 key 直接返回首次结果，不重复执行 ----
     if idempotency_key:
         prev = store.action_log_by_idempotency(idempotency_key)

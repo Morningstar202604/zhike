@@ -298,10 +298,14 @@ def test_tools_filtered_by_permission():
     assert "fs.delete" not in names
 
 
-def test_admin_sees_more_tools():
+def test_admin_sees_more_tools(monkeypatch):
     admin = authz.parse_principal("admin")
     names = {t["name"] for t in agent_loop.available_tools(admin)}
     assert "fs.write" in names
+    # shell.exec 是 L2：默认未启用时不出现在工具清单里（必须显式开 L2）
+    assert "shell.exec" not in names
+    monkeypatch.setenv("ACTION_L2_ENABLED", "true")
+    names = {t["name"] for t in agent_loop.available_tools(admin)}
     assert "shell.exec" in names
 
 

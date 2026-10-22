@@ -97,10 +97,17 @@ def test_shell_exec_rejects_empty_argv(client, fake_exec):
     assert r.status_code == 400
 
 
-def test_shell_exec_accepts_array(client, fake_exec):
-    r = _exec(client, "shell.exec", {"argv": ["python", "-c", "print(1)"]})
+def test_shell_exec_is_destructive(client, fake_exec, monkeypatch):
+    """命令行不只是"可逆写"：白名单内命令也可能借参数执行任意代码，按 L2 处理。"""
+    r = _exec(client, "shell.exec", {"argv": ["git", "status"]})
+    assert r.status_code == 403, "默认未启用 L2 时必须拒绝"
+    assert fake_exec == []
+
+    monkeypatch.setenv("ACTION_L2_ENABLED", "true")
+    r = _exec(client, "shell.exec", {"argv": ["git", "status"]})
     assert r.status_code == 200
-    assert fake_exec[0][1]["argv"] == ["python", "-c", "print(1)"]
+    assert r.json()["status"] == "pending_approval"
+    assert fake_exec == [], "未审批不得执行"
 
 
 # ---------- 风险分级 ----------

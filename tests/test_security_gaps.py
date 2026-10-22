@@ -366,8 +366,8 @@ def test_shell_timeout_is_passed_through(policy, workspace, monkeypatch):
 
     monkeypatch.setattr(sp, "run", fake_run)
     with pytest.raises(cap.CapabilityError, match="超时"):
-        cap.shell_exec(policy, ["python", "-c", "import time; time.sleep(99)"],
-                       cwd=str(workspace), timeout_s=2)
+        # 用白名单内的命令验证超时参数透传（解释器已被策略禁止）
+        cap.shell_exec(policy, ["git", "status"], cwd=str(workspace), timeout_s=2)
     assert captured["timeout"] == 2, "超时参数没有被传给 subprocess"
 
 

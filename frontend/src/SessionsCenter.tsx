@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MessagesSquare, X, RefreshCw, Headset, Inbox, Search } from 'lucide-react'
 import { http, useAdminSessions, useCloseSession, isAuthError } from './lib/queries'
@@ -51,8 +51,15 @@ export default function SessionsCenter() {
   const [loadingDialog, setLoadingDialog] = useState(false)
   const [query, setQuery] = useState('')
   const [appliedQuery, setAppliedQuery] = useState('')
-  const sessions = useAdminSessions(status || undefined, appliedQuery || undefined)
+  const [page, setPage] = useState(0)
+  const sessions = useAdminSessions(status || undefined, appliedQuery || undefined, page)
   const close = useCloseSession()
+
+  const PAGE_SIZE = 30
+  const total = sessions.data?.total ?? 0
+  const maxPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)
+  // 筛选后总数变少时把页码拉回最后一页，避免停在空白页
+  useEffect(() => { if (page > maxPage) setPage(maxPage) }, [page, maxPage])
 
   const open = async (s: SessionRow) => {
     setActive(s)
@@ -90,7 +97,7 @@ export default function SessionsCenter() {
             {FILTERS.map((f) => (
               <button
                 key={f.key}
-                onClick={() => setStatus(f.key)}
+                onClick={() => { setStatus(f.key); setPage(0) }}
                 className={`mod-toggle ${status === f.key ? 'on' : ''}`}
               >
                 {f.label}
@@ -103,13 +110,13 @@ export default function SessionsCenter() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') setAppliedQuery(query.trim())
-                  if (e.key === 'Escape') { setQuery(''); setAppliedQuery('') }
+                  if (e.key === 'Enter') { setAppliedQuery(query.trim()); setPage(0) }
+                  if (e.key === 'Escape') { setQuery(''); setAppliedQuery(''); setPage(0) }
                 }}
                 aria-label="搜索会话"
               />
               {appliedQuery && (
-                <button className="tb-search-clear" title="清除搜索" onClick={() => { setQuery(''); setAppliedQuery('') }}>
+                <button className="tb-search-clear" title="清除搜索" onClick={() => { setQuery(''); setAppliedQuery(''); setPage(0) }}>
                   <X size={11} />
                 </button>
               )}
@@ -134,6 +141,7 @@ export default function SessionsCenter() {
       )}
 
       {items.length > 0 && (
+        <>
         <div className="tbl-wrap">
           <table className="dt">
             <thead>
@@ -173,13 +181,19 @@ export default function SessionsCenter() {
             </tbody>
           </table>
         </div>
+        <div className="pager">
+          <span>共 {total} 条 · 第 {page + 1} / {maxPage + 1} 页</span>
+          <button className="btn ghost sm" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>上一页</button>
+          <button className="btn ghost sm" disabled={page >= maxPage} onClick={() => setPage((p) => Math.min(maxPage, p + 1))}>下一页</button>
+        </div>
+        </>
       )}
 
       {active && (
         <div className="drawer-mask" onClick={() => setActive(null)}>
           <div className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawer-head">
-              <h3>会话 #{active.id.slice(0, 8)} · {active.channel}</h3>
+              <h3 title={active.id}>会话 #{active.id.slice(0, 8)} · {label(CHANNEL_LABEL, active.channel)}</h3>
               <div className="flex gap-2">
                 <Link to="/operator" className="btn ghost sm"><Headset size={13} /> 坐席台</Link>
                 {active.status !== 'closed' && (

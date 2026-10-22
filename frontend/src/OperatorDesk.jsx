@@ -65,8 +65,16 @@ export default function OperatorDesk() {
   const adminToken = useAppStore((s) => s.adminToken)
   const wsUrl = '/ws/operator'
   const wsSubs = adminToken ? ['zhike-admin', adminToken] : undefined
+  const activeRef = useRef(null)
+  activeRef.current = active
   const { state: connState } = useWs(wsUrl, (p) => {
     if (p.type === 'new_pending' || p.type === 'session_updated') queues.refetch()
+    if (p.type === 'visitor_message' && p.session_id === activeRef.current) {
+      // 接管期间访客新消息：直接进当前对话，不刷新整页
+      setDialog((prev) => [...prev, {
+        role: 'visitor', content: String(p.content ?? ''), ts: new Date().toISOString(),
+      }])
+    }
   }, true, wsSubs)
 
   useEffect(() => { ensureOpId() }, [])

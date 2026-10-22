@@ -22,7 +22,9 @@ def _is_fresh(row: dict | None) -> bool:
     if not row:
         return False
     sess = store.get_session(row["session_id"])
-    if not sess or sess["status"] != "ongoing":
+    # 转人工/坐席处理中仍然是同一个会话：如果这里只认 ongoing，
+    # 访客被接管后再发消息会静默新建会话，坐席台看不到，机器人还会抢答（已复现）。
+    if not sess or sess["status"] not in ("ongoing", "pending_agent", "agent_handled"):
         return False
     try:
         updated = datetime.fromisoformat(row["updated_at"])

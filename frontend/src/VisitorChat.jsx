@@ -321,7 +321,8 @@ export default function VisitorChat() {
   }, [])
 
   const regenerate = useCallback(async () => {
-    // 找到最后一条访客消息，删掉之后的 agent 回复，重发
+    // 找到最后一条访客消息，删掉之后的 agent 回复，重发。
+    // regenerate=true 让后端复用同一条访客消息，不再重复落库。
     const idx = [...messages].reverse().findIndex((m) => m.role === 'visitor')
     if (idx < 0) return
     const realIdx = messages.length - 1 - idx
@@ -329,13 +330,14 @@ export default function VisitorChat() {
     setMessages((prev) => prev.slice(0, realIdx + 1))
     setLastMsg(null)
     setFeedback('')
-    await send(text)
+    await send(text, { regenerate: true })
   }, [messages])
 
-  const send = async (text) => {
+  const send = async (text, opts = {}) => {
     const content = (text ?? input).trim()
     if (!content && !image) return
     if (loading) return
+    const regenerate = !!opts.regenerate
     setError('')
     setLastMsg(null)
     setFeedback('')
@@ -365,6 +367,13 @@ export default function VisitorChat() {
         thought: data.thought,
         latency_ms: Math.round(performance.now() - t0),
       }
+      if (data.mode === 'human') {
+        // 已转人工：后端不再生成 AI 回答，也不渲染空气泡
+        setMessages((prev) => prev.slice(0, -1))
+        setEscalated(true)
+        setLastMsg(null)
+        return
+      }
       setMessages((prev) => [...prev.slice(0, -1), msg])
       setLastMsg(msg)
       if (data.escalate) {
@@ -388,7 +397,7 @@ export default function VisitorChat() {
           'Content-Type': 'application/json',
           ...(sec ? { 'X-Session-Secret': sec } : {}),
         },
-        body: JSON.stringify({ content, image: img || null, web_search: webSearch && webAvailable }),
+        body: JSON.stringify({ content, image: img || null, web_search: webSearch && webAvailable, regenerate }),
       })
       if (resp.ok && resp.body) {
         const reader = resp.body.getReader()
@@ -445,7 +454,7 @@ export default function VisitorChat() {
     } catch (e) {
       // 回退：整段接口（流式不可用时依旧可用）
       try {
-        const data = await http.post(`/api/sessions/${sid}/messages`, { content, image: img || null, web_search: webSearch && webAvailable })
+        const data = await http.post(`/api/sessions/${sid}/messages`, { content, image: img || null, web_search: webSearch && webAvailable, regenerate })
         finalize(data)
       } catch (e2) {
         if (!streamBuf) setMessages((prev) => prev.slice(0, -1))

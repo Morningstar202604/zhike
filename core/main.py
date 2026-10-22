@@ -312,6 +312,8 @@ def create_app() -> FastAPI:
         image: str | None = None
         # 联网搜索：由前端开关传入
         web_search: bool = False
+        # 重新生成：复用上一条访客消息，不再重复落库
+        regenerate: bool = False
 
     class FeedbackIn(BaseModel):
         message_id: int | None = None
@@ -420,6 +422,31 @@ def create_app() -> FastAPI:
             mode="fallback",
         )
 
+    # 进入这些升级原因后，机器人必须停嘴：访客明确要人、差评升级、图片需人看、输出被拦。
+    # 知识库未命中自动升级不在此列——坐席还没接手时，机器人继续答比让访客干等更好。
+    HUMAN_ONLY_REASONS = {"visitor_requested", "feedback_not_helpful",
+                          "image_needs_human", "output_guardrail"}
+
+    def _is_human_handled(sid: str) -> bool:
+        """会话是否已由人工接管（或已明确要求人工）：是则机器人不得再抢答。"""
+        sess = store.get_session(sid)
+        if not sess:
+            return False
+        if sess["status"] == "agent_handled":
+            return True
+        return sess["status"] == "pending_agent" and (sess.get("escalate_reason") or "") in HUMAN_ONLY_REASONS
+
+    async def _route_to_operator(sid: str, text: str, image: str | None, visitor_key: str) -> None:
+        """人工接管期间：消息只落库并推给坐席台，不进入 AI 管线。"""
+        _preflight(sid, text, visitor_key)
+        content = text or "（附图）"
+        store.add_message(sid, "visitor", content)
+        await hub.broadcast_to_operators({
+            "type": "visitor_message", "session_id": sid,
+            "content": content, "has_image": bool(image), "visitor_id": visitor_key,
+        })
+        ev.info(f"visitor message routed to operator session={sid[:8]}")
+
     async def _handle_inbound(sid: str, text: str, image: str | None, visitor_key: str,
                               web_search: bool = False):
         _preflight(sid, text, visitor_key)
@@ -453,6 +480,40 @@ def create_app() -> FastAPI:
         _remember(visitor_key, text, reply)
         return reply, msg_id, ticket_id, visitor_msg_id
 
+    def _last_visitor_text(history: list[dict]) -> str:
+        """取最近一条访客消息作为重新生成的问题。
+
+        不能直接用请求体里的 content：否则调用方可以「重新生成」一个从未出现在
+        对话里的问题，而会话记录中没有对应提问（数据不一致）。
+        """
+        for m in reversed(history):
+            if m.get("role") == "visitor" and (m.get("content") or "").strip():
+                return str(m["content"]).strip()
+        return ""
+
+    async def _regenerate_inbound(sid: str, text: str, image: str | None, visitor_key: str,
+                                  history_limit: int = 60, web_search: bool = False):
+        """重新生成：只追加新的 Agent 回答，不重复落访客消息。"""
+        history = store.get_messages(sid, limit=history_limit, include_deleted=False)
+        # 问题以会话记录为准，忽略客户端传入的 content（防伪造提问）
+        text = _last_visitor_text(history) or text
+        _preflight(sid, text, visitor_key)
+        # 最后一条若已经是 agent 回答，回放时把它排除，避免模型看到旧答案自我复制
+        if history and history[-1].get("role") == "agent":
+            history = history[:-1]
+        reply = await pipeline.run(
+            pipeline.ChannelMessage(text=text, image_b64=image or "", web_search=web_search),
+            history,
+            visitor_key,
+        )
+        msg_id = store.add_message(sid, "agent", reply.text, refs=reply.citations,
+                                   tool_used=reply.tool_used, thought=reply.thought)
+        ticket_id = None
+        if reply.escalate:
+            store.mark_escalated(sid, reply.escalate_reason or "escalate")
+            ticket_id = store.create_ticket(sid)
+        return reply, msg_id, ticket_id
+
     @app.post("/v1/ingest", dependencies=[Depends(require_channel)])
     async def ingest(body: IngestIn):
         text = (body.text or "").strip()
@@ -465,6 +526,16 @@ def create_app() -> FastAPI:
             raise HTTPException(429, "请求过于频繁，请稍后再试")
         chat_key = body.group_id or body.channel_user_id
         sid = sessions.resolve_session(f"{body.channel_type}:{chat_key}", identity)
+        if _is_human_handled(sid):
+            # 已转人工/已接管：机器人不回话，消息落库并推给坐席台
+            await _route_to_operator(sid, text, body.image_b64, identity)
+            return {
+                "session_id": sid, "message_id": None, "ticket_id": None,
+                "reply": {"text": "", "citations": [], "confidence": 0.0,
+                          "escalate": False, "escalate_reason": "",
+                          "mode": "human", "tool_used": None,
+                          "tool_result": None, "thought": ""},
+            }
         reply, msg_id, ticket_id, _visitor_msg_id = await _handle_inbound(
             sid, text, body.image_b64, identity)
         return {
@@ -552,6 +623,24 @@ def create_app() -> FastAPI:
         ip_key = f"ip:{request.client.host if request.client else 'unknown'}"
         if not limiter.allow(ip_key):
             raise HTTPException(429, "请求过于频繁，请稍后再试")
+        if _is_human_handled(sid):
+            await _route_to_operator(sid, content, body.image, visitor_id)
+            return {"role": "system", "text": "", "citations": [], "confidence": 0.0,
+                    "escalate": False, "escalate_reason": "", "ticket_id": None,
+                    "mode": "human", "tool_used": None, "tool_result": None,
+                    "memory_note": None, "ctx_used": None, "thought": "",
+                    "message_id": None, "visitor_message_id": None}
+        if body.regenerate:
+            reply, msg_id, ticket_id = await _regenerate_inbound(
+                sid, content, body.image, visitor_id, history_limit=60,
+                web_search=body.web_search)
+            return {"role": "agent", "text": reply.text, "citations": reply.citations,
+                    "confidence": reply.confidence, "escalate": reply.escalate,
+                    "escalate_reason": reply.escalate_reason, "ticket_id": ticket_id,
+                    "mode": reply.mode, "tool_used": reply.tool_used,
+                    "tool_result": reply.tool_result, "memory_note": reply.memory_note,
+                    "ctx_used": reply.ctx_used, "thought": reply.thought,
+                    "message_id": msg_id, "visitor_message_id": None}
         reply, msg_id, ticket_id, visitor_msg_id = await _handle_inbound(
             sid, content, body.image, visitor_id, web_search=body.web_search)
         return {
@@ -592,18 +681,44 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "会话不存在")
         if sess["status"] == "closed":
             raise HTTPException(409, "会话已关闭，请开始新会话")
+        if _is_human_handled(sid):
+            # 与 ingest/非流式一致：只有「明确要人/已接管」才停机器人，
+            # 知识库未命中自动升级仍允许 AI 继续服务（坐席未接手时）
+            await _route_to_operator(sid, content, body.image, visitor_id)
+
+            async def human_gen():
+                yield _sse("meta", {"session_id": sid})
+                yield _sse("done", {
+                    "role": "system", "text": "", "citations": [], "confidence": 0.0,
+                    "escalate": True, "escalate_reason": "visitor_requested",
+                    "ticket_id": None, "mode": "human", "tool_used": None,
+                    "tool_result": None, "memory_note": None, "ctx_used": None,
+                    "thought": "", "message_id": None, "visitor_message_id": None,
+                })
+
+            return StreamingResponse(human_gen(), media_type="text/event-stream",
+                                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
         async def gen():
             yield _sse("meta", {"session_id": sid})
-            _preflight(sid, content, visitor_id)
-            ev.info(f"ingest(visitor stream) visitor={visitor_id} text={content[:60]}")
             history = store.get_messages(sid, limit=60, include_deleted=False)
-            visitor_msg_id = store.add_message(sid, "visitor", content or "（附图）")
-            yield _sse("ack", {"visitor_message_id": visitor_msg_id})
+            visitor_msg_id = None
+            if body.regenerate:
+                # 重新生成：复用上一条访客消息，不重复落库、不发 ack；
+                # 问题以会话记录为准，忽略请求体 content（防伪造提问）
+                if history and history[-1].get("role") == "agent":
+                    history = history[:-1]
+                regen_text = _last_visitor_text(history) or content
+            else:
+                regen_text = content
+                visitor_msg_id = store.add_message(sid, "visitor", content or "（附图）")
+                yield _sse("ack", {"visitor_message_id": visitor_msg_id})
+            _preflight(sid, regen_text, visitor_id)
+            ev.info(f"ingest(visitor stream) visitor={visitor_id} text={regen_text[:60]}")
             reply, msg_id, ticket_id = None, None, None
             try:
                 async for kind, payload in pipeline.run_stream(
-                    pipeline.ChannelMessage(text=content, image_b64=body.image or "",
+                    pipeline.ChannelMessage(text=regen_text, image_b64=body.image or "",
                                             web_search=body.web_search),
                     history,
                     visitor_id,
@@ -626,7 +741,7 @@ def create_app() -> FastAPI:
                 await hub.broadcast_to_operators(
                     {"type": "new_pending", "session_id": sid, "ticket_id": ticket_id, "reason": reply.escalate_reason}
                 )
-            _remember(visitor_id, content, reply)
+            _remember(visitor_id, regen_text, reply)
             yield _sse("done", {
                 "role": "agent",
                 "text": reply.text,
@@ -670,8 +785,11 @@ def create_app() -> FastAPI:
     async def take_session(sid: str, body: NewSession | None = None):
         if body is None:
             body = NewSession()
-        if not store.get_session(sid):
+        sess = store.get_session(sid)
+        if not sess:
             raise HTTPException(404, "会话不存在")
+        if sess["status"] == "closed":
+            raise HTTPException(409, "会话已关闭，不能接管")
         store.set_status(sid, "agent_handled", assignee=body.visitor_id)
         await hub.publish(sid, {"type": "agent_handled", "operator": body.visitor_id, "session_id": sid})
         await hub.broadcast_to_operators({"type": "session_updated", "session_id": sid, "status": "agent_handled"})
@@ -682,8 +800,11 @@ def create_app() -> FastAPI:
         content = body.content.strip()
         if not content:
             raise HTTPException(400, "消息内容不能为空")
-        if not store.get_session(sid):
+        sess = store.get_session(sid)
+        if not sess:
             raise HTTPException(404, "会话不存在")
+        if sess["status"] == "closed":
+            raise HTTPException(409, "会话已关闭，不能再回复")
         store.add_message(sid, "operator", content)
         await hub.publish(
             sid,
@@ -722,7 +843,11 @@ def create_app() -> FastAPI:
                 raise HTTPException(400, "message_id 不属于该会话")
             if target["role"] != "agent":
                 raise HTTPException(400, "只能对 Agent 回复评分")
-        store.add_feedback(sid, body.message_id or 0, body.rating, body.comment)
+        # 同一条消息重复评价只保留最后一次：否则好评率会被反复点击刷出来
+        if body.message_id:
+            store.upsert_feedback(sid, body.message_id, body.rating, body.comment)
+        else:
+            store.add_feedback(sid, 0, body.rating, body.comment)
         if body.rating == "not_helpful":
             sess = store.get_session(sid)
             if sess and sess["status"] == "ongoing":
@@ -810,6 +935,20 @@ def create_app() -> FastAPI:
             raise HTTPException(400, str(e))
         return {"tool": t}
 
+    class ToolEnabledIn(BaseModel):
+        enabled: bool
+
+    @app.put("/api/tools/{tool_id}/enabled", dependencies=[Depends(require_admin)])
+    def set_tool_enabled(tool_id: str, body: ToolEnabledIn):
+        """只切换启停，不动名称/描述/参数。
+
+        控制台此前用整包 PUT 做开关，空字段把工具元数据全部覆盖成空（已复现）。
+        """
+        t = store.set_tool_enabled(tool_id, body.enabled)
+        if not t:
+            raise HTTPException(404, "工具不存在")
+        return {"tool": t}
+
     @app.put("/api/tools/{tool_id}", dependencies=[Depends(require_admin)])
     def update_tool(tool_id: str, body: ToolIn):
         _validate_tool_args(body.args_json)
@@ -817,7 +956,8 @@ def create_app() -> FastAPI:
         if not existing:
             raise HTTPException(404, "工具不存在")
         try:
-            t = store.upsert_tool(tool_id, body.name or tool_id, body.desc, body.args_json, body.enabled, existing["builtin"])
+            t = store.upsert_tool(tool_id, body.name or existing["name"] or tool_id,
+                                  body.desc, body.args_json, body.enabled, existing["builtin"])
         except ValueError as e:
             raise HTTPException(400, str(e))
         return {"tool": t}

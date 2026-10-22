@@ -10,8 +10,8 @@ QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-460%20passed-brightgreen)
-![Coverage](https://img.shields.io/badge/coverage-81%25%20core-blue)
+![Tests](https://img.shields.io/badge/tests-474%20passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-80%25%20core-blue)
 
 </div>
 
@@ -54,7 +54,9 @@ Web 访客 + 坐席工作台 ──/api + /ws───────────�
 
 ## 截图与演示
 
-**演示视频（真实浏览器录制，含提问 / 思考过程 / 各管理页）**：[docs/media/demo.mp4](docs/media/demo.mp4)（WebM 备选 [demo.webm](docs/media/demo.webm)）
+**演示视频（真实浏览器录制 73 秒，带字幕：访客提问 / 坐席接管 / 审计链校验 / 知识库试召回）**：[docs/media/demo.mp4](docs/media/demo.mp4)（WebM 备选 [demo.webm](docs/media/demo.webm)）
+
+> 截图与视频来自 `scripts/seed_demo.py` 生成的演示数据（`docs/screenshots/`），不是测试残留；复现命令见「测试与验证」。
 
 | 访客对话（含思考过程折叠） | 运行总览 |
 |---|---|
@@ -72,6 +74,10 @@ Web 访客 + 坐席工作台 ──/api + /ws───────────�
 |---|---|
 | ![知识库](docs/screenshots/kb.png) | ![数据概览](docs/screenshots/data.png) |
 
+| 会话详情（对话回放） | 动作详情（参数与结果） |
+|---|---|
+| ![会话详情](docs/screenshots/session-detail.png) | ![动作详情](docs/screenshots/action-detail.png) |
+
 | 工具注册表 | 手机端访客 |
 |---|---|
 | ![工具注册表](docs/screenshots/tools.png) | ![手机端](docs/screenshots/visitor-mobile.png) |
@@ -82,11 +88,12 @@ Web 访客 + 坐席工作台 ──/api + /ws───────────�
 
 | 项 | 结果 |
 |---|---|
-| 后端测试 | 460 passed |
-| 覆盖率 | core 行 81% / 分支 79% |
+| 后端测试 | 474 passed（含 13 条第三轮回归） |
+| 覆盖率 | core 行 80% / 分支 79% |
 | 变异测试 | 15 个关键变异全部被杀死（抽样） |
-| 在线体检 | `scripts/e2e_check.py` 18/18；`scripts/action_e2e.py` 13/13 |
+| 在线体检 | `scripts/e2e_check.py` 18/18；`scripts/action_e2e.py` 13/13；`scripts/qq_e2e.py` 3/3 |
 | 布局审计 | 6 页 × 桌面/手机 = 12 组合全 PASS |
+| 交互点检 | 14 页 / 400+ 可点击元素逐页枚举；21 条关键操作全通过，0 页面错误 |
 | lint / 类型 | ruff E9/F 类 0 错误；`tsc --noEmit` 0 错误 |
 | 首屏 | echarts 主包 gzip 190KB（-66%） |
 
@@ -112,7 +119,7 @@ cd frontend && npm run dev                           # http://localhost:5173（/
 #    a) 启动 NapCat 并在 WebUI(:6099) 里把机器人 QQ 登录，开 WebSocket 服务 :3001
 #    b) 网关连 NapCat 与 core
 set ONEBOT_WS_URL=ws://127.0.0.1:3001
-set CORE_BASE_URL=http://127.0.0.1:8000
+set CORE_BASE_URL=http://127.0.0.1:8010
 .venv/Scripts/python gateway/bot.py
 #    群里 @机器人 说「订单什么时候发货」即可
 ```
@@ -150,7 +157,7 @@ ONEBOT_WS_URL=ws://127.0.0.1:3001 CORE_BASE_URL=http://127.0.0.1:8010 CHANNEL_TO
 | `CS_AGENT_KB` | 知识库 JSON 路径（容器里指向持久卷，否则重建镜像会丢知识库） | `core/data/kb.json` |
 | `CS_AGENT_RETRIEVAL_DB` | 检索索引库路径（FTS5 / sqlite-vec 缓存） | `core/data/retrieval.db` |
 | `ONEBOT_WS_URL` | NapCat 的 OneBot v11 WS 地址 | ws://127.0.0.1:3001 |
-| `CORE_BASE_URL` | 网关回源核心服务地址 | http://127.0.0.1:8000 |
+| `CORE_BASE_URL` | 网关回源核心服务地址 | http://127.0.0.1:8010 |
 | `AGENT_TOKEN` | 服务间令牌：`/api/actions/execute`、`/api/agent/run` 等运维端点允许 Agent/网关调用 | 空（则只认 ADMIN/CHANNEL） |
 | `CS_AGENT_DOCS` | 是否开放 `/docs` 与 `/openapi.json`（生产默认关闭） | 空（关闭） |
 | `AGENT_TIER` / `ALLOW_TIER3` / `ALLOWED_ACTIONS_T3` | Agent 自主度档位（T0-T3）；T3 需双开关 | 1 / 未开 / 只读集合 |
@@ -183,12 +190,18 @@ LLM 配好后可用 `POST /api/admin/llm-test`（管理页）实测连通性与�
 ## 测试与验证
 
 ```bash
-python -m pytest tests -q                    # 460 用例：管线/摄取/安全/网关映射/存储/前端兼容/统计/控制台/阶段0回归
-python -m pytest tests -q --cov=core --cov-branch   # 覆盖率：行 81% / 分支 79%（core）
+python -m pytest tests -q                    # 474 用例：管线/摄取/安全/网关映射/存储/前端兼容/统计/控制台/阶段0/第三轮回归
+python -m pytest tests -q --cov=core --cov-branch   # 覆盖率：行 80% / 分支 79%（core）
 # 在线体检需要与服务端一致的令牌（缺令牌时脚本退出码 2 并给出提示）
 ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010   # 18 项在线能力体检
 CORE_BASE_URL=http://127.0.0.1:8010 python scripts/fake_napcat.py  # QQ 全链路（伪装 NapCat，含心跳）
 python scripts/mock_llm.py 9099              # 本地 Mock LLM（OpenAI 兼容），配 base_url=http://127.0.0.1:9099/v1 可验通 LLM 管线
+
+# 截图 / 视频：用独立演示库，不污染线上数据
+python scripts/seed_demo.py                  # 生成 .demo/cs_agent.db（7 天会话、动作、任务、反馈）
+CS_AGENT_DB=.demo/cs_agent.db CS_AGENT_STATIC_DIR=frontend/dist   ADMIN_TOKEN=demo-admin CHANNEL_TOKEN=demo-chan python -m uvicorn core.main:app --port 8012
+ADMIN_TOKEN=demo-admin python scripts/take_screenshots.py http://127.0.0.1:8012
+ADMIN_TOKEN=demo-admin python scripts/record_demo.py http://127.0.0.1:8012   # 需要 ffmpeg
 ```
 
 ## 安全与合规（必读）

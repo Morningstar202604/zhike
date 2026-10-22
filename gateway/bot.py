@@ -8,6 +8,7 @@ import base64
 import collections
 import logging
 import os
+import secrets
 import time
 import sys
 from pathlib import Path
@@ -28,6 +29,13 @@ logger = logging.getLogger("gateway")
 
 # 适配器实例：整个网关生命周期复用（重连时 bind 新 bot）
 adapter = OneBot11Adapter()
+
+# 网关自己的内部 HTTP 端口：core 通过 GATEWAY_ACTION_URL 调 /internal/action。
+# 默认必须是 8011（与 core.actions.client 和 compose 一致）；NoneBot 自身默认 8080
+# 会与很多本机服务冲突，而且 core 永远连不上（实测 /api/gateway/health 一直离线）。
+os.environ.setdefault("PORT", "8011")
+# 本地默认只绑回环；compose 显式设 HOST=0.0.0.0
+os.environ.setdefault("HOST", "127.0.0.1")
 
 _init_kwargs: dict = {
     "driver": "~fastapi+~websockets",
@@ -69,7 +77,8 @@ def _preflight_ws() -> None:
                 f"Host: {host}:{port}",
                 "Upgrade: websocket",
                 "Connection: Upgrade",
-                "Sec-WebSocket-Key: emhpa2UtcHJlZmxpZ2h0",
+                # 必须是 16 字节随机数的 base64；写死字符串会让严格实现直接拒绝握手
+                f"Sec-WebSocket-Key: {base64.b64encode(secrets.token_bytes(16)).decode()}",
                 "Sec-WebSocket-Version: 13",
                 "",
                 "",
@@ -79,7 +88,7 @@ def _preflight_ws() -> None:
             head = sock.recv(64)
             if not head:
                 return False, "端口可连但无 HTTP 响应（QQ 未登录时的典型表现）"
-            status_line = head.split(b"\\r\\n", 1)[0] if b"\\r\\n" in head else head.split(b"\\n", 1)[0]
+            status_line = head.split(b"\r\n", 1)[0] if b"\r\n" in head else head.split(b"\n", 1)[0]
             if b" 101 " in status_line:
                 return True, ""
             return False, f"WS 升级被拒绝：{status_line[:60]!r}"
