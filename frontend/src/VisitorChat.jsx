@@ -591,10 +591,10 @@ export default function VisitorChat() {
               <div className="welcome-logo">
                 <Logo size={56} />
               </div>
-              <h2>您好，我是知客，你的在线客服 Agent</h2>
+              <h2>您好，我是知客，你的专属客服</h2>
               <p>
-                支持订单查询、退款申请、政策咨询，可上传截图（多模态），
-                还能记住您的偏好。选一个场景开始，或直接输入问题。
+                订单、退款、政策都可以问我；需要人接手时，我会把你交给坐席。
+                也可以上传截图，或从下面选一个场景开始。
               </p>
               <div className="welcome-cards">
                 {SCENES.map((s, i) => (
@@ -633,7 +633,7 @@ export default function VisitorChat() {
               <Avatar kind="agent" size={30} />
               <div className="bubble typing">
                 <span className="t-dot" /> <span className="t-dot" /> <span className="t-dot" />
-                <span className="t-label">Agent 正在处理…</span>
+                <span className="t-label">正在整理回复…</span>
               </div>
             </div>
           )}

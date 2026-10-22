@@ -153,3 +153,39 @@ def test_ingest_payload_has_no_image_field():
     ev = from_onebot_v11(_group_event([{"type": "at", "data": {"qq": "1000"}}, {"type": "text", "data": {"text": "hi"}}]))
     payload = ingest_payload(ev)
     assert "image_b64" not in payload, "image_b64 由网关拉取后单独附加，映射层不携带"
+
+# ---------------- 网关稳定性（去重 / 串行 / 重试） ----------------
+
+def test_gateway_dedup_drops_replayed_message():
+    """协议端重连会重放最近事件；同一 message_id 只能处理一次。"""
+    from gateway import bot as gw_bot
+
+    gw_bot._SEEN_IDS.clear()
+    assert gw_bot._dedup("m-100") is True
+    assert gw_bot._dedup("m-100") is False
+    assert gw_bot._dedup(None) is True
+
+
+def test_gateway_dedup_lru_bounded():
+    from gateway import bot as gw_bot
+
+    gw_bot._SEEN_IDS.clear()
+    for i in range(gw_bot._SEEN_MAX + 50):
+        gw_bot._dedup(f"m-{i}")
+    assert len(gw_bot._SEEN_IDS) == gw_bot._SEEN_MAX, "去重表必须有界，否则长跑会吃满内存"
+
+
+def test_gateway_chat_lock_is_per_chat():
+    """同一会话拿到同一把锁（保证顺序），不同会话互不影响（保证并发）。"""
+    import asyncio
+    from gateway import bot as gw_bot
+
+    gw_bot._PER_CHAT_LOCKS.clear()
+    async def check():
+        a1 = gw_bot._chat_lock("qq_group:1")
+        a2 = gw_bot._chat_lock("qq_group:1")
+        b1 = gw_bot._chat_lock("qq_group:2")
+        return a1 is a2, a1 is b1
+    same, distinct = asyncio.run(check())
+    assert same is True
+    assert distinct is False
