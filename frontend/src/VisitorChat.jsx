@@ -56,6 +56,8 @@ const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeed
       </div>
     )
   }
+  // 空占位不渲染：页面已有独立的「Agent 正在处理…」气泡，两者叠加会显示两个头像
+  if (m.role === 'agent' && m.streaming && !(m.content || '').trim()) return null
   return (
     <div className={`msg-row ${m.role} ${m.deleted ? 'deleted' : ''}`}>
       <Avatar kind={m.role} size={30} />
@@ -68,13 +70,16 @@ const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeed
           />
         )}
         {m.role === 'agent' && m.thought && !m.deleted && <ThoughtBlock text={m.thought} />}
-        <div className="bubble">
-          {m.deleted
-            ? '（已删除）'
-            : m.streaming || m.role === 'visitor'
-              ? m.content
-              : <Markdown text={m.content} />}
-        </div>
+        {/* 流式占位但还没有任何增量时不要画空气泡：截图里是一个空框 + 下方"正在处理"重复 */}
+        {(m.deleted || !m.streaming || (m.content || '').trim()) && (
+          <div className="bubble">
+            {m.deleted
+              ? '（已删除）'
+              : m.streaming || m.role === 'visitor'
+                ? m.content
+                : <Markdown text={m.content} />}
+          </div>
+        )}
         {m.role === 'agent' && !m.deleted && <MsgMeta msg={m} />}
         {m.ts && <span className="msg-time">{formatTime(m.ts)}</span>}
         {/* 消息操作：复制 / 删除。删除只影响本地视图，不请求后端（与主流对话应用一致） */}
