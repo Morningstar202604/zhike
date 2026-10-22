@@ -1163,7 +1163,6 @@ def append_audit(actor: str, kind: str, payload: dict) -> str:
 
 def verify_audit_chain(start_id: int | None = None) -> dict:
     """校验哈希链完整性。返回 {ok, checked, broken_at}。"""
-    import json as _json
 
     sql = "SELECT id, ts, actor, kind, payload, prev_hash, hash FROM audit_chain"
     params: list = []

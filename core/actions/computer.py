@@ -10,10 +10,8 @@
 from __future__ import annotations
 
 import os
-import time
 
 from core import executor_client, redact, store
-from core.actions import authz
 from core.actions.registry import ActionSpec, RISK_L0, RISK_L1, RISK_L2
 
 # T3 爆炸半径阈值（不可通过配置关闭，见计划 7.3.2）
@@ -126,7 +124,6 @@ def _check_tier3_radius(spec: ActionSpec, params: dict, session_id: str | None) 
 
 
 def _count_l2_in_session(session_id: str | None) -> int:
-    import json as _json
 
     if not session_id:
         # 无会话上下文时按最近 1 小时全量计

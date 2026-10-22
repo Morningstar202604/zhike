@@ -133,8 +133,8 @@ async def execute(
         raise ActionError(decision.reason, 403, {"action_log_id": log_id})
 
     # ---- 4. 审计先于执行 ----
-    log = store.action_log_create(log_id, action, spec.risk, safe_params, principal.label,
-                                  decision.effective_tier, session_id, idempotency_key)
+    store.action_log_create(log_id, action, spec.risk, safe_params, principal.label,
+                            decision.effective_tier, session_id, idempotency_key)
 
     # ---- 5. 审批闸门 ----
     if decision.needs_approval and not approval_id:

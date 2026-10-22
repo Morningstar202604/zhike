@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from typing import Callable, Awaitable
 
 from gateway.adapters.base import ChannelAdapter, adapter_info
 

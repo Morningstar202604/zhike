@@ -1,6 +1,5 @@
 """LLM 调用（OpenAI 兼容 /chat/completions）：异步、不阻塞事件循环；任何失败返回 None 交给规则降级。"""
 import json
-import os
 import re
 
 import logging

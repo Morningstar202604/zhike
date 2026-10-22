@@ -29,7 +29,8 @@ def _get_tracer():
     if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") and not os.environ.get("OTEL_SERVICE_NAME"):
         return None
     try:
-        from opentelemetry import trace
+        # 只做可用性探测：真正的 tracer 在下面用 _trace.get_tracer 拿
+        import opentelemetry.trace  # noqa: F401
         from opentelemetry.sdk.trace import TracerProvider  # type: ignore
         from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter  # type: ignore
