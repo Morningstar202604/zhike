@@ -124,7 +124,7 @@ export default function OperatorDesk() {
 
   // 移动端：堆叠 —— 先队列，再对话（active 时对话上移）
   return (
-    <div className={`op-app ${isMobile ? 'op-app-mobile' : ''}`}>
+    <div className={`op-app ${isMobile ? 'op-app-mobile' : ''} ${isMobile && active ? 'show-dialog' : ''}`}>
       <section className="op-pane op-left">
         <div className={`op-left-head ${isMobile ? 'op-left-head-mobile' : ''}`}>
           <div className="op-conn">
@@ -189,6 +189,11 @@ export default function OperatorDesk() {
           <h3>{active ? `会话 #${active.slice(0, 8)}` : '选择一个会话开始服务'}</h3>
           {active && (
             <div style={{ display: 'flex', gap: 8 }}>
+              {isMobile && (
+                <button className="btn ghost sm" onClick={() => { setActive(null); setDialog([]) }}>
+                  <X size={13} /> 返回队列
+                </button>
+              )}
               <button className="btn ghost sm" onClick={() => openDialog(active)}><RefreshCw size={13} /> 刷新</button>
               <button className="btn secondary sm" onClick={() => closeSess(active)}><X size={13} /> 关闭</button>
             </div>

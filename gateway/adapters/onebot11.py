@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from typing import Any
 
 from gateway.adapters.base import (
     CAP_DELETE_MSG,

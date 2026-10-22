@@ -34,6 +34,10 @@ services:
       - TZ=Asia/Shanghai
     volumes:
       - core_data:/data
+    # 镜像以 uid 10001 运行；命名卷首次创建时由 Docker 用镜像内 /data 属主初始化，
+    # 若从旧版本（root 运行）升级，先执行一次：
+    #   docker run --rm -v zhike_core_data:/data alpine chown -R 10001:10001 /data
+    user: "10001:10001"
     ports:
       # 安全默认：仅本机可达（配合 CF Tunnel / 反代）；显式设 ZHIKE_BIND=0.0.0.0 才公网暴露
       - "${ZHIKE_BIND:-127.0.0.1}:8010:8010"
@@ -44,6 +48,12 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+    # 资源限额：防止单进程吃满宿主（SQLite + 单 worker，1 CPU / 1GB 足够）
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
 
   gateway:
     # 复用 core 构建出的镜像，不重复构建（同一 Dockerfile、同一上下文）

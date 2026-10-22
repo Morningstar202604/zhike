@@ -6,6 +6,7 @@ SQLite WAL 模式支持高并发读 + 单写，中小流量足够；超大流量
 from __future__ import annotations
 
 import os
+import threading
 import time
 
 from core import store
@@ -31,20 +32,25 @@ class SQLiteRateLimiter:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_rate_hits_key_ts ON rate_hits(key, ts)")
             # 过期清理按 ts 扫描，需要单独的 ts 索引，否则是全表扫描
             conn.execute("CREATE INDEX IF NOT EXISTS idx_rate_hits_ts ON rate_hits(ts)")
-        # 独立连接：限流要在自己的事务里拿写锁，不能和业务事务混在一起
-        self._conn = None
+        # 独立连接：限流要在自己的事务里拿写锁，不能和业务事务混在一起。
+        # 必须**每线程一个**：FastAPI 的同步端点在 threadpool 里跑，
+        # 单连接跨线程使用会抛 "SQLite objects created in a thread..."，
+        # 而 allow() 把它当成"拿不到锁"返回 False → 第二个请求起全部 429（已复现）。
+        self._local = threading.local()
 
     def _ensure_conn(self):
-        if self._conn is None:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
             import sqlite3
             path = os.environ.get("CS_AGENT_DB", "cs_agent.db")
             parent = os.path.dirname(os.path.abspath(path))
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            self._conn = sqlite3.connect(path, timeout=5.0, isolation_level=None)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA busy_timeout=5000")
-        return self._conn
+            conn = sqlite3.connect(path, timeout=5.0, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=5000")
+            self._local.conn = conn
+        return conn
 
     def allow(self, key: str, window_s: float | None = None, max_n: int | None = None) -> bool:
         window = float(os.environ.get("RATE_LIMIT_WINDOW", "60")) if window_s is None else window_s

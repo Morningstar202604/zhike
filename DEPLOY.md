@@ -139,19 +139,51 @@ curl http://127.0.0.1:8010/healthz            # {"ok":true}
 bash /opt/zhike/scripts/deploy.sh
 # 日志
 docker logs -f zhike-core / zhike-gateway / zhike-napcat
-# 备份（SQLite 在 volume 里；热备用 sqlite3 .backup）
-docker run --rm -v zhike_core_data:/data -v $PWD:/b alpine cp /data/cs_agent.db /b/
+# 备份（SQLite 在 volume 里）
+# 必须用 sqlite3 .backup：WAL 模式下直接 cp 可能拿到「主库已写、WAL 未合并」的不一致快照。
+docker run --rm -v zhike_core_data:/data -v "$PWD":/b alpine sh -c   'apk add --no-cache sqlite >/dev/null && sqlite3 /data/cs_agent.db ".backup /b/backup.db"'
 # 回滚：git -C /opt/zhike checkout <旧tag或sha> && bash scripts/deploy.sh
 ```
 
-## 5. 安全基线（生产必做）
+**恢复演练（每季度至少一次，脚本化）**
+
+```bash
+# 1) 停服务，保留现场
+docker compose -f deploy/docker-compose.yml stop core
+# 2) 用备份替换（同样走 sqlite3，不要直接覆盖正在使用的文件）
+docker run --rm -v zhike_core_data:/data -v "$PWD":/b alpine sh -c   'apk add --no-cache sqlite >/dev/null && sqlite3 /b/backup.db ".backup /data/cs_agent.db"'
+# 3) 起服务并校验
+docker compose -f deploy/docker-compose.yml start core
+curl -s localhost:8010/healthz
+ADMIN_TOKEN=... curl -s -H "X-Admin-Token: $ADMIN_TOKEN" localhost:8010/api/admin/audit/verify
+#    → ok=true 表示哈希链完整；再抽样对比 /api/admin/overview 的 sessions/messages 数量
+```
+
+## 5. 可观测性
+
+| 端点 | 用途 |
+|---|---|
+| `GET /healthz` | 存活探针（容器 healthcheck 用） |
+| `GET /metrics` | Prometheus 文本格式：`zhike_http_requests_total`（按路由模板/状态码）、`zhike_http_request_duration_seconds_sum|max`、`zhike_llm_calls_total{result=ok|fail|fallback}`、`zhike_uptime_seconds` |
+| `GET /api/admin/logs` | 最近事件（控制台「日志中心」） |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 可选：OpenTelemetry trace 导出（需装 `requirements-tracing.txt`） |
+
+**建议的三条告警（按用户可见症状）**
+
+| 告警 | 表达式（示例） | 含义 / 处置 |
+|---|---|---|
+| 5xx 比例 | `sum(rate(zhike_http_requests_total{status=~"5.."}[5m])) / sum(rate(zhike_http_requests_total[5m])) > 0.02` | 服务端批量报错：先看 `/api/admin/logs?level=ERROR`，再查 LLM 端点连通性 |
+| LLM 失败率 | `rate(zhike_llm_calls_total{result="fail"}[5m]) / ignoring(result) sum(rate(zhike_llm_calls_total[5m])) > 0.2` | 模型不可用：系统会自动降级规则模式，检查 Key/额度/网络 |
+| 接口 P95 劣化 | `max by (path) (zhike_http_request_duration_seconds_max) > 2` | 单请求超 2s：查 SQLite 锁等待（`rate_hits`/审计链写）与检索索引重建 |
+
+## 6. 安全基线（生产必做）
 
 - `.env` 里 `ADMIN_TOKEN`、`CHANNEL_TOKEN` 均已随机化（脚本自动），不要改回占位符
 - 不确定就收紧：`ZHIKE_BIND=127.0.0.1` + 反代/隧道对外
 - NapCat WebUI（6099）只绑本机，走 SSH 隧道访问
 - 公网直连场景建议 `CS_AGENT_CORS_ORIGINS` 填控制台实际域名
 
-## 6. 常见问题
+## 7. 常见问题
 
 | 症状 | 处理 |
 |---|---|

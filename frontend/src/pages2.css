@@ -575,3 +575,19 @@ table.dt .raw { max-width: 300px; overflow: hidden; text-overflow: ellipsis; whi
 .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .btn.danger { background: var(--danger); color: #fff; }
 .btn.danger:hover { filter: brightness(.95); }
+
+/* 手机端坐席台：未选会话时只显示队列（原来右侧空面板占掉 58% 屏幕）；
+   选中会话后切换为全屏对话，并提供「返回队列」。 */
+@media (max-width: 960px) {
+  .op-app-mobile { grid-template-rows: minmax(0, 1fr) !important; }
+  .op-app-mobile .op-right { display: none; }
+  .op-app-mobile.show-dialog .op-left { display: none; }
+  .op-app-mobile.show-dialog .op-right { display: flex; }
+}
+
+/* 手机端坐席对话头：按钮多时换行，不能把标题挤成两行 */
+@media (max-width: 960px) {
+  .op-right-head { flex-wrap: wrap; gap: 6px; }
+  .op-right-head h3 { font-size: 13px; flex: 1 1 100%; }
+  .op-right-head > div { flex: 1 1 100%; justify-content: flex-end; }
+}

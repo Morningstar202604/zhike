@@ -11,6 +11,10 @@ node_modules/
 dist/
 .pytest_cache/
 *.log
+htmlcov/
+layout_audit.json
+coverage.xml
+.coverage
 
 # 执行器策略（本机路径，不共享）
 /policy.json

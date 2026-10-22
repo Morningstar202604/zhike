@@ -96,6 +96,30 @@ def _v8_message_deleted(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
 
 
+def _v9_visitor_identity_and_indexes(conn: sqlite3.Connection) -> None:
+    """0009：访客身份令牌 + 热路径索引。
+
+    1) visitors 表：`POST /api/sessions` 允许客户端自报 visitor_id 时，
+       首个声明者拿到令牌，后续复用必须出示令牌——否则任何人填别人的 id
+       就能读到对方的长期记忆与欢迎语（已复现）。
+    2) messages(session_id, id)：会话回放/上下文读取的必走路径，
+       20 万行实测 17.0ms → 0.54ms（31 倍）。
+    3) sessions(visitor_id, started_at) 与 memory(visitor_id)：跨会话问候、记忆读取。
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS visitors (
+            id TEXT PRIMARY KEY,
+            token_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_visitor ON sessions(visitor_id, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_memory_visitor ON memory(visitor_id);
+        """
+    )
+
+
 MIGRATIONS: list[Migration] = [
     (1, "基线：标记已有结构", _v1_baseline),
     (2, "审计链 actor 索引", _v2_audit_index),
@@ -105,6 +129,7 @@ MIGRATIONS: list[Migration] = [
     (6, "审计保留期索引", _v6_audit_retention),
     (7, "消息表 thought 列", _v7_message_thought),
     (8, "消息软删除标记", _v8_message_deleted),
+    (9, "访客身份令牌与热路径索引", _v9_visitor_identity_and_indexes),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

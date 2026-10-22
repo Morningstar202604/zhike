@@ -22,7 +22,7 @@ import {
   ThoughtBlock,
 } from './ui'
 import { useWs } from './hooks/useWs'
-import { ensureVisitorId, useAppStore } from './store/appStore'
+import { useAppStore } from './store/appStore'
 import Logo from './components/Logo'
 import Markdown from './components/Markdown'
 import { useShell } from './components/ResponsiveShell'
@@ -56,6 +56,8 @@ const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeed
       </div>
     )
   }
+  // 空占位不渲染：页面已有独立的「Agent 正在处理…」气泡，两者叠加会显示两个头像
+  if (m.role === 'agent' && m.streaming && !(m.content || '').trim()) return null
   return (
     <div className={`msg-row ${m.role} ${m.deleted ? 'deleted' : ''}`}>
       <Avatar kind={m.role} size={30} />
@@ -68,13 +70,16 @@ const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeed
           />
         )}
         {m.role === 'agent' && m.thought && !m.deleted && <ThoughtBlock text={m.thought} />}
-        <div className="bubble">
-          {m.deleted
-            ? '（已删除）'
-            : m.streaming || m.role === 'visitor'
-              ? m.content
-              : <Markdown text={m.content} />}
-        </div>
+        {/* 流式占位但还没有任何增量时不要画空气泡：截图里是一个空框 + 下方"正在处理"重复 */}
+        {(m.deleted || !m.streaming || (m.content || '').trim()) && (
+          <div className="bubble">
+            {m.deleted
+              ? '（已删除）'
+              : m.streaming || m.role === 'visitor'
+                ? m.content
+                : <Markdown text={m.content} />}
+          </div>
+        )}
         {m.role === 'agent' && !m.deleted && <MsgMeta msg={m} />}
         {m.ts && <span className="msg-time">{formatTime(m.ts)}</span>}
         {/* 消息操作：复制 / 删除。删除只影响本地视图，不请求后端（与主流对话应用一致） */}
@@ -172,8 +177,31 @@ export default function VisitorChat() {
   const ensureSession = useCallback(
     async (firstContent) => {
       if (sessionId) return sessionId
-      if (!visitorId.current) visitorId.current = ensureVisitorId()
-      const data = await http.post('/api/sessions', { visitor_id: visitorId.current })
+      const st = useAppStore.getState()
+      const payload = st.visitorId
+        ? { visitor_id: st.visitorId, visitor_token: st.visitorToken || '' }
+        : {}
+      let data
+      try {
+        data = await http.post('/api/sessions', payload)
+      } catch (e) {
+        // 403 = visitor_id 已被占用（同浏览器多标签并发首建，或本地残留旧 id）。
+        // 不能让访客卡死：丢掉本地身份，换一个新的重试一次。
+        if (e?.status === 403 && payload.visitor_id) {
+          st.setVisitorId(null)
+          st.setVisitorToken(null)
+          visitorId.current = null
+          data = await http.post('/api/sessions', {})
+        } else {
+          throw e
+        }
+      }
+      // 服务端可能签发新 visitor_id / 令牌（首次访问），必须存回，否则下次换会话就读不到自己的记忆
+      if (data.visitor_id) {
+        visitorId.current = data.visitor_id
+        st.setVisitorId(data.visitor_id)
+      }
+      if (data.visitor_token) st.setVisitorToken(data.visitor_token)
       setSessionId(data.session_id)
       // 保存会话归属凭据，后续该会话所有请求自动带 X-Session-Secret
       if (data.session_secret) {
@@ -200,9 +228,11 @@ export default function VisitorChat() {
 
   // WS 实时通道（useWs 自动重连；sessionId 为空时不连接）
   // 访客 WS 必须带 secret query，否则后端 close(4401)
-  const wsPath = sessionId
-    ? `/ws/${sessionId}?secret=${encodeURIComponent(useAppStore.getState().getSessionSecret(sessionId) || '')}`
-    : null
+  // secret 不放 query：uvicorn 会把完整 URL 打进 access log（已复现）。
+  // 改走 Sec-WebSocket-Protocol 子协议，与坐席端一致。
+  const wsSecret = sessionId ? useAppStore.getState().getSessionSecret(sessionId) || '' : ''
+  const wsPath = sessionId ? `/ws/${sessionId}` : null
+  const wsSubs = sessionId && wsSecret ? ['zhike-visitor', wsSecret] : undefined
   const { state: wsState } = useWs(
     wsPath,
     (p) => {
@@ -225,6 +255,8 @@ export default function VisitorChat() {
         ])
       }
     },
+    true,
+    wsSubs,
   )
 
   useEffect(() => {
