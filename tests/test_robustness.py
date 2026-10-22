@@ -211,6 +211,7 @@ def test_ws_registry_cleanup_on_disconnect(client):
 
     sid, secret = create_web_session(client, "n11-ws")
     reset_web_session_auth(client)
-    with client.websocket_connect(f"/ws/{sid}?secret={secret}") as ws:
+    # 子协议传 secret（query 版本会泄露到 access log，仅保留兼容）
+    with client.websocket_connect(f"/ws/{sid}", subprotocols=["zhike-visitor", secret]) as ws:
         assert sum(len(v) for v in hub.visitor_conns.values()) >= 1
     assert sum(len(v) for v in hub.visitor_conns.values()) == 0, "断开后连接未被清理"

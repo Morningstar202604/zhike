@@ -368,7 +368,7 @@ def test_api_background_returns_immediately_and_completes(client, monkeypatch):
 
     async def slow_llm(messages, tools):
         import asyncio as _a
-        await _a.sleep(0.15)
+        await _a.sleep(0.6)
         return {"thought": "直接答", "tool": None, "final": "后台完成"}
 
     from core import agent_llm
@@ -380,7 +380,8 @@ def test_api_background_returns_immediately_and_completes(client, monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "running" and body["run_id"]
-    assert elapsed < 0.15, f"接口不该等任务跑完（耗时 {elapsed:.2f}s）"
+    # 模型调用故意慢 0.6s：接口必须在它完成前返回（阈值留足 CI 抖动余量）
+    assert elapsed < 0.4, f"接口不该等任务跑完（耗时 {elapsed:.2f}s）"
 
     run_id = body["run_id"]
     deadline = _t.time() + 5

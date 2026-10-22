@@ -209,9 +209,11 @@ export default function VisitorChat() {
 
   // WS 实时通道（useWs 自动重连；sessionId 为空时不连接）
   // 访客 WS 必须带 secret query，否则后端 close(4401)
-  const wsPath = sessionId
-    ? `/ws/${sessionId}?secret=${encodeURIComponent(useAppStore.getState().getSessionSecret(sessionId) || '')}`
-    : null
+  // secret 不放 query：uvicorn 会把完整 URL 打进 access log（已复现）。
+  // 改走 Sec-WebSocket-Protocol 子协议，与坐席端一致。
+  const wsSecret = sessionId ? useAppStore.getState().getSessionSecret(sessionId) || '' : ''
+  const wsPath = sessionId ? `/ws/${sessionId}` : null
+  const wsSubs = sessionId && wsSecret ? ['zhike-visitor', wsSecret] : undefined
   const { state: wsState } = useWs(
     wsPath,
     (p) => {
@@ -234,6 +236,8 @@ export default function VisitorChat() {
         ])
       }
     },
+    true,
+    wsSubs,
   )
 
   useEffect(() => {

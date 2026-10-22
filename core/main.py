@@ -481,6 +481,9 @@ def create_app() -> FastAPI:
                 issued_token = secrets.token_urlsafe(32)
                 store.visitor_claim_or_verify(visitor_id, issued_token)
         store.create_session(sid, visitor_id, secret=secret)
+        store.append_audit(f"visitor:{visitor_id[:32]}", "session.created", {
+            "session_id": sid, "channel": "webchat",
+        })
         return {
             "session_id": sid,
             "session_secret": secret,
@@ -664,6 +667,7 @@ def create_app() -> FastAPI:
         if not store.get_session(sid):
             raise HTTPException(404, "会话不存在")
         store.close_session(sid)
+        store.append_audit("operator", "session.closed", {"session_id": sid})
         await hub.publish(sid, {"type": "session_closed", "session_id": sid})
         await hub.broadcast_to_operators({"type": "session_updated", "session_id": sid, "status": "closed"})
         return {"session_id": sid, "status": "closed"}
@@ -745,6 +749,11 @@ def create_app() -> FastAPI:
             cfg = config.update_config(patch)
         except ValueError as e:
             raise HTTPException(400, str(e))
+        # 配置变更必须留痕：谁在什么时候改了哪些组（不记录任何密钥值）
+        store.append_audit("admin", "config.updated", {
+            "groups": sorted(patch.keys()),
+            "keys": sorted({f"{g}.{k}" for g, v in patch.items() if isinstance(v, dict) for k in v}),
+        })
         key = cfg["llm"].get("api_key") or ""
         view = _copy.deepcopy(cfg)
         view["llm"]["api_key"] = ("••••" + key[-4:]) if key else ""
@@ -1541,11 +1550,24 @@ def create_app() -> FastAPI:
 
     @app.websocket("/ws/{sid}")
     async def ws(sid: str, ws: WebSocket, secret: str | None = None):
-        # 访客 WS：校验 session secret（query string，因为 secret 是会话级短期凭据，且仅本会话可读）
-        if not store.check_session_secret(sid, secret or ""):
+        """访客实时通道。
+
+        secret 优先从 Sec-WebSocket-Protocol 子协议取（["zhike-visitor", secret]）；
+        query 参数保留兼容，但**会进 access log**（已复现：uvicorn 把
+        `?secret=...` 原样打印），生产应走子协议。
+        """
+        subprotocols = ws.headers.get("sec-websocket-protocol", "")
+        parts = [p.strip() for p in subprotocols.split(",")]
+        proto_secret = parts[1] if len(parts) >= 2 and parts[0] == "zhike-visitor" else ""
+        if not store.check_session_secret(sid, proto_secret or secret or ""):
             await ws.close(code=4401)
             return
-        await hub.connect(sid, ws)
+        if proto_secret:
+            # 浏览器要求握手回选子协议，否则连接会被判失败
+            await ws.accept(subprotocol="zhike-visitor")
+            await hub.connect(sid, ws, already_accepted=True)
+        else:
+            await hub.connect(sid, ws)
 
     # ---- 单端口模式：可选托管前端构建产物（CS_AGENT_STATIC_DIR=frontend/dist）----
     static_dir = os.environ.get("CS_AGENT_STATIC_DIR", "").strip()

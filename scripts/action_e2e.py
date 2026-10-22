@@ -230,12 +230,13 @@ def main() -> int:
         r = httpx.post(f"{core}/api/actions/execute", timeout=30,
                        json={"action": "send_group_msg",
                              "params": {"group_id": 100, "message": "越权"}, "principal": "qq:55555"})
-        check("普通成员写操作被拒", r.status_code == 403, f"{r.status_code}")
+        # 401=未证明可信服务，403=权限不足；两者都必须拒绝，只有 200 算漏洞
+        check("普通成员写操作被拒", r.status_code in (401, 403), f"{r.status_code}")
         # 4b) 匿名请求自报 admin 也不得拿到写权限（主体伪造回归）
         r = httpx.post(f"{core}/api/actions/execute", timeout=30,
                        json={"action": "send_group_msg",
                              "params": {"group_id": 100, "message": "伪造"}, "principal": "admin"})
-        check("匿名伪造 admin 被拒", r.status_code == 403, f"{r.status_code}")
+        check("匿名伪造 admin 被拒", r.status_code in (401, 403), f"{r.status_code}")
 
         # 5) L2 进入审批
         kick = {"action": "set_group_kick", "params": {"group_id": 100, "user_id": 2}, "principal": "admin"}
