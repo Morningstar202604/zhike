@@ -172,7 +172,9 @@ async def main() -> int:
             print("FAIL: 核心服务未就绪")
             return 1
         # 3. 网关（连假 NapCat；日志落盘便于排障；PORT=nonebot 内置 uvicorn 端口，避开 8080 冲突）
-        gw_env = {**env, "ONEBOT_WS_URL": f"ws://127.0.0.1:{NAPCAT_PORT}", "CORE_BASE_URL": CORE, "PORT": "8031"}
+        gw_env = {**env, "ONEBOT_WS_URL": f"ws://127.0.0.1:{NAPCAT_PORT}", "CORE_BASE_URL": CORE, "PORT": "8031",
+                  # 演练里网关先于假协议端起进程，跳过启动前探测
+                  "GATEWAY_SKIP_PREFLIGHT": "1"}
         gw_log = open("/tmp/zhike_qq_gw.log", "w")
         procs.append(subprocess.Popen(
             [sys.executable, "gateway/bot.py"], cwd=ROOT, env=gw_env,
