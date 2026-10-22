@@ -5,6 +5,7 @@
 """
 import asyncio
 import base64
+import collections
 import logging
 import os
 import time
@@ -43,7 +44,39 @@ driver.register_adapter(OneBotV11Adapter)
 
 CORE_BASE_URL = os.environ.get("CORE_BASE_URL", "http://127.0.0.1:8000")
 CHANNEL_TOKEN = os.environ.get("CHANNEL_TOKEN", "")
+# 单条消息等待核心的最长时间：LLM ReAct + 工具调用可能到 40s 以上，默认放宽到 90s
+INGEST_TIMEOUT_S = float(os.environ.get("INGEST_TIMEOUT_S", "90"))
+# 同时处理的消息上限：群里一次 @ 全体或刷屏时，避免把核心与模型打爆
+MAX_CONCURRENT = max(1, int(os.environ.get("GATEWAY_MAX_CONCURRENT", "8")))
+# 同一会话内串行：保证群友连发多条时回复顺序与提问一致
+_PER_CHAT_LOCKS: dict[str, asyncio.Lock] = {}
+# 已处理 message_id（LRU）：协议端重连会重放最近事件，不去重会重复回复
+_SEEN_IDS: "collections.OrderedDict[str, float]" = collections.OrderedDict()
+_SEEN_MAX = 2000
+_sem = asyncio.Semaphore(MAX_CONCURRENT)
+
 matcher = on_message(rule=to_me(), priority=5, block=False)
+
+
+def _dedup(message_id: str | None) -> bool:
+    """True = 首次见到，可以处理；False = 重复投递。"""
+    if not message_id:
+        return True
+    now = time.time()
+    if message_id in _SEEN_IDS:
+        return False
+    _SEEN_IDS[message_id] = now
+    while len(_SEEN_IDS) > _SEEN_MAX:
+        _SEEN_IDS.popitem(last=False)
+    return True
+
+
+def _chat_lock(key: str) -> asyncio.Lock:
+    lock = _PER_CHAT_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _PER_CHAT_LOCKS[key] = lock
+    return lock
 
 
 def _channel_headers() -> dict[str, str]:
@@ -221,6 +254,33 @@ async def _bind_adapter():
     logger.info("adapter bound: %s", adapter.name)
 
 
+async def _post_ingest(payload: dict) -> str:
+    """调用核心 /v1/ingest，网络类错误重试一次（指数退避）。
+
+    只重试连接/超时/5xx：4xx 是业务拒绝（例如限流、内容校验），重试没有意义。
+    """
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=INGEST_TIMEOUT_S) as client:
+                resp = await client.post(
+                    f"{CORE_BASE_URL}/v1/ingest", json=payload, headers=_channel_headers()
+                )
+                if resp.status_code >= 500:
+                    raise httpx.HTTPStatusError(
+                        f"core {resp.status_code}", request=resp.request, response=resp)
+                resp.raise_for_status()
+                return resp.json()["reply"]["text"]
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout,
+                httpx.HTTPStatusError) as e:
+            last_exc = e
+            if attempt == 0:
+                await asyncio.sleep(0.6)
+                continue
+            raise
+    raise last_exc or RuntimeError("ingest failed")
+
+
 @matcher.handle()
 async def handle(event: MessageEvent):
     # 单一事实源：统一走适配器接口（内部仍是 mapping 纯函数），不在网关层维护第二套解析
@@ -230,6 +290,9 @@ async def handle(event: MessageEvent):
 
     msg = adapter.parse(_event_to_raw(event))
     if msg is None:
+        return
+    if not _dedup(msg.message_id):
+        logger.info("duplicate message skipped: %s", msg.message_id)
         return
 
     await bus.publish(EV_MESSAGE_IN, {
@@ -251,27 +314,27 @@ async def handle(event: MessageEvent):
             payload["image_b64"] = image_b64
 
     started = time.time()
-    try:
-        async with httpx.AsyncClient(timeout=40) as client:
-            resp = await client.post(
-                f"{CORE_BASE_URL}/v1/ingest", json=payload, headers=_channel_headers()
-            )
-            resp.raise_for_status()
-            reply_text = resp.json()["reply"]["text"]
-        await bus.publish(EV_ACTION_DONE, {
-            "action": "ingest", "duration_ms": int((time.time() - started) * 1000), "ok": True,
-        })
-    except Exception as e:  # 核心不可达时给用户明确反馈，而不是沉默
-        logger.warning("ingest failed: %s: %s", type(e).__name__, str(e)[:120])
-        reply_text = "客服系统开小差了，请稍后再试～"
-        await bus.publish(EV_ACTION_DONE, {
-            "action": "ingest", "duration_ms": int((time.time() - started) * 1000),
-            "ok": False, "error": f"{type(e).__name__}",
-        })
+    # 同一会话串行 + 全局并发上限：群里刷屏时既不乱序也不打爆核心
+    async with _sem, _chat_lock(f"{msg.channel}:{msg.chat_id}"):
+        try:
+            reply_text = await _post_ingest(payload)
+            await bus.publish(EV_ACTION_DONE, {
+                "action": "ingest", "duration_ms": int((time.time() - started) * 1000), "ok": True,
+            })
+        except Exception as e:  # 核心不可达时给用户明确反馈，而不是沉默
+            logger.warning("ingest failed: %s: %s", type(e).__name__, str(e)[:120])
+            reply_text = "客服系统开小差了，请稍后再试～"
+            await bus.publish(EV_ACTION_DONE, {
+                "action": "ingest", "duration_ms": int((time.time() - started) * 1000),
+                "ok": False, "error": f"{type(e).__name__}",
+            })
 
-    result = await adapter.send(msg, reply_text)
-    if not result.ok:
-        logger.warning("reply send failed: %s", result.error)
+        result = await adapter.send(msg, reply_text)
+        if not result.ok:
+            logger.warning("reply send failed: %s", result.error)
+            # 发送失败重试一次（协议端偶发超时）；仍失败则只记录，不再回灌错误话术
+            await asyncio.sleep(0.5)
+            result = await adapter.send(msg, reply_text)
     await bus.publish(EV_REPLY_OUT, {
         "channel": msg.channel, "chat_id": msg.chat_id, "ok": result.ok,
     })

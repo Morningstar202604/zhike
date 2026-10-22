@@ -14,11 +14,15 @@
   --line: #e3e5e9;
   --line-2: #eceef1;
 
-  /* 唯一强调色 */
-  --brand: #3056f5;
-  --brand-2: #5b7cf7;
-  --brand-soft: #edf1fe;
+  /* 主色：墨绿（印泥之外的第二主色），替代上一版的高饱和蓝 */
+  --brand: #0E5C55;
+  --brand-2: #17786C;
+  --brand-soft: #E7F0ED;
   --brand-grad: var(--brand);
+
+  /* 落款朱砂：只用于极小面积的强调（印章点、必填标记、危险以外的提示） */
+  --seal: #C2452D;
+  --seal-soft: #FBEDE9;
 
   /* 语义色 */
   --ok: #16a34a;
@@ -28,15 +32,15 @@
   --danger: #dc2626;
   --danger-soft: #fdecec;
 
-  --agent-soft: #edf1fe;
-  --visitor-soft: #eef4ff;
-  --operator-soft: #f3ecf9;
-  --system-soft: #f2f3f5;
+  --agent-soft: #E7F0ED;
+  --visitor-soft: #EEF3F1;
+  --operator-soft: #F1EDE6;
+  --system-soft: #F2F3F5;
 
   /* 深色侧栏 */
-  --side-bg: #15181d;
-  --side-ink: #a7adb6;
-  --side-ink-strong: #e7e9ec;
+  --side-bg: #14201E;
+  --side-ink: #A4B0AC;
+  --side-ink-strong: #EAEDEA;
   --side-line: rgba(255, 255, 255, 0.07);
   --side-hover: rgba(255, 255, 255, 0.06);
   --side-active: rgba(255, 255, 255, 0.10);
@@ -49,9 +53,13 @@
   --shadow-md: 0 1px 2px rgba(16, 20, 26, 0.05);
   --shadow-lg: 0 8px 24px rgba(16, 20, 26, 0.14);
 
-  /* 字体 */
+  /* 字体：
+     - 正文用无衬线，保证 12-14px 下的可读性
+     - 标题/品牌用衬线（宋体系），这是「知客」区别于通用 SaaS 的地方：
+       中文产品用宋体做标题，读起来像一份文件，而不是一张仪表盘 */
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
     "HarmonyOS Sans SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  --font-display: "Songti SC", STSong, SimSun, "Noto Serif SC", Georgia, serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace;
 
   /* 文本别名：页面样式中用 --text / --text-2 指代正文与次级文本，
@@ -102,7 +110,7 @@ body {
   background: var(--brand);
   display: grid; place-items: center; color: #fff; flex-shrink: 0;
 }
-.shell-brand-name { font-weight: 650; font-size: 14px; letter-spacing: 0.2px; display: block; }
+.shell-brand-name { font-family: var(--font-display); font-weight: 600; font-size: 15px; letter-spacing: 0.05em; display: block; }
 .shell-brand-sub { font-size: 11px; color: #6d737c; margin-top: 1px; display: block; }
 
 .shell-nav { display: flex; flex-direction: column; gap: 2px; }

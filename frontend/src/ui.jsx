@@ -1,6 +1,5 @@
 import React from 'react'
 import {
-  Sparkles,
   Paperclip,
   ImagePlus,
   Send,
@@ -19,7 +18,23 @@ import {
 
 export function Avatar({ kind = 'agent', size = 34 }) {
   const map = {
-    agent: { icon: <Sparkles size={size * 0.5} />, bg: 'var(--brand-grad)', color: '#fff', label: 'Agent' },
+    agent: {
+      icon: (
+        <span
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: size * 0.5,
+            fontWeight: 600,
+            lineHeight: 1,
+          }}
+        >
+          知
+        </span>
+      ),
+      bg: 'var(--brand)',
+      color: '#F7F5F0',
+      label: 'Agent',
+    },
     visitor: { icon: <UserRound size={size * 0.5} />, bg: 'var(--visitor-soft)', color: 'var(--brand)', label: '访客' },
     operator: { icon: <CircleCheck size={size * 0.5} />, bg: 'var(--operator-soft)', color: '#c2358f', label: '坐席' },
   }
@@ -35,7 +50,7 @@ export function Avatar({ kind = 'agent', size = 34 }) {
         display: 'grid',
         placeItems: 'center',
         flexShrink: 0,
-        boxShadow: kind === 'agent' ? '0 4px 10px rgba(43,92,255,0.25)' : 'none',
+        boxShadow: 'none',
       }}
       title={m.label}
     >

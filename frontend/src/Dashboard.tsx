@@ -17,7 +17,8 @@ import { Spinner, ErrorBanner } from './components/Spinner'
 import EChart from './components/EChart'
 import './pages2.css'
 
-const PALETTE = ['#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#a855f7', '#ec4899']
+// 图表配色跟随品牌：墨绿主色 / 朱砂 / 竹青 / 赭石 / 灰蓝，避免默认的 indigo 紫
+const PALETTE = ['#0E5C55', '#17786C', '#C2452D', '#B98A4B', '#5E7C88', '#7FA99B', '#946B5C']
 const AXIS = { axisLabel: { color: 'rgba(128,128,145,.85)', fontSize: 11 }, axisLine: { lineStyle: { color: 'rgba(128,128,145,.3)' } } }
 
 export default function Dashboard() {
