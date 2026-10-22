@@ -22,7 +22,7 @@ import {
   ThoughtBlock,
 } from './ui'
 import { useWs } from './hooks/useWs'
-import { ensureVisitorId, useAppStore } from './store/appStore'
+import { useAppStore } from './store/appStore'
 import Logo from './components/Logo'
 import Markdown from './components/Markdown'
 import { useShell } from './components/ResponsiveShell'
