@@ -64,6 +64,7 @@ async def main():
         "ONEBOT_WS_URL": os.environ.get("ONEBOT_WS_URL", "ws://127.0.0.1:3001"),
         "CORE_BASE_URL": os.environ.get("CORE_BASE_URL", "http://127.0.0.1:8000"),
         "PORT": "8090",
+        "GATEWAY_SKIP_PREFLIGHT": "1",
     }
     proc = subprocess.Popen([sys.executable, "gateway/bot.py"], cwd=ROOT, env=env,
                             stdout=log, stderr=subprocess.STDOUT)

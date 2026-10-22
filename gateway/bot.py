@@ -38,6 +38,70 @@ _init_kwargs: dict = {
 if os.environ.get("ONEBOT_ACCESS_TOKEN"):
     _init_kwargs["onebot_access_token"] = os.environ["ONEBOT_ACCESS_TOKEN"]
 
+def _preflight_ws() -> None:
+    """启动前探测协议端 WS 是否真的可握手，给出人话提示而不是一屏 traceback。
+
+    为什么不能只看端口：NapCat 未登录时端口已经监听，但 WS 升级请求收不到响应
+    （实测：TCP connect 成功、HTTP 101 永不返回），直接启动只会反复抛 InvalidMessage。
+
+    GATEWAY_SKIP_PREFLIGHT=1 时跳过：端到端演练里网关要先于假协议端起进程。
+    """
+    import socket
+    from urllib.parse import urlparse
+
+    if os.environ.get("GATEWAY_SKIP_PREFLIGHT", "").strip().lower() in ("1", "true", "yes"):
+        return
+
+    url = os.environ.get("ONEBOT_WS_URL", "ws://127.0.0.1:3001")
+    parsed = urlparse(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 3001
+    crlf = chr(13) + chr(10)
+
+    def probe() -> tuple[bool, str]:
+        try:
+            sock = socket.create_connection((host, port), timeout=3)
+        except OSError as e:
+            return False, f"端口不可达（{type(e).__name__}）"
+        try:
+            request = crlf.join([
+                "GET / HTTP/1.1",
+                f"Host: {host}:{port}",
+                "Upgrade: websocket",
+                "Connection: Upgrade",
+                "Sec-WebSocket-Key: emhpa2UtcHJlZmxpZ2h0",
+                "Sec-WebSocket-Version: 13",
+                "",
+                "",
+            ]).encode()
+            sock.sendall(request)
+            sock.settimeout(3)
+            head = sock.recv(64)
+            if not head:
+                return False, "端口可连但无 HTTP 响应（QQ 未登录时的典型表现）"
+            status_line = head.split(b"\\r\\n", 1)[0] if b"\\r\\n" in head else head.split(b"\\n", 1)[0]
+            if b" 101 " in status_line:
+                return True, ""
+            return False, f"WS 升级被拒绝：{status_line[:60]!r}"
+        except OSError as e:
+            return False, f"握手超时/中断（{type(e).__name__}）"
+        finally:
+            sock.close()
+
+    ok, reason = probe()
+    if ok:
+        return
+    lines = [
+        f"协议端 {url} 不可用：{reason}。",
+        "  1) NapCat 容器是否在运行：docker ps | grep napcat",
+        "  2) QQ 是否已登录：python scripts/qq_login.py（看到「OneBot WS 已就绪」再启动网关）",
+        f"  3) NapCat 网络配置里 WS 服务端是否启用且端口为 {port}",
+        "  详见 docs/QQ-LOGIN.md",
+    ]
+    logger.error(chr(10).join(lines))
+    sys.exit(2)
+
+
 nonebot.init(**_init_kwargs)
 driver = nonebot.get_driver()
 driver.register_adapter(OneBotV11Adapter)
@@ -341,4 +405,5 @@ async def handle(event: MessageEvent):
 
 
 if __name__ == "__main__":
+    _preflight_ws()
     nonebot.run()
