@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -249,6 +250,10 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Authorization", "X-Admin-Token", "X-Channel-Token", "X-Session-Secret", "X-Agent-Token", "Content-Type"],
     )
+
+    # 压缩：前端主包 557KB（echarts）、vendor 204KB，不压缩在弱网下首屏要等数秒。
+    # 只压 >1KB 的响应，SSE 流不在此列（StreamingResponse 本身不带 Content-Length）。
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     # 安全响应头：此前一个都没有（缺 CSP/X-Frame/Referrer-Policy 等，点击劫持与
     # 跨站 referer 泄露都没有防护）。CSP 需要 'unsafe-inline' 兼容 Vite 注入的样式；
