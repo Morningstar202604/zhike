@@ -365,10 +365,18 @@ def test_api_background_returns_immediately_and_completes(client, monkeypatch):
     旧实现同步等待整个任务，run_id 要跑完才拿到，取消按钮在 UI 上永远点不到。
     """
     import time as _t
+    import threading
+
+    gate = threading.Event()
+    entered = threading.Event()
 
     async def slow_llm(messages, tools):
         import asyncio as _a
-        await _a.sleep(0.6)
+        # 阻塞到测试放行：接口若同步等任务，会一直卡在 entered 之后，
+        # 这样断言的是「接口没等任务」这一语义，而不是机器快慢（时间阈值在满载 CI 上会假失败）。
+        entered.set()
+        while not gate.is_set():
+            await _a.sleep(0.02)
         return {"thought": "直接答", "tool": None, "final": "后台完成"}
 
     from core import agent_llm
@@ -380,8 +388,9 @@ def test_api_background_returns_immediately_and_completes(client, monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "running" and body["run_id"]
-    # 模型调用故意慢 0.6s：接口必须在它完成前返回（阈值留足 CI 抖动余量）
-    assert elapsed < 0.4, f"接口不该等任务跑完（耗时 {elapsed:.2f}s）"
+    assert not gate.is_set(), "任务不该在接口返回前就完成"
+    assert elapsed < 1.0, f"接口不该等任务跑完（耗时 {elapsed:.2f}s）"
+    gate.set()  # 放行模型，任务继续跑完
 
     run_id = body["run_id"]
     deadline = _t.time() + 5

@@ -10,7 +10,7 @@ QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-455%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-457%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-81%25%20core-blue)
 
 </div>
@@ -82,7 +82,7 @@ Web 访客 + 坐席工作台 ──/api + /ws───────────�
 
 | 项 | 结果 |
 |---|---|
-| 后端测试 | 455 passed（876 条断言） |
+| 后端测试 | 457 passed（876 条断言） |
 | 覆盖率 | core 行 81% / 分支 79% |
 | 变异测试 | 15 个关键变异全部被杀死（抽样） |
 | 在线体检 | `scripts/e2e_check.py` 18/18；`scripts/action_e2e.py` 13/13 |
@@ -168,7 +168,7 @@ LLM 配好后可用 `POST /api/admin/llm-test`（管理页）实测连通性与�
 ## 测试与验证
 
 ```bash
-python -m pytest tests -q                    # 455 用例：管线/摄取/安全/网关映射/存储/前端兼容/统计/控制台/阶段0回归
+python -m pytest tests -q                    # 457 用例：管线/摄取/安全/网关映射/存储/前端兼容/统计/控制台/阶段0回归
 python -m pytest tests -q --cov=core --cov-branch   # 覆盖率：行 81% / 分支 79%（core）
 # 在线体检需要与服务端一致的令牌（缺令牌时脚本退出码 2 并给出提示）
 ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010   # 18 项在线能力体检
