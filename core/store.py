@@ -4,6 +4,7 @@ DB 路径每次连接时读环境变量（CS_AGENT_DB），测试无需重载模
 """
 import json
 import os
+import secrets as secrets_module
 import sqlite3
 import threading
 import uuid
@@ -443,6 +444,38 @@ def get_messages(session_id: str, limit: int | None = None,
         }
         for r in rows
     ]
+
+
+# ---------------- 访客身份（避免自报 visitor_id 读到他人记忆） ----------------
+
+def visitor_claim_or_verify(visitor_id: str, token: str) -> tuple[bool, str]:
+    """首次声明 visitor_id 的调用方获得令牌；已有记录则必须出示匹配令牌。
+
+    返回 (ok, reason)：ok=False 时 reason ∈ {"taken", "bad_token"}。
+    只存令牌的 SHA-256，泄库也无法反推。
+    """
+    import hashlib
+
+    vid = (visitor_id or "").strip()
+    if not vid:
+        return False, "bad_token"
+    digest = hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+    with get_conn() as conn:
+        row = conn.execute("SELECT token_hash FROM visitors WHERE id = ?", (vid,)).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO visitors (id, token_hash, created_at) VALUES (?, ?, ?)",
+                (vid, digest, _now()),
+            )
+            return True, "created"
+        stored = row["token_hash"] or ""
+    ok = bool(stored) and secrets_module.compare_digest(stored.encode(), digest.encode())
+    return (True, "verified") if ok else (False, "bad_token")
+
+
+def visitor_exists(visitor_id: str) -> bool:
+    with get_conn() as conn:
+        return conn.execute("SELECT 1 FROM visitors WHERE id = ?", (visitor_id,)).fetchone() is not None
 
 
 def delete_message(session_id: str, message_id: int) -> bool:

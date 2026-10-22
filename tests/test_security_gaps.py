@@ -421,3 +421,78 @@ def test_llm_tool_success_does_not_escalate(monkeypatch):
          "tool_args": {"order_id": "ORD1"}}, ctx, cfg
     )
     assert reply.escalate is False
+
+
+# ============================================================
+# 5. 未认证调用面（本轮审查新增的 PoC 回归）
+# ============================================================
+
+def test_actions_execute_rejects_unauthenticated(client):
+    """无任何令牌的请求不得执行动作，即使是 L0 只读。
+
+    旧行为：匿名被判成 qq:anonymous，L0 放行 → 公网可读服务器文件（已复现）。
+    """
+    # httpx 会把传入 headers 与 client.headers 合并，必须先从 client 上摘掉
+    saved = dict(client.headers)
+    for k in ("X-Admin-Token", "X-Channel-Token", "X-Agent-Token"):
+        client.headers.pop(k, None)
+    try:
+        r = client.post("/api/actions/execute",
+                        json={"action": "fs.read", "params": {"path": "work/hello.txt"}})
+    finally:
+        client.headers.clear()
+        client.headers.update(saved)
+    assert r.status_code == 401, r.text
+
+
+def test_agent_run_rejects_unauthenticated(client):
+    saved = dict(client.headers)
+    for k in ("X-Admin-Token", "X-Channel-Token", "X-Agent-Token"):
+        client.headers.pop(k, None)
+    try:
+        r = client.post("/api/agent/run", json={"goal": "读文件", "background": True})
+    finally:
+        client.headers.clear()
+        client.headers.update(saved)
+    assert r.status_code == 401, r.text
+
+
+def test_session_identity_token_required_for_reused_visitor_id(client):
+    """同一个 visitor_id 第二次声明必须出示首次签发的令牌，否则 403。
+
+    旧行为：任何人填别人的 visitor_id 就能读到对方长期记忆（已复现）。
+    """
+    a = client.post("/api/sessions", json={"visitor_id": "mem-owner"}).json()
+    assert a["visitor_token"], "首次声明必须签发身份令牌"
+    # 无令牌冒用
+    r = client.post("/api/sessions", json={"visitor_id": "mem-owner"})
+    assert r.status_code == 403, r.text
+    # 带正确令牌可复用
+    r2 = client.post("/api/sessions",
+                     json={"visitor_id": "mem-owner", "visitor_token": a["visitor_token"]})
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["visitor_id"] == "mem-owner"
+
+
+def test_anonymous_sessions_get_unique_visitor_id(client):
+    """不传 visitor_id 时由服务端生成随机 id：不能再让所有匿名访客共用 anonymous。"""
+    a = client.post("/api/sessions", json={}).json()
+    b = client.post("/api/sessions", json={}).json()
+    assert a["visitor_id"] != b["visitor_id"]
+    assert a["visitor_id"].startswith("v-")
+
+
+def test_docs_disabled_by_default(app):
+    """生产默认不暴露 /docs 与 /openapi.json。"""
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as c:
+        assert c.get("/docs").status_code == 404
+        assert c.get("/openapi.json").status_code == 404
+
+
+def test_security_headers_present(client):
+    r = client.get("/healthz")
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.headers.get("x-frame-options") == "DENY"
+    assert "default-src 'self'" in r.headers.get("content-security-policy", "")

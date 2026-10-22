@@ -172,8 +172,17 @@ export default function VisitorChat() {
   const ensureSession = useCallback(
     async (firstContent) => {
       if (sessionId) return sessionId
-      if (!visitorId.current) visitorId.current = ensureVisitorId()
-      const data = await http.post('/api/sessions', { visitor_id: visitorId.current })
+      const st = useAppStore.getState()
+      const payload = st.visitorId
+        ? { visitor_id: st.visitorId, visitor_token: st.visitorToken || '' }
+        : {}
+      const data = await http.post('/api/sessions', payload)
+      // 服务端可能签发新 visitor_id / 令牌（首次访问），必须存回，否则下次换会话就读不到自己的记忆
+      if (data.visitor_id) {
+        visitorId.current = data.visitor_id
+        st.setVisitorId(data.visitor_id)
+      }
+      if (data.visitor_token) st.setVisitorToken(data.visitor_token)
       setSessionId(data.session_id)
       // 保存会话归属凭据，后续该会话所有请求自动带 X-Session-Secret
       if (data.session_secret) {

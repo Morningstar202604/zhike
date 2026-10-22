@@ -226,7 +226,16 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Zhike CS Agent Core", lifespan=lifespan)
+    # /docs 与 /openapi.json 默认公开会把全部端点、参数结构、内部枚举送出去。
+    # 本地开发需要时显式 CS_AGENT_DOCS=1，生产默认关闭。
+    docs_on = os.environ.get("CS_AGENT_DOCS", "").strip().lower() in ("1", "true", "yes", "on")
+    app = FastAPI(
+        title="Zhike CS Agent Core",
+        lifespan=lifespan,
+        docs_url="/docs" if docs_on else None,
+        redoc_url="/redoc" if docs_on else None,
+        openapi_url="/openapi.json" if docs_on else None,
+    )
     cors_env = os.environ.get("CS_AGENT_CORS_ORIGINS", "").strip()
     if cors_env:
         origins = [o.strip() for o in cors_env.split(",") if o.strip()]
@@ -241,8 +250,32 @@ def create_app() -> FastAPI:
         allow_headers=["Authorization", "X-Admin-Token", "X-Channel-Token", "X-Session-Secret", "X-Agent-Token", "Content-Type"],
     )
 
+    # 安全响应头：此前一个都没有（缺 CSP/X-Frame/Referrer-Policy 等，点击劫持与
+    # 跨站 referer 泄露都没有防护）。CSP 需要 'unsafe-inline' 兼容 Vite 注入的样式；
+    # connect-src 'self' 够用（前端只连同源 API/WS）。
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if not request.url.path.startswith(("/assets/", "/docs", "/redoc")):
+            response.headers.setdefault(
+                "Content-Security-Policy",
+                "default-src 'self'; img-src 'self' data: blob:; "
+                "style-src 'self' 'unsafe-inline'; script-src 'self'; "
+                "connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'",
+            )
+        return response
+
     class NewSession(BaseModel):
-        visitor_id: str = "anonymous"
+        # 不传 visitor_id 时由服务端生成随机 id：所有匿名访客共用 "anonymous"
+        # 会把彼此的长期记忆串在一起（已复现）。
+        visitor_id: str = ""
+        # 首次声明某个 visitor_id 时服务端下发令牌；复用同一 id 必须出示它，
+        # 否则任何访客自报别人的 id 就能读到对方记忆与欢迎语（已复现）。
+        visitor_token: str = ""
 
     class MessageIn(BaseModel):
         content: str
@@ -422,11 +455,39 @@ def create_app() -> FastAPI:
         }
 
     @app.post("/api/sessions")
-    def new_session(body: NewSession):
+    def new_session(body: NewSession, request: Request):
+        limiter: security.RateLimiter = app.state.limiter
+        ip_key = f"session-new:{request.client.host if request.client else 'unknown'}"
+        if not limiter.allow(ip_key, window_s=60, max_n=60):
+            raise HTTPException(429, "创建会话过于频繁，请稍后再试")
         sid = uuid.uuid4().hex
         secret = secrets.token_urlsafe(24)
-        store.create_session(sid, body.visitor_id, secret=secret)
-        return {"session_id": sid, "session_secret": secret, "status": "ongoing", "visitor_id": body.visitor_id}
+        visitor_id = (body.visitor_id or "").strip()
+        issued_token = ""
+        if not visitor_id:
+            # 服务端生成，客户端无从猜测，也就无从撞库读别人的记忆
+            visitor_id = "v-" + secrets.token_urlsafe(12)
+            issued_token = secrets.token_urlsafe(32)
+            store.visitor_claim_or_verify(visitor_id, issued_token)
+        else:
+            if len(visitor_id) > 128:
+                raise HTTPException(400, "visitor_id 过长")
+            # 客户端自带 visitor_id：首次声明发令牌，复用必须证明归属
+            if store.visitor_exists(visitor_id):
+                ok, reason = store.visitor_claim_or_verify(visitor_id, body.visitor_token)
+                if not ok:
+                    raise HTTPException(403, "访客身份校验失败：visitor_id 已被占用")
+            else:
+                issued_token = secrets.token_urlsafe(32)
+                store.visitor_claim_or_verify(visitor_id, issued_token)
+        store.create_session(sid, visitor_id, secret=secret)
+        return {
+            "session_id": sid,
+            "session_secret": secret,
+            "status": "ongoing",
+            "visitor_id": visitor_id,
+            "visitor_token": issued_token,
+        }
 
     @app.get("/api/sessions/{sid}/messages")
     def get_messages(sid: str, _=Depends(_require_admin_or_session)):
@@ -1171,12 +1232,27 @@ def create_app() -> FastAPI:
     @app.post("/api/actions/execute")
     async def actions_execute(body: ActionExecuteIn,
                               x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
-                              x_agent_token: str | None = Header(default=None, alias="X-Agent-Token")):
+                              x_agent_token: str | None = Header(default=None, alias="X-Agent-Token"),
+                              x_channel_token: str | None = Header(default=None, alias="X-Channel-Token")):
         """执行动作。
 
         权限由 principal 决定，不依赖管理员令牌本身——
         带管理员令牌只说明"调用方是控制台"，具体能做什么仍走策略判定。
+
+        但**调用方必须先证明自己是可信服务**：没有任何令牌的匿名请求
+        仍被判成 qq:anonymous 并允许 L0，等于把「读服务器文件/进程列表」
+        暴露给公网（已复现：匿名 fs.read 读到 allow_roots 内文件）。
         """
+        channel_token = os.environ.get("CHANNEL_TOKEN", "").strip()
+        trusted = (
+            (bool(security.admin_token()) and security.constant_time_equals(
+                x_admin_token, security.admin_token()))
+            or (bool(os.environ.get("AGENT_TOKEN", "").strip()) and security.constant_time_equals(
+                x_agent_token, os.environ.get("AGENT_TOKEN", "").strip()))
+            or (bool(channel_token) and security.constant_time_equals(x_channel_token, channel_token))
+        )
+        if not trusted:
+            raise HTTPException(401, "需要管理员令牌或服务间令牌")
         principal = _principal_from(body.principal, x_admin_token, x_agent_token)
         try:
             result = await actions_service.execute(
@@ -1323,6 +1399,18 @@ def create_app() -> FastAPI:
         """
         if not body.goal.strip():
             raise HTTPException(400, "任务目标不能为空")
+        agent_token = os.environ.get("AGENT_TOKEN", "").strip()
+        trusted = (
+            (bool(security.admin_token()) and security.constant_time_equals(
+                x_admin_token, security.admin_token()))
+            or (bool(agent_token) and security.constant_time_equals(x_agent_token, agent_token))
+        )
+        if not trusted:
+            # 未认证的任务会直接落到 qq:anonymous，仍能白烧最多 120s 的模型调用
+            raise HTTPException(401, "需要管理员令牌或服务间令牌")
+        limiter: security.RateLimiter = app.state.limiter
+        if not limiter.allow("agent-run:global", window_s=60, max_n=30):
+            raise HTTPException(429, "任务提交过于频繁，请稍后再试")
         principal_raw = _principal_from(body.principal, x_admin_token, x_agent_token)
 
         # 预算可由请求覆盖步数（其余仍走环境变量）
