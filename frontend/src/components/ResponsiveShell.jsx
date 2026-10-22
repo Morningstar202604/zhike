@@ -24,7 +24,7 @@ export const useShell = () => useContext(Ctx)
 function Brand() {
   return (
     <div className="shell-brand">
-      <Logo size={30} onDark withText subtitle="在线客服 Agent 控制台" />
+      <Logo size={30} onDark withText subtitle="在线客服台" />
     </div>
   )
 }
@@ -79,7 +79,7 @@ export default function ResponsiveShell({ children }) {
                 </button>
                 <Brand />
                 <SideNav onNav={() => setDrawerOpen(false)} />
-                <div className="shell-foot">知客 Zhike · MIT</div>
+                <div className="shell-foot">知客 · MIT 开源</div>
               </div>
             </>
           )}
@@ -96,7 +96,7 @@ export default function ResponsiveShell({ children }) {
           <Brand />
           <SideNav />
           <div className="shell-foot">
-            知客 Zhike<br />在线客服 Agent · MIT
+            知客<br />在线客服台 · MIT
           </div>
         </aside>
         <main className={mainClass}>{children}</main>
