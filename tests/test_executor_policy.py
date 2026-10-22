@@ -117,7 +117,9 @@ def test_symlink_escape_rejected(policy, workspace, tmp_path):
 # ---------------- 命令注入 ----------------
 
 INJECTION_CASES = [
-    (["python", "-c", "print(1); rm -rf /"], True),        # 参数里含危险串
+    # 解释器一律不在默认白名单：python -c / node -e 等于任意代码执行（已复现越权读文件）
+    (["python", "-c", "print(1); rm -rf /"], True),
+    (["python", "-c", "import os; os.system('id')"], True),
     (["git", "status && rm -rf /"], True),
     (["echo", "$(whoami)"], False),                         # echo 在白名单且字面无危险串
     (["sh", "-c", "id"], True),                             # sh 不在白名单
@@ -125,7 +127,6 @@ INJECTION_CASES = [
     (["powershell", "-Command", "Get-Process"], True),
     (["cmd", "/c", "dir"], True),
     (["rm", "-rf", "/"], True),
-    (["python", "-c", "import os; os.system('id')"], False),  # python 白名单，无边模式
 ]
 
 

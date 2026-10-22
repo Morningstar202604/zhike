@@ -41,8 +41,11 @@ DEFAULT_POLICY: dict = {
         "follow_symlinks": False,
     },
     "shell": {
-        "allow_binaries": ["git", "python", "python3", "node", "npm", "npx",
-                           "ls", "dir", "cat", "type", "echo", "pwd", "cd",
+        # 默认白名单只放「读取/查看」类命令，绝不放解释器：
+        # python -c / node -e 等于任意代码执行，能绕过 allow_roots 读任意文件（已复现）。
+        # 需要跑脚本时用显式脚本文件 + 管理员审批，不要把解释器加回来。
+        # 只用 shell=False 能真正执行的命令（dir/type 是 shell 内建，列进来也跑不了）
+        "allow_binaries": ["git", "ls", "cat", "echo", "pwd",
                            "grep", "findstr", "head", "tail", "wc"],
         "deny_args_patterns": [
             r"rm\s+-rf\s+/", r"format\s+[a-zA-Z]:", r"del\s+/f\s+/s\s+/q",
@@ -50,6 +53,22 @@ DEFAULT_POLICY: dict = {
         ],
         "timeout_s": 120,
         "max_output_bytes": 262144,
+        # 即使管理员把解释器加进 allow_binaries，这些内联执行参数也一律拒绝。
+        # 按「可执行文件 → 禁止参数」配置：grep -c（计数）不该被 git -c（执行别名）连坐。
+        "deny_inline_flags": {
+            "python": ["-c", "-m"],
+            "python3": ["-c", "-m"],
+            "node": ["-e", "--eval", "--require", "--import"],
+            "npm": ["exec", "x"],
+            "npx": [],
+            "powershell": ["-command", "-encodedcommand", "-c"],
+            "pwsh": ["-command", "-encodedcommand", "-c"],
+            "cmd": ["/c", "/k"],
+            "sh": ["-c"],
+            "bash": ["-c"],
+            "git": ["-c", "--exec-path", "--config-env", "--upload-pack",
+                    "--receive-pack", "--open-files-in-pager"],
+        },
         "env_allowlist": ["PATH", "HOME", "LANG", "LC_ALL", "TZ", "TEMP", "TMP",
                           "SystemRoot", "COMSPEC", "PATHEXT", "USERPROFILE"],
     },
@@ -215,10 +234,31 @@ class Policy:
         if executable not in allow:
             raise PolicyError(f"命令不在白名单：{executable}")
 
+        # argv 里不允许控制字符：防止把多行脚本塞进单个参数
+        for arg in argv:
+            if any(ch in (chr(0), chr(13)) or ch == chr(10) for ch in arg):
+                raise PolicyError("命令参数含控制字符")
+
+        inline_map = shell_cfg.get("deny_inline_flags", {}) or {}
+        inline = {f.lower() for f in inline_map.get(executable, [])}
+        for arg in argv[1:]:
+            low = arg.lower()
+            if low in inline or any(low.startswith(f + "=") for f in inline if f.startswith("--")):
+                raise PolicyError(f"拒绝内联执行参数：{arg}")
+
         joined = " ".join(argv)
         for pattern in shell_cfg.get("deny_args_patterns", []):
             if re.search(pattern, joined, re.IGNORECASE):
                 raise PolicyError("命令命中禁止规则")
+
+        # 可执行文件必须能从 PATH 解析到；绝对路径必须与 PATH 解析结果一致，
+        # 防止把改名后的恶意二进制放进工作目录再以 argv[0] 绝对路径调用。
+        import shutil as _shutil
+        resolved = _shutil.which(argv[0])
+        if not resolved:
+            raise PolicyError(f"命令不存在或不可执行：{argv[0]}")
+        if os.path.isabs(argv[0]) and os.path.normcase(os.path.realpath(argv[0])) != os.path.normcase(os.path.realpath(resolved)):
+            raise PolicyError("可执行文件路径与 PATH 解析结果不一致")
 
         workdir = ""
         if cwd:

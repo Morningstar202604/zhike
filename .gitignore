@@ -21,3 +21,6 @@ coverage.xml
 
 # 运行时锁文件（知识库跨进程写锁）
 *.lock
+
+# 演示数据库（scripts/seed_demo.py 生成，不入库）
+.demo/

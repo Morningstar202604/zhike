@@ -5,7 +5,10 @@
 - 读（list/read/stat/proc.list）：L0
 - 可逆写（write/mkdir/move）：L1
 - 破坏性（delete/proc.kill）：L2
-- 命令执行：L1（命令本身在策略白名单内，但可造成广泛影响，由 T3 阈值兜底）
+- 命令执行：L2（即使白名单内也可能借参数执行任意代码，必须人工确认）
+
+shell.exec 曾按 L1 处理，实测可用 `python -c` 读取 allow_roots 之外的文件；
+现在解释器默认不在白名单内，且动作本身按破坏性处理，二次兜底。
 """
 from __future__ import annotations
 
@@ -35,7 +38,7 @@ COMPUTER_ACTIONS: list[ActionSpec] = [
                group="computer", timeout_s=30),
     ActionSpec("fs.delete", "删除文件或目录（默认进回收站）", RISK_L2,
                ("path", "mode"), ("path",), group="computer", timeout_s=30),
-    ActionSpec("shell.exec", "执行白名单命令", RISK_L1,
+    ActionSpec("shell.exec", "执行白名单命令（需人工确认）", RISK_L2,
                ("argv", "cwd", "timeout_s"), ("argv",), group="computer", timeout_s=120),
     ActionSpec("proc.list", "列出运行中的进程", RISK_L0, ("filter",), group="computer", timeout_s=20),
     ActionSpec("proc.kill", "结束进程", RISK_L2, ("pid", "name"), ("pid",),

@@ -27,6 +27,8 @@ if [ ! -f .env ]; then
   cp deploy/.env.production.example .env
   sed -i "s/changeme-admin-token/$(openssl rand -hex 16)/" .env
   sed -i "s/changeme-channel-token/$(openssl rand -hex 16)/" .env
+  # 执行器签名令牌：core 与 executor 必须一致；不生成则容器内执行器无鉴权
+  printf '\nEXECUTOR_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
   echo
   echo "✅ 已生成 .env（两把令牌已自动随机化，请记录）："
   grep -E "^(ADMIN_TOKEN|CHANNEL_TOKEN)=" .env
@@ -36,6 +38,28 @@ if [ ! -f .env ]; then
   echo "  2. 按需填 USER_LLM_API_KEY（不填=规则模式）"
   echo "  3. 重跑本脚本启动服务"
   exit 0
+fi
+
+# 老 .env 升级：没有执行器令牌就补一个，否则执行器会拒绝在 0.0.0.0 上启动
+if ! grep -q "^EXECUTOR_TOKEN=" .env; then
+  printf '\nEXECUTOR_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
+  echo "▸ 已为老 .env 补生成 EXECUTOR_TOKEN"
+fi
+
+# 执行器工作目录与策略：容器内 allow_roots 必须是 /work（宿主路径在容器里不存在）。
+# compose 文件在 deploy/ 下，相对路径按该目录解析，默认落 deploy/exec_work。
+EXECUTOR_DIR="${EXECUTOR_WORKDIR:-$APP_DIR/deploy/exec_work}"
+mkdir -p "$EXECUTOR_DIR"
+if [ ! -f "$EXECUTOR_DIR/policy.json" ]; then
+  python3 - "$EXECUTOR_DIR/policy.json" <<'PYEOF'
+import json, pathlib, sys
+src = pathlib.Path("executor/policy.example.json")
+dst = pathlib.Path(sys.argv[1])
+data = json.loads(src.read_text(encoding="utf-8"))
+data["fs"]["allow_roots"] = ["/work"]
+dst.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+print("已生成执行器策略:", dst, "allow_roots=/work")
+PYEOF
 fi
 
 if ! grep -q "^NAPCAT_QQ=[0-9]" .env; then

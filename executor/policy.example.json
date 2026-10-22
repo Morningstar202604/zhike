@@ -23,10 +23,6 @@
   "shell": {
     "allow_binaries": [
       "git",
-      "python",
-      "node",
-      "npm",
-      "dir",
       "ls",
       "type",
       "cat"

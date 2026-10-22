@@ -107,7 +107,6 @@ def main() -> int:
     draw_qr(out_path)
 
     print("开始等待登录（每 3 秒检查一次）…")
-    baseline = len(logs)
     deadline = time.time() + args.timeout
     last_note = ""
     while time.time() < deadline:

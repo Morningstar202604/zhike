@@ -42,6 +42,9 @@ python scripts/qq_login.py --timeout 300
 
 ## 3. 启动网关
 
+网关自己会起一个内部 HTTP 端口（默认 8011）供 core 调 `/internal/action`；
+`PORT`/`HOST` 可覆盖（compose 里是 `HOST=0.0.0.0` `PORT=8011`）。
+
 ```bash
 # Windows PowerShell
 $env:ONEBOT_WS_URL="ws://127.0.0.1:3001"
@@ -63,7 +66,9 @@ CHANNEL_TOKEN=... python gateway/bot.py
 ```
 
 成功标志：`curl -H "X-Admin-Token: $ADMIN" localhost:8010/api/gateway/health`
-返回 `{"connected": true, "self_id": "<你的QQ号>"}`。
+返回 `{"online": true, "connected": true, "self_id": "<你的QQ号>"}`。
+
+> 网关连不上 core 的 `GATEWAY_ACTION_URL` 时，动作类接口会 503，但 QQ 对话不受影响。
 
 ## 4. 联调验证（按顺序，前一步不过不要往下走）
 
@@ -96,7 +101,9 @@ CHANNEL_TOKEN=... python gateway/bot.py
 | 网关握手 403 | NapCat 开了 access token | 两边填同一个 `ONEBOT_ACCESS_TOKEN` |
 | 扫码后一直「等待」 | 二维码过期 | 重跑 `scripts/qq_login.py` |
 | 群里 @ 没反应 | 消息没真正 @ 到机器人 | 手动输入 `@机器人名` 再选；或私聊测试 |
-| 回复重复 | 旧版本没有去重 | 升级后重启网关（本轮已修） |
+| 回复重复 | 旧版本没有去重 | 升级后重启网关（已修） |
+| 接管后机器人还在回 | 旧版本会话复用只看 ongoing，接管后新消息落进新会话 | 升级后重启 core（已修：接管后消息只进坐席台） |
+| 控制台动作页显示执行器离线 | 执行器未启动，或 `EXECUTOR_TOKEN` 与 core 不一致 | `python -m executor.main`，核对两边令牌 |
 | 同一群消息顺序乱 | 旧版本并发处理 | 升级后重启（本轮已修，同会话串行） |
 | `docker cp` 找不到 qrcode.png | 还没进入登录流程 | 等 10 秒，或看 `docker logs` 是否已打印二维码 |
 

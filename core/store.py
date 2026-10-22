@@ -710,6 +710,37 @@ def add_feedback(session_id: str, message_id: int, rating: str, comment: str = "
         )
 
 
+def upsert_feedback(session_id: str, message_id: int, rating: str, comment: str = "") -> None:
+    """同一条消息只保留最后一次评价（重复点击不能刷好评率）。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM feedback WHERE session_id = ? AND message_id = ? LIMIT 1",
+            (session_id, message_id),
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE feedback SET rating = ?, comment = ?, created_at = ? WHERE id = ?",
+                (rating, comment, _now(), row["id"]),
+            )
+        else:
+            # 并发下两个请求可能都走到这里：唯一索引兜底，冲突时退化为更新。
+            # 注意 SQLite 的 ON CONFLICT 目标不能指向部分索引，只能显式捕获。
+            import sqlite3 as _sqlite3
+
+            try:
+                conn.execute(
+                    "INSERT INTO feedback (session_id, message_id, rating, comment, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (session_id, message_id, rating, comment, _now()),
+                )
+            except _sqlite3.IntegrityError:
+                conn.execute(
+                    "UPDATE feedback SET rating = ?, comment = ?, created_at = ? "
+                    "WHERE session_id = ? AND message_id = ?",
+                    (rating, comment, _now(), session_id, message_id),
+                )
+
+
 def feedback_summary() -> dict:
     with get_conn() as conn:
         rows = conn.execute(

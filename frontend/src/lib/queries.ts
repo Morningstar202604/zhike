@@ -153,7 +153,7 @@ export function useToolMutations() {
     }),
     toggle: useMutation({
       mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-        http.put<{ tool: ToolDef }>(`/api/tools/${id}`, { id, name: '', desc: '', args_json: {}, enabled }),
+        http.put<{ tool: ToolDef }>(`/api/tools/${id}/enabled`, { enabled }),
       onSuccess: invalidate,
     }),
     remove: useMutation({ mutationFn: (id: string) => http.del(`/api/tools/${id}`), onSuccess: invalidate }),
@@ -202,13 +202,15 @@ export function useAdminChannels() {
     refetchInterval: 15_000,
   })
 }
-export function useAdminSessions(status?: string, q?: string) {
+export function useAdminSessions(status?: string, q?: string, page = 0, pageSize = 30) {
   const params = new URLSearchParams()
   if (status) params.set('status', status)
   if (q) params.set('q', q)
-  const qs = params.toString() ? `?${params.toString()}` : ''
+  params.set('limit', String(pageSize))
+  params.set('offset', String(page * pageSize))
+  const qs = `?${params.toString()}`
   return useQuery({
-    queryKey: ['admin', 'sessions', status || 'all', q || ''],
+    queryKey: ['admin', 'sessions', status || 'all', q || '', page],
     queryFn: () => http.get<{ total: number; items: SessionRow[] }>(`/api/admin/sessions${qs}`),
     refetchInterval: 10_000,
   })

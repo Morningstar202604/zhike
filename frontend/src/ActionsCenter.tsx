@@ -211,7 +211,7 @@ export default function ActionsCenter() {
           <div className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawer-head">
               <h3>动作详情</h3>
-              <button className="btn ghost sm" onClick={() => setDetail(null)}><XCircle size={14} /></button>
+              <button className="btn ghost sm" aria-label="关闭" title="关闭" onClick={() => setDetail(null)}><XCircle size={14} /></button>
             </div>
             <div className="drawer-body space-y-3 text-xs">
               <div>

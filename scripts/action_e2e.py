@@ -54,6 +54,12 @@ async def napcat_server(access_token: str = ""):
     """
 
     async def handler(ws):
+        try:
+            await _handler(ws)
+        except websockets.ConnectionClosed:
+            return
+
+    async def _handler(ws):
         if access_token:
             auth = ""
             if hasattr(ws, "request") and ws.request is not None:

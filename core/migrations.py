@@ -120,6 +120,23 @@ def _v9_visitor_identity_and_indexes(conn: sqlite3.Connection) -> None:
     )
 
 
+def _v10_feedback_unique(conn: sqlite3.Connection) -> None:
+    """0010：同一条消息只能有一条反馈。
+
+    之前每次点击都 INSERT，好评率可被刷；先保留每组最新一条再去重，
+    老库也能安全升级。用部分唯一索引，message_id=0 的历史反馈不受影响。
+    """
+    conn.execute(
+        "DELETE FROM feedback WHERE message_id > 0 AND id NOT IN ("
+        " SELECT MAX(id) FROM feedback WHERE message_id > 0 GROUP BY session_id, message_id"
+        ")"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_feedback_session_message "
+        "ON feedback(session_id, message_id) WHERE message_id > 0"
+    )
+
+
 MIGRATIONS: list[Migration] = [
     (1, "基线：标记已有结构", _v1_baseline),
     (2, "审计链 actor 索引", _v2_audit_index),
@@ -130,6 +147,7 @@ MIGRATIONS: list[Migration] = [
     (7, "消息表 thought 列", _v7_message_thought),
     (8, "消息软删除标记", _v8_message_deleted),
     (9, "访客身份令牌与热路径索引", _v9_visitor_identity_and_indexes),
+    (10, "同一条消息反馈唯一", _v10_feedback_unique),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)
