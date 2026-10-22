@@ -107,15 +107,18 @@ def main() -> int:
     draw_qr(out_path)
 
     print("开始等待登录（每 3 秒检查一次）…")
+    baseline = len(logs)
     deadline = time.time() + args.timeout
     last_note = ""
     while time.time() < deadline:
         time.sleep(3)
         _, logs = run(["docker", "logs", "--tail", "40", args.container])
-        if re.search(r"(登录成功|账号已上线|Online|上线成功|扫码成功)", logs):
+        if re.search(r"(登录成功|账号已上线|Online|上线成功|扫码成功)", logs[-400:]):
             print("\n[OK] 登录成功。")
             break
-        if re.search(r"(二维码已失效|登录失败|扫码失败|expired)", logs):
+        # NapCat 用 "Login Error,ErrType: 1 ErrCode: 3" 表示二维码过期（实测），
+        # 只在匹配中文文案会漏，必须一并识别
+        if re.search(r"(二维码已失效|登录失败|扫码失败|expired|ErrCode:\s*3)", logs):
             print("\n[!] 二维码已失效，正在取新码…")
             run(["docker", "cp", f"{args.container}:{QR_IN_CONTAINER}", out_path])
             draw_qr(out_path)
