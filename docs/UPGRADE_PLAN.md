@@ -64,37 +64,48 @@
 2. 微信**不做个人号协议**；走企业微信「微信客服」/公众号客服接口（官方 API，零封号风险）。
 3. 本仓代码保持 MIT；任何 AGPL/GPL 组件只允许以独立进程 + HTTP 边界接入。
 
-## 四、MVP 已交付
+## 四、当前交付状态（截至 2026-10-23，commit e388bc4）
 
-- `core/`：管线（护栏→上下文→规则/LLM）、`/v1/ingest` 渠道摄取、旧 Web API 全兼容、管理面令牌门禁、滑动窗口限流、渠道会话 TTL、异步 LLM（httpx，OpenAI 兼容端点，Key 缺失/失败自动降级规则+检索）、图片路径修复、过宽注入规则移除。
-- `gateway/`：OneBot v11 事件映射（纯函数，9 个单测）+ NoneBot2 入口。
-- `frontend/`：旧 React 工作台原样复用。
-- `deploy/docker-compose.yml`：NapCat + core + gateway 编排（**本机无 Docker 未实跑**，字段以 NapCat 官方文档为准）。
-- 测试：35 个用例全绿（`python -m pytest tests -q`）+ uvicorn 真机冒烟（healthz / QQ 群 ingest / 转人工工单）。
+> 在 MVP 基础上，经 `5383569 激进技术升级`、`c3a9fd6 Merge security-hardening` 与 `e388bc4` 等后续合入，已落地 RAG 重写 / Key 加密 / 输出护栏 / OTel / 多 worker 限流 / P0 安全加固 / 品牌与演示。
 
-## 五、Roadmap
+- **`core/`**：管线（护栏→上下文→规则/LLM）、`/v1/ingest` 渠道摄取、旧 Web API 全兼容、ADMIN_TOKEN + CHANNEL_TOKEN 双令牌门禁、基于 SQLite 的跨进程滑动窗口限流、渠道会话 TTL、异步 LLM（httpx，OpenAI 兼容，Key 缺失/失败自动降级规则+检索+输出护栏）、图片路径修复、注入规则优化。
+  - **RAG 升级**：可选 embedding 语义检索（BGE 中文向量，`USER_KB_EMBEDDING=auto/off`），bigram 字面检索保留为降级路径；`retrieval.embedding_available()` 自动探测。
+  - **SSE 流式 + 真多步 ReAct**：`pipeline.run_stream` 增量打字机，`/api/sessions/{sid}/chat/stream` 暴露 SSE（`delta` 增量 → `done` 权威终态）；`llm.react_stream` 按 `react_steps` 上限循环调用工具。
+  - **Key 落库加密**：LLM Key 存 SQLite 前经 Fernet 加密，接口回显永远掩码（`core/crypto.py`）。
+  - **可观测**：OTel 埋点 + `/metrics`（Prometheus 格式）。
+- **`gateway/`**：OneBot v11 事件映射（纯函数，单测覆盖）+ NoneBot2 入口 + QQ 图片链路打通。
+- **`frontend/`**：React 工作台（运行总览 / 会话中心 / 坐席工作台 / 日志中心 / 访客对话 / 管理中心 六大页）。
+- **`deploy/`**：`docker-compose.yml`（NapCat + core + gateway 编排）+ 多阶段镜像 + `DEPLOY.md` 部署手册（CF Tunnel 矩阵 / 零成本公益路径 / 验收清单）。
+- **文档解析**：`core/docparse.py` 支持 .md/.txt/.pdf/.docx/.xlsx（xlsx 依赖 `openpyxl`，已在 `requirements.txt` 声明）。
+- **测试**：475 个用例（`python -m pytest tests -q`）+ uvicorn 真机冒烟（healthz / QQ 群 ingest / 转人工工单）。
 
-**P1（下一步，让它在真实 QQ 群跑起来）**
-1. 起一个 QQ 小号 + NapCat，compose 起 core+gateway，群内 @ 实测。
-2. 设置 ADMIN_TOKEN 并给前端工作台加令牌输入。
-3. LLM 接入真实 Key（DeepSeek/GLM/Qwen 任一 OpenAI 兼容端点），关闭静默降级观察日志。
+## 五、Roadmap（状态同步于 2026-10-23）
+
+> 图例：`[x]` 已落地（代码合入 main，commit e388bc4） · `[~]` 部分落地 · `[ ]` 未实现，列入后续。
+
+**P1（让它在真实 QQ 群跑起来）**
+- [x] 2. ADMIN_TOKEN + CHANNEL_TOKEN 双令牌门禁，前端工作台令牌输入（设置页已支持）。
+- [x] 3. LLM 接入真实 Key（前端「LLM 配置」+ 环境变量 `USER_LLM_*`，连通测试 `/api/admin/llm-test`）。
+- [ ] 1. 真机验收：QQ 小号 + NapCat + compose 起 core/gateway，群内 @ 实测（代码就绪，待部署真机扫码，见 DEPLOY.md 3.2）。
 
 **P2（完整客服产品）**
-4. QQ 官方机器人 API 适配（合规公域场景）。
-5. 企业微信「微信客服」回调接入（微信合规路径）。
-6. RAG 升级：可选 embedding 检索（bge/Qwen embedding，OpenAI 兼容接口），bigram 保留为降级路径。
-7. LLM 流式输出（SSE）+ 真多步 ReAct（步数上限落进执行循环）。
-8. Redis 限流/会话 + 多 worker 部署。
+- [ ] 4. QQ 官方机器人 API 适配（合规公域场景，NoneBot 官方 QQ 适配器）。
+- [ ] 5. 企业微信「微信客服」回调接入（微信合规路径）。
+- [x] 6. RAG 升级：可选 embedding 检索（BGE 中文向量，`USER_KB_EMBEDDING=auto/off`），bigram 保留为降级路径。
+- [x] 7. LLM 流式输出（SSE）+ 真多步 ReAct（`react_steps` 上限落进 `llm.react_stream` 循环）。
+- [~] 8. 多 worker 限流/会话：跨进程滑动窗口限流（SQLite）已落地；Redis 后端为可选增强，未做。
 
 **P3（生态）**
-9. AstrBot 插件形态对接（进程隔离，保持 MIT 仓干净）。
-10. 多租户/多店铺知识库隔离；工单系统对接（如自建 or Chatwoot MIT）。
+- [ ] 9. AstrBot 插件形态对接（进程隔离，保持 MIT 仓干净）。
+- [ ] 10. 多租户/多店铺知识库隔离；工单系统对接（如 Chatwoot MIT）。
 
-## 六、安全部署清单（上线前必查）
+> 说明：原 P1 序号（1/2/3）按实际完成度重排，便于核对；未做项保持原编号可追溯。
 
-- [ ] `ADMIN_TOKEN` 已设置（否则管理面裸奔，启动日志会告警）
-- [ ] CORS 收紧为工作台域名（当前为开发态 `*`，在 `core/main.py` create_app 中改）
-- [ ] 反向代理（nginx/caddy）+ HTTPS
-- [ ] NapCat 小号与主号隔离，频率上限（RATE_LIMIT_MAX）按群规模调低
-- [ ] LLM Key 只从环境变量注入，不进代码/日志/DB（框架已保证）
-- [ ] 商用前复核 NapCat LICENSE 原文与腾讯平台规则
+## 六、安全部署清单（上线前必查，2026-10-23 复核）
+
+- [x] `ADMIN_TOKEN` / `CHANNEL_TOKEN` 双令牌：框架强制门禁（管理面 / 坐席 WS / 渠道摄取 / 网关心跳）；未设置启动告警。部署必须随机化（deploy.sh 自动）。
+- [x] CORS 收紧：`core/main.py` create_app 默认仅放行 `http://localhost:5173`，生产经 `CS_AGENT_CORS_ORIGINS` 显式配置（不再 `*`）。
+- [ ] 反向代理（nginx/caddy）+ HTTPS（部署项）。
+- [ ] NapCat 小号与主号隔离，频率上限（RATE_LIMIT_MAX）按群规模调低（部署项）。
+- [x] LLM Key 不落明文：支持环境变量注入，或落库经 Fernet 加密、接口回显掩码（`core/crypto.py`）。
+- [ ] 商用前复核 NapCat LICENSE 原文与腾讯平台规则（合规红线）。
