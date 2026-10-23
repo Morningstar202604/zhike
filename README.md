@@ -89,13 +89,14 @@ Web 访客 + 坐席工作台 ──/api + /ws───────────�
 | 项 | 结果 |
 |---|---|
 | 后端测试 | 475 passed（含 15 条第三轮回归） |
-| 覆盖率 | core 行 80% / 分支 79% |
+| 覆盖率 | core 行 80% / 分支 79%（第三轮实测 4224 行） |
 | 变异测试 | 15 个关键变异全部被杀死（抽样） |
-| 在线体检 | `scripts/e2e_check.py` 18/18；`scripts/action_e2e.py` 13/13；`scripts/qq_e2e.py` 3/3 |
+| 在线体检 | `scripts/e2e_check.py` 18/18；`scripts/action_e2e.py` 13/13；`scripts/qq_e2e.py` 3/3（假协议端） |
 | 布局审计 | 6 页 × 桌面/手机 = 12 组合全 PASS |
 | 交互点检 | 14 页 / 400+ 可点击元素逐页枚举；21 条关键操作全通过，0 页面错误 |
 | lint / 类型 | ruff E9/F 类 0 错误；`tsc --noEmit` 0 错误 |
 | 依赖漏洞 | `npm audit --omit=dev` 0 漏洞；后端 requirements OSV 扫描 0 条（pypdf 已升到 6.21.1） |
+| 前端单测 | vitest 4 passed（`frontend/src/lib/paging.test.ts`），已进 CI |
 | 首屏 | echarts 主包 gzip 190KB（-66%） |
 
 完整报告（含安全 PoC、竞品矩阵、量化看板、路线图）：[docs/AUDIT-2026-10-22.md](docs/AUDIT-2026-10-22.md)
