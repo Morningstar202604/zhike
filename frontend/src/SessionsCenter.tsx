@@ -7,6 +7,7 @@ import type { AgentMsg, SessionRow } from './types/api'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import { ESCALATE_REASON, SESSION_STATUS, CHANNEL_LABEL, label } from './lib/labels'
 import { EmptyState, PageHead } from './ui'
+import { PAGE_SIZE, pageCount } from './lib/paging'
 import Markdown from './components/Markdown'
 import './pages.css'
 import './pages2.css'
@@ -55,11 +56,15 @@ export default function SessionsCenter() {
   const sessions = useAdminSessions(status || undefined, appliedQuery || undefined, page)
   const close = useCloseSession()
 
-  const PAGE_SIZE = 30
   const total = sessions.data?.total ?? 0
-  const maxPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)
-  // 筛选后总数变少时把页码拉回最后一页，避免停在空白页
-  useEffect(() => { if (page > maxPage) setPage(maxPage) }, [page, maxPage])
+  const maxPage = pageCount(total, PAGE_SIZE) - 1
+  // 筛选后总数变少时把页码拉回最后一页，避免停在空白页。
+  // 必须等本页数据回来再夹紧：新 queryKey 的首次渲染 total 还是 0，
+  // 此时夹紧会把刚翻到的第 2 页立刻打回第 1 页（已复现）。
+  useEffect(() => {
+    if (!sessions.data) return
+    if (page > maxPage) setPage(maxPage)
+  }, [page, maxPage, sessions.data])
 
   const open = async (s: SessionRow) => {
     setActive(s)

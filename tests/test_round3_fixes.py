@@ -79,6 +79,23 @@ def test_executor_default_allowlist_has_no_interpreters():
     assert not ({"python", "python3", "node", "npm", "npx", "powershell", "cmd"} & allow)
 
 
+# ---------------- R4b: 会话分页与翻页稳定性 ----------------
+
+def test_admin_sessions_pagination_returns_disjoint_pages(client):
+    """limit/offset 必须真正切片：第 2 页不能重复第 1 页内容。"""
+    for i in range(35):
+        sid = f"page-{i}"
+        from core import store
+
+        store.create_session(sid, f"v-page-{i}")
+    p1 = client.get("/api/admin/sessions?limit=30&offset=0").json()
+    p2 = client.get("/api/admin/sessions?limit=30&offset=30").json()
+    ids1 = {s["id"] for s in p1["items"]}
+    ids2 = {s["id"] for s in p2["items"]}
+    assert len(ids1) == 30 and len(ids2) >= 5
+    assert not (ids1 & ids2), "两页不能有重叠"
+
+
 # ---------------- R3: 工具开关保元数据 ----------------
 
 def test_tool_toggle_preserves_metadata(client):
