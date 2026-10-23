@@ -112,3 +112,28 @@ CHANNEL_TOKEN=... python gateway/bot.py
 - QQ 机器人号建议单独注册，**不要用有支付/实名关系的主号**。
 - NapCat WebUI token 不要用弱口令；6099 端口不要映射到 `0.0.0.0`。
 - `CHANNEL_TOKEN` 必须设置且与核心一致，否则任何人都能伪造渠道消息。
+
+
+## 8. Windows 原生 NapCat（Docker/WSL 不可用时）
+
+实测背景：本机 Docker Desktop 的 WSL 引擎曾出现 `engine linux/wsl failed to start`
+（`Wsl/Service/CreateInstance/0x800705b4` 超时），容器起不来。此时可直接跑官方
+Windows 版 NapCat，不依赖 Docker，链路与容器版完全一致（OneBot v11 WebSocket）。
+
+```powershell
+# 1) 下载官方发行包（GitHub Releases 页搜 NapCat.Shell.Windows.Node.zip）
+#    https://github.com/NapNeko/NapCatQQ/releases
+# 2) 解压后进入目录，编辑 napcat/config/onebot11.json，启用 WS 服务端：
+#    {"network":{"websocketServers":[{"name":"zhike-ws","enable":true,
+#      "host":"127.0.0.1","port":3001,"messagePostFormat":"array"}]}}
+# 3) 启动（首次扫码；已登录过可加 -q <QQ号> 快速登录）
+.\napcat.bat
+# 4) 二维码在 napcat/cache/qrcode.png，解码链接在控制台日志里
+```
+
+启动成功的标志：日志出现 `WebSocket服务: 127.0.0.1:3001, 已启动`，
+`netstat -ano | findstr :3001` 有监听。之后再启动 `gateway/bot.py` 即可。
+
+> `scripts/qq_login.py` 的 `--container` 只适用于 Docker 版；原生版直接看上面的
+> `qrcode.png` 与日志里的解码链接。WebUI 默认 `http://127.0.0.1:6099/webui?token=...`，
+> token 在启动日志的 `WebUi Token` 一行。
