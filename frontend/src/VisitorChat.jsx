@@ -345,10 +345,13 @@ export default function VisitorChat() {
     const sid = await ensureSession(content)
     onInputChange('')
     setImage('')
-    setMessages((prev) => [
-      ...prev,
-      { role: 'visitor', content: content || '（附图）', refs: [], ts: new Date().toISOString(), image: img || undefined },
-    ])
+    // 重新生成复用上一条访客气泡：再插一条会让界面出现重复提问（后端也没落库）
+    if (!regenerate) {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'visitor', content: content || '（附图）', refs: [], ts: new Date().toISOString(), image: img || undefined },
+      ])
+    }
     // 流式气泡占位（delta 增量填充，done 事件权威替换）
     setMessages((prev) => [...prev, { role: 'agent', content: '', refs: [], ts: new Date().toISOString(), streaming: true }])
     let streamBuf = ''

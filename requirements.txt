@@ -7,7 +7,7 @@ python-multipart~=0.0.9
 nonebot2~=2.5
 nonebot-adapter-onebot~=2.4
 # 文档解析
-pypdf~=5.9
+pypdf~=6.21
 python-docx~=1.2
 # LLM API Key 落库加密（Fernet）
 cryptography~=43.0

@@ -10,7 +10,7 @@ QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-474%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-475%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-80%25%20core-blue)
 
 </div>
@@ -88,13 +88,14 @@ Web 访客 + 坐席工作台 ──/api + /ws───────────�
 
 | 项 | 结果 |
 |---|---|
-| 后端测试 | 474 passed（含 13 条第三轮回归） |
+| 后端测试 | 475 passed（含 15 条第三轮回归） |
 | 覆盖率 | core 行 80% / 分支 79% |
 | 变异测试 | 15 个关键变异全部被杀死（抽样） |
 | 在线体检 | `scripts/e2e_check.py` 18/18；`scripts/action_e2e.py` 13/13；`scripts/qq_e2e.py` 3/3 |
 | 布局审计 | 6 页 × 桌面/手机 = 12 组合全 PASS |
 | 交互点检 | 14 页 / 400+ 可点击元素逐页枚举；21 条关键操作全通过，0 页面错误 |
 | lint / 类型 | ruff E9/F 类 0 错误；`tsc --noEmit` 0 错误 |
+| 依赖漏洞 | `npm audit --omit=dev` 0 漏洞；后端 requirements OSV 扫描 0 条（pypdf 已升到 6.21.1） |
 | 首屏 | echarts 主包 gzip 190KB（-66%） |
 
 完整报告（含安全 PoC、竞品矩阵、量化看板、路线图）：[docs/AUDIT-2026-10-22.md](docs/AUDIT-2026-10-22.md)
@@ -190,7 +191,7 @@ LLM 配好后可用 `POST /api/admin/llm-test`（管理页）实测连通性与�
 ## 测试与验证
 
 ```bash
-python -m pytest tests -q                    # 474 用例：管线/摄取/安全/网关映射/存储/前端兼容/统计/控制台/阶段0/第三轮回归
+python -m pytest tests -q                    # 475 用例：管线/摄取/安全/网关映射/存储/前端兼容/统计/控制台/阶段0/第三轮回归
 python -m pytest tests -q --cov=core --cov-branch   # 覆盖率：行 80% / 分支 79%（core）
 # 在线体检需要与服务端一致的令牌（缺令牌时脚本退出码 2 并给出提示）
 ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010   # 18 项在线能力体检
