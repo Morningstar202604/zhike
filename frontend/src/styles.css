@@ -653,3 +653,7 @@ body {
   background: var(--panel); color: var(--ink); font-family: var(--font);
 }
 .bp-role-on { border-color: var(--brand); background: var(--brand-soft); }
+
+/* ---- 角色卡管理页 ---- */
+.cards-app { max-width: 900px; padding: 20px 24px 40px; }
+.cards-app select.ac-input { appearance: auto; }

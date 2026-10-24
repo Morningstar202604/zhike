@@ -207,6 +207,37 @@ def _v13_self_critique(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_critique_time ON reply_critiques(created_at)")
 
 
+def _v14_character_cards(conn: sqlite3.Connection) -> None:
+    """0014：角色卡系统（SillyTavern chara_card 对标）。
+
+    character_cards：角色卡（名称/人设/开场白/温度/标签），支持 ST V2 JSON 导入；
+    card_bindings：把卡绑到指定群/人（chat_key），绑定后该会话的人设以卡为准合成。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS character_cards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            persona TEXT NOT NULL,
+            greeting TEXT,
+            temperature REAL,
+            tags TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS card_bindings (
+            chat_key TEXT PRIMARY KEY,
+            card_id INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 MIGRATIONS: list[Migration] = [
     (1, "基线：标记已有结构", _v1_baseline),
     (2, "审计链 actor 索引", _v2_audit_index),
@@ -221,6 +252,7 @@ MIGRATIONS: list[Migration] = [
     (11, "标注回复表（Dify annotations 对标）", _v11_annotations),
     (12, "坐席内部备注与 SLA 首响计时", _v12_notes_and_sla),
     (13, "回复自检表（反思修正机制）", _v13_self_critique),
+    (14, "角色卡与按会话绑定", _v14_character_cards),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

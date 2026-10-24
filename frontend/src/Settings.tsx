@@ -20,10 +20,12 @@ import { isAuthError } from './lib/queries'
 import { TOOL_LABEL } from './lib/labels'
 import TokenGate from './components/TokenGate'
 import { useFeedback } from './components/Feedback'
+import CardsPanel from './CardsPanel'
 import './pages2.css'
 
 const TABS = [
   { key: 'params', icon: <SlidersHorizontal size={15} />, label: '能力参数', sub: '模型 / 检索 / 上下文 / 记忆 / 引擎' },
+  { key: 'cards', icon: <Brain size={15} />, label: '角色卡', sub: 'SillyTavern 卡导入 / 按群绑定人格' },
   { key: 'tools', icon: <Wrench size={15} />, label: '工具注册表', sub: '可自定义 Agent 能执行的动作' },
   { key: 'guardrail', icon: <ShieldAlert size={15} />, label: '注入规则', sub: '护栏检测规则管理' },
   { key: 'kb', icon: <BookOpen size={15} />, label: '知识库', sub: 'RAG 语料增删改' },
@@ -79,6 +81,7 @@ export default function Settings() {
         </div>
 
         {tab === 'params' && <ParamsPanel cfg={cfg} upd={upd} />}
+        {tab === 'cards' && <CardsPanel />}
         {tab === 'tools' && <ToolsPanel />}
         {tab === 'guardrail' && <GuardrailPanel />}
         {tab === 'kb' && <KbPanel />}

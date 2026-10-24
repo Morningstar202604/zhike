@@ -158,6 +158,39 @@ matcher = on_message(rule=to_me(), priority=5, block=False)
 # ---- 表情包收藏器（AstrBot「梗图学习」对标）：监听全部群消息，只收集绝不回复 ----
 _collector_matcher = on_message(priority=1, block=False)
 
+# ---- 群环境感知：氛围缓冲（最近群聊）+ 群名缓存（QQ 群上下文注入）----
+_AMBIENT: dict[str, collections.deque] = {}
+_AMBIENT_MAX = 12
+_GROUP_NAMES: dict[str, str] = {}
+_SELF_ID: str = ""
+
+
+def _ambient_push(group: str, line: str) -> None:
+    buf = _AMBIENT.setdefault(group, collections.deque(maxlen=_AMBIENT_MAX))
+    buf.append(line)
+
+
+def _ambient_snapshot(group: str) -> list[str]:
+    buf = _AMBIENT.get(group)
+    if not buf:
+        return []
+    now = time.time()
+    return [ln for ln in buf if now - ln.get("ts", 0) < 600][-8:]
+
+
+async def _group_name(bot, group_id: str) -> str:
+    """群名（带缓存）。任何失败返回空串，绝不阻塞回复主链路。"""
+    if group_id in _GROUP_NAMES:
+        return _GROUP_NAMES[group_id]
+    try:
+        info = await bot.call_api("get_group_info", group_id=int(group_id) if group_id.isdigit() else group_id)
+        name = str((info or {}).get("group_name", "") or "")
+        _GROUP_NAMES[group_id] = name
+        return name
+    except Exception:
+        return ""
+
+
 
 async def _download_emote(url: str, group: str, summary: str) -> None:
     """下载群友动画表情到本地（限 800KB、每小时 30 张、并发 2）。"""
@@ -187,9 +220,18 @@ async def _download_emote(url: str, group: str, summary: str) -> None:
 
 @_collector_matcher.handle()
 async def _collect(event: MessageEvent):
-    """扫群消息里的第三方表情：mface 直接记参数回放；动画表情图下载缓存。"""
+    """扫群消息：氛围缓冲 + 第三方表情收藏（mface 回放 / 梗图下载缓存）。绝不回复。"""
     try:
         group = str(getattr(event, "group_id", "") or "")
+        nick = (event.sender.nickname if event.sender else "") or ""
+        text = event.get_plaintext() or ""
+        if str(event.user_id) == str(event.self_id):
+            return  # 机器人自己的回显不入氛围
+        global _SELF_ID
+        _SELF_ID = str(event.self_id)
+        if group and (text.strip() or "CQ:image" in str(event.message)):
+            _ambient_push(group, {"nick": nick[:12], "text": text[:60],
+                                  "has_img": "CQ:image" in str(event.message), "ts": time.time()})
         for seg in event.message:
             if seg.type == "mface":
                 summary = str(seg.data.get("summary", "") or "")
@@ -528,6 +570,14 @@ async def handle(event: MessageEvent):
         "display_name": msg.display_name,
         "message_id": msg.message_id,
     }
+    # 群环境感知：@ 之前群里在聊什么（氛围）+ 群名（场景）
+    if msg.is_group:
+        ambient_lines = [
+            f"{ln.get('nick','?')}: {ln.get('text','')}" + ("［表情］" if ln.get("has_img") else "")
+            for ln in _ambient_snapshot(msg.chat_id)
+        ]
+        payload["ambient"] = ambient_lines
+        payload["group_name"] = await _group_name(bot, msg.chat_id) if bot is not None else ""
     if msg.images:
         image_b64 = await _fetch_image_b64(msg.images[0])
         if image_b64:
