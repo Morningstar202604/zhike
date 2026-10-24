@@ -86,3 +86,22 @@ def test_throttle_per_chat_isolated():
     th.record("a")
     assert th.wait_seconds("a") == -1.0
     assert th.wait_seconds("b") == 0.0
+
+
+def test_strip_markdown_bold_and_headers():
+    from gateway.humanize import strip_markdown
+    assert strip_markdown("这是**系统老化**的体现") == "这是系统老化的体现"
+    assert strip_markdown("### 标题\n正文") == "标题\n正文"
+    assert strip_markdown("`code` 和 ~~删除~~") == "code 和 删除"
+    assert strip_markdown("[链接文字](https://a.com/b)") == "链接文字 https://a.com/b"
+
+
+def test_strip_markdown_preserves_faces_and_lists():
+    from gateway.humanize import strip_markdown
+    assert strip_markdown("[得意]") == "[得意]"                       # 表情标记不动
+    out = strip_markdown("- 第一条\n- 第二条")
+    assert out.startswith("• 第一条")
+    # 整链路：markdown + 表情一次到位
+    from gateway.humanize import render
+    out = render("他真是**个老登** [滑稽]")
+    assert "星" not in out and "*" not in out and "[CQ:face,id=178]" in out

@@ -41,6 +41,29 @@ _IMG_RE = re.compile(r"[\[（(【]\s*(?:图片|图)\s*[:：]\s*(https?://[^\]）
 # 裸格式：LLM 天然爱写 [得意] [滑稽]——只认 FACES 里的精确名字，白名单外一律不动
 _BARE_FACE_RE = re.compile(r"\[([^\[\]:]{1,4})\]")
 
+# markdown 残留净化：QQ 不渲染 markdown，星号井号直出非常傻
+_MD_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\*\*\*(.+?)\*\*\*"), r"\1"),
+    (re.compile(r"\*\*(.+?)\*\*"), r"\1"),
+    (re.compile(r"__(.+?)__"), r"\1"),
+    (re.compile(r"~~(.+?)~~"), r"\1"),
+    (re.compile(r"(?<!\w)\*(?!\s)([^*\n]+?)\*(?!\w)"), r"\1"),   # *斜体*
+    (re.compile(r"`([^`\n]+?)`"), r"\1"),                        # 行内代码
+    (re.compile(r"^\s{0,3}#{1,6}\s+", re.M), ""),                # 行首标题
+    (re.compile(r"^\s{0,3}>\s?", re.M), ""),                     # 引用符
+    (re.compile(r"\[([^\]\[]{1,40})\]\((https?://[^)\s]{4,})\)"), r"\1 \2"),  # 链接 → 文本+直链
+    (re.compile(r"^\s*[-*]\s+", re.M), "• "),                    # 列表符 → 圆点
+    (re.compile(r"\n{3,}"), "\n\n"),
+]
+
+
+def strip_markdown(text: str) -> str:
+    """剥掉 markdown 格式符号（QQ 纯文本环境），保留纯内容。"""
+    out = text or ""
+    for pat, rep in _MD_PATTERNS:
+        out = pat.sub(rep, out)
+    return out
+
 
 def render_faces(text: str) -> str:
     """[表情:名] / (表情:名) / [名] → [CQ:face,id=N]；未知名字整个删除（绝不把标记原文发出去）。
@@ -72,8 +95,8 @@ def render_images(text: str) -> str:
 
 
 def render(text: str) -> str:
-    """统一出口：先图后表情，网关发送前调用。"""
-    return render_images(render_faces(text))
+    """统一出口：剥 markdown → 表情/图片翻译。网关发送前调用。"""
+    return render_images(render_faces(strip_markdown(text)))
 
 
 # ---------------------------------------------------------------------------
