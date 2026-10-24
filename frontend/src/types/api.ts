@@ -10,7 +10,7 @@ export interface AgentConfig {
     key_source?: string
     fallback_model?: string
     /** 已保存的提供商档案（AstrBot 对标）：切换时写入 base_url/model */
-    providers?: { name: string; base_url: string; model: string }[]
+    providers?: { name: string; base_url: string; model: string; api_key?: string; has_key?: boolean }[]
   }
   retrieval: { kb_top_k: number; min_overlap: number; embedding?: 'auto' | 'off' }
   context: {

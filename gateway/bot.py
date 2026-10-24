@@ -24,8 +24,17 @@ from nonebot.rule import to_me
 
 from gateway.adapters import OneBot11Adapter, bus, registry
 from gateway.adapters.bus import EV_ACTION_DONE, EV_MESSAGE_IN, EV_REPLY_OUT
+from gateway.humanize import GroupThrottle, render, send_delay
 
 logger = logging.getLogger("gateway")
+
+
+def _env_f(name: str, default: float) -> float:
+    try:
+        v = float(os.environ.get(name, "") or default)
+        return v if v >= 0 else default
+    except ValueError:
+        return default
 
 # 适配器实例：整个网关生命周期复用（重连时 bind 新 bot）
 adapter = OneBot11Adapter()
@@ -127,6 +136,13 @@ _PER_CHAT_LOCKS: dict[str, asyncio.Lock] = {}
 _SEEN_IDS: "collections.OrderedDict[str, float]" = collections.OrderedDict()
 _SEEN_MAX = 2000
 _sem = asyncio.Semaphore(MAX_CONCURRENT)
+
+# 群聊防风控节流：随机化最小间隔 + 每小时上限，超限静默丢回复——
+# 群里一次 @ 一条条秒回、刷屏式回答，是最容易被检测出自动化的行为。
+_GROUP_THROTTLE = GroupThrottle(
+    min_gap=_env_f("GATEWAY_GROUP_MIN_GAP", 10.0),
+    hourly_cap=int(_env_f("GATEWAY_GROUP_HOURLY_CAP", 18)),
+)
 
 matcher = on_message(rule=to_me(), priority=5, block=False)
 
@@ -406,6 +422,9 @@ async def _post_ingest(payload: dict) -> str:
                 if resp.status_code >= 500:
                     raise httpx.HTTPStatusError(
                         f"core {resp.status_code}", request=resp.request, response=resp)
+                if resp.status_code == 429:
+                    # 核心限流：静默退避。回错误话术也占一次发送频率，不如闭嘴。
+                    return {"mode": "rate_limited", "text": ""}
                 resp.raise_for_status()
                 return resp.json()["reply"]
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout,
@@ -457,6 +476,7 @@ async def handle(event: MessageEvent):
             payload["image_b64"] = image_b64
 
     started = time.time()
+    reply: dict | None = None
     # 同一会话串行 + 全局并发上限：群里刷屏时既不乱序也不打爆核心
     async with _sem, _chat_lock(f"{msg.channel}:{msg.chat_id}"):
         try:
@@ -473,16 +493,39 @@ async def handle(event: MessageEvent):
                 "ok": False, "error": f"{type(e).__name__}",
             })
 
-        # 白名单外的群/空回复：静默，不发消息（mode=not_allowed 来自渠道准入）
-        if (reply or {}).get("mode") == "not_allowed" or not reply_text.strip():
+        # 白名单外的群/核心限流/空回复：静默，不发消息
+        mode = (reply or {}).get("mode") or ""
+        if mode in ("not_allowed", "rate_limited") or not reply_text.strip():
             return
 
-        result = await adapter.send(msg, reply_text)
+        # 表情包/图片标记 → OneBot CQ 码（未知标记直接删除，绝不把原文发出去）
+        out_text = render(reply_text)
+        if not out_text.strip():
+            return
+
+        # 拟人化节奏：打字延迟 +（群聊）随机间隔与每小时上限——像人，不像脚本
+        if msg.is_group:
+            wait = _GROUP_THROTTLE.wait_seconds(msg.chat_id)
+            if wait < 0:
+                logger.info("group %s hit hourly cap, reply dropped silently", msg.chat_id)
+                _CMD_STATS["handled"] += 1
+                await bus.publish(EV_REPLY_OUT, {
+                    "channel": msg.channel, "chat_id": msg.chat_id, "ok": False,
+                    "skipped": "hourly_cap",
+                })
+                return
+            if wait > 0:
+                await asyncio.sleep(wait)
+        await asyncio.sleep(send_delay(len(out_text), msg.is_group))
+
+        result = await adapter.send(msg, out_text)
+        if msg.is_group:
+            _GROUP_THROTTLE.record(msg.chat_id)
         if not result.ok:
             logger.warning("reply send failed: %s", result.error)
             # 发送失败重试一次（协议端偶发超时）；仍失败则只记录，不再回灌错误话术
             await asyncio.sleep(0.5)
-            result = await adapter.send(msg, reply_text)
+            result = await adapter.send(msg, out_text)
     _CMD_STATS["handled"] += 1
     await bus.publish(EV_REPLY_OUT, {
         "channel": msg.channel, "chat_id": msg.chat_id, "ok": result.ok,

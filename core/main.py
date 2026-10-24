@@ -979,6 +979,10 @@ def create_app() -> FastAPI:
         key = cfg["llm"].get("api_key") or ""
         view = _copy.deepcopy(cfg)
         view["llm"]["api_key"] = ("••••" + key[-4:]) if key else ""
+        for p in view["llm"].get("providers") or []:
+            pk = (p.get("api_key") or "") if isinstance(p, dict) else ""
+            p["api_key"] = ("••••" + pk[-4:]) if pk else ""
+            p["has_key"] = bool(pk)
         return {"config": view}
 
     @app.put("/api/config", dependencies=[Depends(require_admin)])
@@ -999,6 +1003,10 @@ def create_app() -> FastAPI:
         key = cfg["llm"].get("api_key") or ""
         view = _copy.deepcopy(cfg)
         view["llm"]["api_key"] = ("••••" + key[-4:]) if key else ""
+        for p in view["llm"].get("providers") or []:
+            pk = (p.get("api_key") or "") if isinstance(p, dict) else ""
+            p["api_key"] = ("••••" + pk[-4:]) if pk else ""
+            p["has_key"] = bool(pk)
         return {"config": view}
 
     def _validate_tool_args(args_json: dict) -> None:
