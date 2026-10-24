@@ -21,6 +21,10 @@ class ChannelMessage:
     image_b64: str = ""
     # 本次请求是否启用联网搜索（由前端/渠道指定，默认关闭）
     web_search: bool = False
+    # 群聊氛围：@ 之前群里最近几条闲聊（网关收集），让机器人知道大家在聊什么
+    ambient: list[str] = field(default_factory=list)
+    # 群名（网关 get_group_info 提供），注入场景感知
+    group_name: str = ""
 
 
 @dataclass
@@ -314,6 +318,17 @@ def _wants_facts(query: str) -> bool:
 async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
     """run()/run_stream() 公共前置：截断、上下文、护栏/转人工/图片规则拦截。拦截时直接返回 AgentReply。"""
     cfg = config.get_config()
+    # 角色卡（SillyTavern chara_card 对标）：必须在 build_context 之前合成——
+    # ctx["persona"] 由 cfg["context"]["persona"] 派生，晚了就定型了。
+    try:
+        chat_key = f"{message.channel_type}:{message.group_id or message.channel_user_id}"
+        card = store.card_for_chat(chat_key)
+    except Exception:
+        card = None
+    if card and card.get("persona"):
+        cfg["context"] = {**cfg.get("context", {}), "persona": str(card["persona"])}
+        if card.get("temperature") is not None:
+            cfg["llm"] = {**cfg.get("llm", {}), "temperature": float(card["temperature"])}
     query = (message.text or "").strip()
     max_len = cfg.get("escalation", {}).get("max_message_len", 1000)
     if len(query) > max_len:
@@ -345,6 +360,14 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
         ctx["self_fix"] = _self_fix_hint()
     except Exception:  # 自检绝不影响主链路
         ctx["self_fix"] = ""
+    # 群聊氛围与群名：@ 之前大家在聊什么、这是哪个群——场景感知
+    if getattr(message, "ambient", None):
+        lines = [ln for ln in message.ambient if ln and ln.strip()][-8:]
+        if lines:
+            block = "群聊氛围（@ 你之前群里最近在聊的，供你接梗用，别逐条回复）：\n" + "\n".join(lines)
+            ctx["ambient_block"] = block[:1200]
+    if getattr(message, "group_name", ""):
+        ctx["group_name"] = message.group_name
 
     if cfg.get("guardrail", {}).get("injection_block", True):
         inj, inj_action = guardrail.detect_injection(query)

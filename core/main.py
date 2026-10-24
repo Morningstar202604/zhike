@@ -356,6 +356,9 @@ def create_app() -> FastAPI:
         text: str
         display_name: str = ""
         image_b64: str | None = None
+        # 群聊氛围：@ 之前群里最近几条闲聊（网关收集）；群名由网关 get_group_info 提供
+        ambient: list[str] | None = None
+        group_name: str = ""
 
     # ---- 入参体积护栏 ----
     def _check_payload(text: str | None, image_b64: str | None) -> None:
@@ -448,7 +451,10 @@ def create_app() -> FastAPI:
         ev.info(f"visitor message routed to operator session={sid[:8]}")
 
     async def _handle_inbound(sid: str, text: str, image: str | None, visitor_key: str,
-                              web_search: bool = False):
+                              web_search: bool = False,
+                              ambient: list[str] | None = None, group_name: str = "",
+                              channel_type: str = "", channel_user_id: str = "",
+                              group_id: str | None = None):
         _preflight(sid, text, visitor_key)
         ev.info(f"ingest visitor={visitor_key} text={text[:60]}")
         # 管线只需要最近若干轮：全量读取会让长会话的上下文构建从 18ms 涨到 37ms。
@@ -457,7 +463,11 @@ def create_app() -> FastAPI:
         visitor_msg_id = store.add_message(sid, "visitor", text or "（附图）")
         try:
             reply = await pipeline.run(
-                pipeline.ChannelMessage(text=text, image_b64=image or "", web_search=web_search),
+                pipeline.ChannelMessage(text=text, image_b64=image or "", web_search=web_search,
+                                        ambient=ambient or [], group_name=group_name,
+                                        channel_type=channel_type or "webchat",
+                                        channel_user_id=channel_user_id or visitor_key,
+                                        group_id=group_id),
                 history,
                 visitor_key,
             )
@@ -550,7 +560,10 @@ def create_app() -> FastAPI:
                           "tool_result": None, "thought": ""},
             }
         reply, msg_id, ticket_id, _visitor_msg_id = await _handle_inbound(
-            sid, text, body.image_b64, identity)
+            sid, text, body.image_b64, identity,
+            ambient=body.ambient or [], group_name=body.group_name or "",
+            channel_type=body.channel_type, channel_user_id=body.channel_user_id,
+            group_id=body.group_id)
         return {
             "session_id": sid,
             "message_id": msg_id,
@@ -641,6 +654,60 @@ def create_app() -> FastAPI:
         note = store.notes_add(sid, "operator", content)
         store.append_audit("operator", "session.note_added", {"session_id": sid})
         return {"note": note}
+
+    # ---- 角色卡（SillyTavern chara_card 对标）：卡片 CRUD + ST V2 导入 + 按会话绑定 ----
+
+    @app.get("/api/cards", dependencies=[Depends(require_admin)])
+    def list_cards():
+        return {"cards": store.cards_list(), "bindings": store.card_bindings_list()}
+
+    @app.post("/api/cards", dependencies=[Depends(require_admin)])
+    def save_card(body: dict):
+        card = body.get("card") or {}
+        # SillyTavern V2 卡自动识别（spec: chara_card_v2）→ 转换为知客卡
+        if card.get("spec") == "chara_card_v2" or (card.get("data") or {}).get("name"):
+            d = card.get("data") or card
+            persona = "\n\n".join(
+                x for x in [str(d.get("description", "")).strip(),
+                            (f"【性格】{d['personality']}" if d.get("personality") else ""),
+                            (f"【场景】{d['scenario']}" if d.get("scenario") else ""),
+                            (f"【对话示例】\n{d['mes_example']}" if d.get("mes_example") else "")]
+                if x
+            ) or f"你是{d.get('name', '角色')}。"
+            card = {"name": str(d.get("name", "未命名卡")).strip(),
+                    "persona": persona,
+                    "greeting": str(d.get("first_mes", "")).strip() or None,
+                    "tags": ["sillytavern"]}
+        name = str(card.get("name") or "").strip()
+        persona = str(card.get("persona") or "").strip()
+        if not name or not persona:
+            raise HTTPException(400, "name 与 persona 必填")
+        if len(persona) > 8000:
+            raise HTTPException(400, "persona 过长（上限 8000 字）")
+        saved = store.card_save(name, persona,
+                                greeting=card.get("greeting"),
+                                temperature=card.get("temperature"),
+                                tags=card.get("tags") or [])
+        return {"card": saved}
+
+    @app.delete("/api/cards/{cid}", dependencies=[Depends(require_admin)])
+    def delete_card(cid: int):
+        if not store.card_delete(cid):
+            raise HTTPException(404, "角色卡不存在")
+        return {"ok": True}
+
+    @app.post("/api/cards/bind", dependencies=[Depends(require_admin)])
+    def bind_card(body: dict):
+        chat_key = str(body.get("chat_key") or "").strip()
+        if not chat_key:
+            raise HTTPException(400, "chat_key 必填（如 qq_group:12345 / qq:67890 / web:xxx）")
+        cid = body.get("card_id")
+        if cid is not None:
+            if not store.card_get(int(cid)):
+                raise HTTPException(404, "角色卡不存在")
+            cid = int(cid)
+        store.card_bind(chat_key, cid)
+        return {"ok": True, "chat_key": chat_key, "card_id": cid}
 
     @app.post("/api/sessions")
     def new_session(body: NewSession, request: Request):

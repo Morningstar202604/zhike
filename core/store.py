@@ -1824,3 +1824,105 @@ def critique_summary(window: int = 60, threshold: float = 0.25) -> list[str]:
     ranked = sorted(counter.items(), key=lambda kv: -kv[1])
     return [f"{issue}（最近{total}条里出现{hits}次）"
             for issue, hits in ranked if hits / total >= threshold]
+
+
+# ---- 角色卡（SillyTavern chara_card 对标）----
+
+
+def _card_row(r) -> dict:
+    d = dict(r)
+    d["tags"] = [t for t in (d.get("tags") or "").split(",") if t]
+    return d
+
+
+def cards_list() -> list[dict]:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM character_cards ORDER BY id DESC").fetchall()
+    return [_card_row(r) for r in rows]
+
+
+def card_get(cid: int) -> dict | None:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        r = conn.execute("SELECT * FROM character_cards WHERE id = ?", (cid,)).fetchone()
+    return _card_row(r) if r else None
+
+
+def card_get_by_name(name: str) -> dict | None:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        r = conn.execute("SELECT * FROM character_cards WHERE name = ?", (name,)).fetchone()
+    return _card_row(r) if r else None
+
+
+def card_save(name: str, persona: str, greeting: str | None = None,
+              temperature: float | None = None, tags: list[str] | None = None,
+              cid: int | None = None) -> dict:
+    """创建或更新角色卡（cid 为空按 name upsert）。"""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    tags_str = ",".join(t.strip() for t in (tags or []) if t.strip())
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        if cid is not None:
+            conn.execute(
+                "UPDATE character_cards SET name=?, persona=?, greeting=?, temperature=?, tags=?, updated_at=? WHERE id=?",
+                (name, persona, greeting, temperature, tags_str, now, cid))
+            rid = cid
+        else:
+            existing = conn.execute("SELECT id FROM character_cards WHERE name=?", (name,)).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE character_cards SET persona=?, greeting=?, temperature=?, tags=?, updated_at=? WHERE id=?",
+                    (persona, greeting, temperature, tags_str, now, existing["id"]))
+                rid = existing["id"]
+            else:
+                cur = conn.execute(
+                    "INSERT INTO character_cards (name, persona, greeting, temperature, tags, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                    (name, persona, greeting, temperature, tags_str, now, now))
+                rid = cur.lastrowid
+        row = conn.execute("SELECT * FROM character_cards WHERE id=?", (rid,)).fetchone()
+    return _card_row(row)
+
+
+def card_delete(cid: int) -> bool:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM card_bindings WHERE card_id = ?", (cid,))
+        cur = conn.execute("DELETE FROM character_cards WHERE id = ?", (cid,))
+    return cur.rowcount > 0
+
+
+def card_bind(chat_key: str, cid: int | None) -> bool:
+    """绑定/解绑（cid=None 解绑）。"""
+    from datetime import datetime, timezone
+
+    with get_conn() as conn:
+        if cid is None:
+            cur = conn.execute("DELETE FROM card_bindings WHERE chat_key = ?", (chat_key,))
+            return cur.rowcount > 0
+        conn.execute(
+            "INSERT INTO card_bindings (chat_key, card_id, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(chat_key) DO UPDATE SET card_id=excluded.card_id, updated_at=excluded.updated_at",
+            (chat_key, cid, datetime.now(timezone.utc).isoformat()))
+    return True
+
+
+def card_bindings_list() -> list[dict]:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT b.chat_key, b.card_id, c.name FROM card_bindings b "
+            "LEFT JOIN character_cards c ON c.id = b.card_id ORDER BY b.chat_key").fetchall()
+    return [dict(r) for r in rows]
+
+
+def card_for_chat(chat_key: str) -> dict | None:
+    """取某会话（群/人）绑定的角色卡；未绑定返回 None。"""
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        r = conn.execute(
+            "SELECT c.* FROM card_bindings b JOIN character_cards c ON c.id = b.card_id "
+            "WHERE b.chat_key = ?", (chat_key,)).fetchone()
+    return _card_row(r) if r else None

@@ -86,7 +86,9 @@ def bigram_text(text: str) -> str:
 
 
 # ---------- 向量后端（BGE-zh，成熟中文检索模型，CPU 可跑） ----------
-BGE_MODEL = "BAAI/bge-small-zh-v1.5"
+BGE_MODEL = os.environ.get("USER_EMB_MODEL", "BAAI/bge-small-zh-v1.5")
+# bge-small-zh 实际输出 312 维（hidden=312 CLS pooling）；旧代码写死 512 导致 vec 插入必然失败
+EMBED_DIM = int(os.environ.get("USER_EMB_DIM", "312"))
 _COS_FLOOR, _COS_CEIL = 0.55, 0.90
 _EMB_STATE: dict = {"model": None, "failed": False}
 _BGE_QUERY_PREFIX = "为这个句子生成表示以检索相关文章："
@@ -152,7 +154,7 @@ def _ensure_conn() -> sqlite3.Connection | None:
             conn.enable_load_extension(True)
             sqlite_vec.load(conn)
             conn.enable_load_extension(False)
-            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS kb_vec USING vec0(embedding float[512])")
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS kb_vec USING vec0(embedding float[{dim}])".format(dim=EMBED_DIM))
             _INDEX_STATE["vec"] = True
         except Exception:
             _INDEX_STATE["vec"] = False

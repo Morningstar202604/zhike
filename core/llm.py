@@ -176,6 +176,10 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
         parts.append("访客相关记忆：\n" + ctx["memory_block"])
     if ctx.get("web_block"):
         parts.append("联网搜索结果（仅供参考，引用时说明来源）：\n" + ctx["web_block"])
+    if ctx.get("ambient_block"):
+        parts.append(str(ctx["ambient_block"]))
+    if ctx.get("group_name"):
+        parts.append(f"当前场景：QQ 群「{ctx['group_name']}」。")
     if ctx.get("self_fix"):
         parts.append(str(ctx["self_fix"]))
     if ctx["summary"]:
