@@ -298,6 +298,19 @@ def _maybe_opt_out_memory(query: str, visitor_id: str) -> str | None:
     return None
 
 
+_FACT_RE = __import__("re").compile(
+    r"(什么|为什么|怎么|如何|是谁|多少|几点|最新|今天|昨天|明天|新闻|价格|多少钱|"
+    r"发布|上线|版本|哪一年|介绍一下|讲讲|了解|知道|查|攻略|教程|对比|评测|新闻|"
+    r"who|what|when|where|why|how|latest|news|price)", __import__("re").IGNORECASE,
+)
+
+
+def _wants_facts(query: str) -> bool:
+    """轻启发式：判断一条渠道消息是否像在寻求事实/资讯（值得自动联网）。"""
+    q = (query or "").strip()
+    return len(q) >= 4 and bool(_FACT_RE.search(q))
+
+
 async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: str):
     """run()/run_stream() 公共前置：截断、上下文、护栏/转人工/图片规则拦截。拦截时直接返回 AgentReply。"""
     cfg = config.get_config()
@@ -318,7 +331,15 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
             opt_out=True,
         )
 
-    ctx = await build_context_async(query, history, cfg, visitor_key, message.web_search)
+    # 联网自启（chatgpt-on-wechat「不懂就查」对标）：渠道消息像在寻求事实/资讯
+    # 且搜索服务可用时自动开搜，用户无需手动开开关。失败静默，不影响主流程。
+    web = message.web_search
+    if not web:
+        from core import websearch
+        if websearch.available() and _wants_facts(query):
+            web = True
+
+    ctx = await build_context_async(query, history, cfg, visitor_key, web)
 
     if cfg.get("guardrail", {}).get("injection_block", True):
         inj, inj_action = guardrail.detect_injection(query)

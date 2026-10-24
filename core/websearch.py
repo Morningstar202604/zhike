@@ -39,7 +39,7 @@ def provider() -> str:
         return "serper"
     if os.environ.get("SEARXNG_URL"):
         return "searxng"
-    return ""
+    return ""  # 严格模式：未配置即无搜索。要启用免 Key 通道，显式设 SEARCH_PROVIDER=bing
 
 
 def available() -> bool:
@@ -121,10 +121,50 @@ async def _search_serper(query: str, top_k: int) -> list[dict]:
     ]
 
 
+async def _search_bing(query: str, top_k: int) -> list[dict]:
+    """必应（cn.bing.com）HTML 抓取：免 Key 兜底通道（国内直连可达）。
+
+    解析 b_algo 结果块；结构变了就抛 SearchError，上层静默降级。
+    """
+    client = get_client("https://cn.bing.com", timeout=20)
+    resp = await client.get(
+        "https://cn.bing.com/search",
+        params={"q": query, "count": str(top_k * 2), "mkt": "zh-CN"},
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        },
+        timeout=20,
+        follow_redirects=True,
+    )
+    resp.raise_for_status()
+    html_text = resp.text
+    out: list[dict] = []
+    # b_algo 块：标题链接 + 摘要，正则抓取（不引入 bs4 依赖）
+    for chunk in re.findall(r'<li class="b_algo".*?</li>', html_text, re.S)[: top_k * 2]:
+        m = re.search(r'<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', chunk, re.S)
+        if not m:
+            continue
+        url = m.group(1)
+        title = re.sub(r"<[^>]+>", "", m.group(2))
+        sm = re.search(r'<p[^>]*>(.*?)</p>', chunk, re.S)
+        snippet = re.sub(r"<[^>]+>", "", sm.group(1)) if sm else ""
+        if not title.strip():
+            continue
+        out.append({"title": _clean(title, 120), "url": url, "snippet": _clean(snippet)})
+        if len(out) >= top_k:
+            break
+    if not out:
+        raise SearchError("必应返回未解析到结果")
+    return out
+
+
 _BACKENDS = {
     "searxng": _search_searxng,
     "tavily": _search_tavily,
     "serper": _search_serper,
+    "bing": _search_bing,
 }
 
 
