@@ -1782,3 +1782,45 @@ def notes_list(session_id: str) -> list[dict]:
             (session_id,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---- 回复自检（反思修正机制）----
+
+
+def critique_add(session_id: str, length: int, issues: list[str]) -> None:
+    from datetime import datetime, timezone
+
+    if not issues:
+        return
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO reply_critiques (session_id, length, issues, created_at) VALUES (?, ?, ?, ?)",
+            (session_id, length, json.dumps(issues, ensure_ascii=False),
+             datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def critique_summary(window: int = 60, threshold: float = 0.25) -> list[str]:
+    """最近 window 条自检里出现率超 threshold 的毛病，按频率降序。"""
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT issues FROM reply_critiques ORDER BY id DESC LIMIT ?", (window,)
+        ).fetchall()
+    if not rows:
+        return []
+    counter: dict[str, int] = {}
+    total = 0
+    for r in rows:
+        try:
+            issues = json.loads(r["issues"])
+        except Exception:
+            continue
+        total += 1
+        for it in issues or []:
+            counter[it] = counter.get(it, 0) + 1
+    if not total:
+        return []
+    ranked = sorted(counter.items(), key=lambda kv: -kv[1])
+    return [f"{issue}（最近{total}条里出现{hits}次）"
+            for issue, hits in ranked if hits / total >= threshold]

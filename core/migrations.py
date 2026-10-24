@@ -187,6 +187,26 @@ def _v12_notes_and_sla(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sessions ADD COLUMN first_response_seconds INTEGER")
 
 
+def _v13_self_critique(conn: sqlite3.Connection) -> None:
+    """0013：回复自检表（反思修正机制）。
+
+    每条 LLM 回复落库前跑规则自检（超长/markdown 残留/复读/分段过多/表情滥用），
+    高频毛病动态注入后续 system prompt——机器人从自己的错误里自我修正。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reply_critiques (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            length INTEGER,
+            issues TEXT,
+            created_at TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_critique_time ON reply_critiques(created_at)")
+
+
 MIGRATIONS: list[Migration] = [
     (1, "基线：标记已有结构", _v1_baseline),
     (2, "审计链 actor 索引", _v2_audit_index),
@@ -200,6 +220,7 @@ MIGRATIONS: list[Migration] = [
     (10, "同一条消息反馈唯一", _v10_feedback_unique),
     (11, "标注回复表（Dify annotations 对标）", _v11_annotations),
     (12, "坐席内部备注与 SLA 首响计时", _v12_notes_and_sla),
+    (13, "回复自检表（反思修正机制）", _v13_self_critique),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

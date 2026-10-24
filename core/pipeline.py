@@ -340,6 +340,11 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
             web = True
 
     ctx = await build_context_async(query, history, cfg, visitor_key, web)
+    # 反思修正：把"最近高频毛病"作为自我修正提醒注入上下文（带缓存，60s 内不重复查库）
+    try:
+        ctx["self_fix"] = _self_fix_hint()
+    except Exception:  # 自检绝不影响主链路
+        ctx["self_fix"] = ""
 
     if cfg.get("guardrail", {}).get("injection_block", True):
         inj, inj_action = guardrail.detect_injection(query)
@@ -380,6 +385,62 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
     return cfg, query, ctx
 
 
+# ---- 反思修正：回复自检 + 高频毛病动态注入（从自己的错误里进化）----
+
+
+def _critique_reply(text: str, history: list[dict]) -> list[str]:
+    """规则自检一条回复，返回毛病清单（免费、毫秒级、零 LLM 成本）。"""
+    text = text or ""
+    issues: list[str] = []
+    if len(text) > 240:
+        issues.append("回复过长——群聊闲聊三四句就该说完，别写小作文")
+    if "**" in text or "##" in text or "`" in text:
+        issues.append("回复里出现了 markdown 符号（QQ 是纯文字环境）")
+    if text.count("\n\n") >= 2:
+        issues.append("分段太多——聊天不是写作文")
+    if len(re.findall(r"\[[^\[\]]{1,6}\]", text)) > 3:
+        issues.append("表情标记堆太多——一次最多一两个")
+    # 复读检测：与最近一条 agent/坐席回复开头雷同
+    for m in reversed(history or []):
+        if m.get("role") in ("agent", "operator"):
+            prev = (m.get("content") or "").strip()
+            if prev and text.strip()[:24] == prev[:24] and len(text) > 30:
+                issues.append("开头和上一条回答一模一样——换个说法，别复读")
+            break
+    return issues
+
+
+_SELF_FIX_CACHE: tuple[float, str] = (0.0, "")
+
+
+def _self_fix_hint() -> str:
+    """高频毛病 → system prompt 自我修正提醒（60s 缓存）。"""
+    import time as _time
+
+    now = _time.monotonic()
+    if now - _SELF_FIX_CACHE[0] < 60:
+        return _SELF_FIX_CACHE[1]
+    hint = ""
+    try:
+        issues = store.critique_summary()
+        if issues:
+            hint = "自我修正提醒（这是你最近回复里反复出现的问题，这一轮必须避免）：\n" + \
+                   "\n".join(f"- {i}" for i in issues[:3])
+    except Exception:
+        hint = ""
+    _SELF_FIX_CACHE[:] = (now, hint)
+    return hint
+
+
+def _maybe_critique(reply, ctx: dict, visitor_key: str) -> None:
+    """LLM 回复落库前自检，毛病写入 reply_critiques 供反思修正。绝不抛异常。"""
+    try:
+        issues = _critique_reply(reply.text or "", ctx.get("history") or [])
+        store.critique_add(visitor_key, len(reply.text or ""), issues)
+    except Exception:  # aqg: 自检故障不影响回复
+        pass
+
+
 async def run(message: ChannelMessage, history: list[dict], visitor_key: str) -> AgentReply:
     with tracing.span("zhike.pipeline.run", {"channel": message.channel_type, "visitor": visitor_key}):
         prepared = await _prepare(message, history, visitor_key)
@@ -409,6 +470,7 @@ async def run(message: ChannelMessage, history: list[dict], visitor_key: str) ->
                 rule.mode = "rule_fallback"
                 return rule
         if llm_reply:
+            _maybe_critique(llm_reply, ctx, visitor_key)
             return llm_reply
         return _rule_react(query, ctx, cfg)
 
@@ -473,4 +535,6 @@ async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: 
     # final 仍完整返回，前端以它为准覆盖。
     if not deltas_sent:
         yield ("delta", final.text)
+    if final is not None and str(final.mode or "").startswith("llm"):
+        _maybe_critique(final, ctx, visitor_key)
     yield ("final", final)
