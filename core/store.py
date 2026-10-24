@@ -32,8 +32,18 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             escalate_reason TEXT,
             assignee TEXT,
             started_at TEXT,
-            ended_at TEXT
+            ended_at TEXT,
+            first_response_at TEXT,
+            first_response_seconds INTEGER
         );
+        CREATE TABLE IF NOT EXISTS session_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            operator TEXT,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_notes_sid ON session_notes(session_id, id DESC);
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT,
@@ -414,6 +424,23 @@ def add_message(session_id: str, role: str, content: str, refs: list | None = No
             (session_id, role, content, json.dumps(refs or []), tool_used,
              (thought or None), _now()),
         )
+        # SLA 首响计时（Chatwoot 对标）：首条 agent/operator 回复落库即记
+        if role in ("agent", "operator"):
+            row = conn.execute(
+                "SELECT started_at, first_response_at FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if row and row["first_response_at"] is None and row["started_at"]:
+                try:
+                    from datetime import datetime, timezone
+                    t0 = datetime.fromisoformat(row["started_at"])
+                    secs = int((datetime.now(timezone.utc) - t0).total_seconds())
+                except (ValueError, TypeError):
+                    secs = None
+                conn.execute(
+                    "UPDATE sessions SET first_response_at = ?, first_response_seconds = ? "
+                    "WHERE id = ? AND first_response_at IS NULL",
+                    (_now(), secs, session_id),
+                )
         return cur.lastrowid or 0
 
 
@@ -798,7 +825,7 @@ def admin_sessions(limit: int = 50, offset: int = 0, status: str | None = None,
         total = conn.execute(f"SELECT COUNT(*) c FROM sessions s {where}", params).fetchone()["c"]
         rows = conn.execute(
             f"SELECT s.id, s.visitor_id, s.status, s.escalated, s.escalate_reason, s.assignee, "
-            f"s.started_at, s.ended_at, "
+            f"s.started_at, s.ended_at, s.first_response_seconds, "
             f"(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) message_count "
             f"FROM sessions s {where} ORDER BY s.started_at DESC LIMIT ? OFFSET ?",
             params + [limit, offset],
@@ -1728,3 +1755,30 @@ def delete_channel_session(channel: str) -> bool:
         )
         cur = conn.execute("DELETE FROM channel_sessions WHERE channel = ?", (channel,))
     return cur.rowcount > 0
+
+
+# ---- 坐席内部备注（Chatwoot 对标）：只给团队看，访客不可见 ----
+
+
+def notes_add(session_id: str, operator: str, content: str) -> dict:
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "INSERT INTO session_notes (session_id, operator, content, created_at) VALUES (?, ?, ?, ?)",
+            (session_id, operator, content.strip(), now),
+        )
+        row = conn.execute("SELECT * FROM session_notes WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return dict(row) if row else {}
+
+
+def notes_list(session_id: str) -> list[dict]:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM session_notes WHERE session_id = ? ORDER BY id DESC LIMIT 100",
+            (session_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]

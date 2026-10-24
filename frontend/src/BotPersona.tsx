@@ -68,6 +68,59 @@ const PRESETS: {
   },
 ]
 
+/* ============ LLM 提供商管理（AstrBot 多提供商对标）：
+   保存 base_url+model 档案（Key 只跟随当前激活配置），一键切换 ============ */
+function ProviderPanel({ draft, patch }: { draft: AgentConfig; patch: (fn: (d: AgentConfig) => void) => void }) {
+  const providers = draft.llm.providers || []
+  const isCurrent = (p: { base_url: string; model: string }) =>
+    p.base_url === draft.llm.base_url && p.model === draft.llm.model
+
+  const saveCurrent = () => {
+    const name = `${draft.llm.model} @ ${new URL(draft.llm.base_url).host}`
+    if (providers.some((p) => p.name === name)) return
+    patch((d) => {
+      d.llm.providers = [...(d.llm.providers || []), { name, base_url: d.llm.base_url, model: d.llm.model }]
+    })
+  }
+  const apply = (p: { name: string; base_url: string; model: string }) =>
+    patch((d) => { d.llm.base_url = p.base_url; d.llm.model = p.model })
+  const remove = (name: string) =>
+    patch((d) => { d.llm.providers = (d.llm.providers || []).filter((p) => p.name !== name) })
+
+  return (
+    <section className="bp-sec">
+      <div className="bp-sec-head">
+        <h2>LLM 提供商</h2>
+        <span>保存常用端点档案，一键切换（Key 不随档案保存，切换后如报错请在管理中心重填）</span>
+      </div>
+      <div className="bp-roles">
+        {providers.map((p) => (
+          <div key={p.name} className={`bp-role ${isCurrent(p) ? 'bp-role-on' : ''}`}>
+            <div className="bp-role-main" onClick={() => apply(p)} title="切换到此提供商">
+              <b>{p.name}{isCurrent(p) && '（当前）'}</b>
+              <span>{p.base_url}</span>
+            </div>
+            {!isCurrent(p) && (
+              <button className="btn secondary sm ac-del" title="删除档案"
+                onClick={() => remove(p.name)}>
+                <Trash2 size={13} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="bp-hint" style={{ marginTop: 8 }}>
+        当前：{draft.llm.model} @ {draft.llm.base_url}
+        {!providers.some((p) => isCurrent(p)) && (
+          <button className="btn secondary sm" style={{ marginLeft: 10 }} onClick={saveCurrent}>
+            把当前端点存为提供商
+          </button>
+        )}
+      </div>
+    </section>
+  )
+}
+
 /* ============ 角色库（AstrBot 情景管理对标）：
    命名保存当前人设，随时切换/删除，支持导出导入 JSON 迁移 ============ */
 const ROLE_LIB_KEY = 'zhike-persona-roles'
@@ -292,6 +345,41 @@ export default function BotPersona() {
         </div>
       </section>
 
+      {/* LLM 提供商管理（AstrBot 多提供商对标） */}
+      <ProviderPanel draft={draft} patch={patch} />
+
+      {/* 渠道准入（chatgpt-on-wechat 群白名单对标） */}
+      <section className="bp-sec">
+        <div className="bp-sec-head">
+          <h2>渠道准入</h2>
+          <span>群白名单：开启后，白名单以外的群消息一律静默不答（私聊不受限）</span>
+        </div>
+        <div className="mod-row" style={{ marginBottom: 10 }}>
+          <button
+            className={`mod-toggle ${draft.channels?.allowlist_enabled ? 'on' : ''}`}
+            onClick={() => patch((d) => {
+              if (!d.channels) d.channels = { allowlist_enabled: false, group_allowlist: [] }
+              d.channels.allowlist_enabled = !d.channels.allowlist_enabled
+            })}
+          >
+            {draft.channels?.allowlist_enabled ? '白名单已开启' : '白名单已关闭'}
+          </button>
+        </div>
+        <textarea
+          className="bp-editor"
+          rows={3}
+          value={(draft.channels?.group_allowlist || []).join('\n')}
+          onChange={(e) => patch((d) => {
+            if (!d.channels) d.channels = { allowlist_enabled: false, group_allowlist: [] }
+            d.channels.group_allowlist = e.target.value.split('\n').map((s) => s.trim()).filter(Boolean)
+          })}
+          placeholder={'每行一个群号，如：\n539621291\n1092518301'}
+        />
+        <div className="bp-hint">
+          群号可在 QQ 群设置里查看；机器人所在的群不在名单内时收到 @ 也不会回复，防止被拉进陌生群后被滥用。
+        </div>
+      </section>
+
       <div className="bp-cols">
         {/* 引擎与参数 */}
         <section className="bp-sec">
@@ -454,5 +542,8 @@ function pick(cfg: AgentConfig): Partial<AgentConfig> {
     engine: { ...cfg.engine },
     llm: { ...cfg.llm, api_key: cfg.llm.api_key ?? '' },
     escalation: { ...cfg.escalation },
+    channels: cfg.channels
+      ? { allowlist_enabled: cfg.channels.allowlist_enabled, group_allowlist: [...(cfg.channels.group_allowlist || [])] }
+      : undefined,
   }
 }

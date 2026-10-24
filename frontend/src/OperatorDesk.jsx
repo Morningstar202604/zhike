@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
-import { Inbox, ClipboardList, Radio, X, Headset, Ticket, User, RefreshCw } from 'lucide-react'
+import { Inbox, ClipboardList, Radio, X, Headset, Ticket, User, RefreshCw, StickyNote } from 'lucide-react'
 import { http, useOperatorQueues, isAuthError } from './lib/queries'
 import TokenGate from './components/TokenGate'
 import { useFeedback } from './components/Feedback'
@@ -56,6 +56,58 @@ function CannedBar({ onPick }) {
   )
 }
 
+/** 内部备注面板（Chatwoot 对标）：只给坐席团队看，访客永远看不到 */
+function NotesPanel({ sid }) {
+  const [notes, setNotes] = useState([])
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    let dead = false
+    http.get(`/api/operator/notes/${sid}`)
+      .then((d) => { if (!dead) setNotes(d.notes || []) })
+      .catch((e) => { if (!dead) setErr(e.message) })
+    return () => { dead = true }
+  }, [sid])
+
+  const add = async () => {
+    if (!text.trim() || busy) return
+    setBusy(true); setErr('')
+    try {
+      const d = await http.post(`/api/operator/notes/${sid}`, { content: text.trim() })
+      setNotes((n) => [d.note, ...n])
+      setText('')
+    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="notes-panel">
+      <div className="notes-title"><StickyNote size={13} /> 内部备注（访客不可见）</div>
+      <div className="notes-list">
+        {notes.length === 0 && <div className="notes-empty">暂无备注。</div>}
+        {notes.map((n) => (
+          <div key={n.id} className="notes-item">
+            <div className="notes-text">{n.content}</div>
+            <div className="notes-meta">{(n.operator || '坐席')} · {(n.created_at || '').slice(0, 16).replace('T', ' ')}</div>
+          </div>
+        ))}
+      </div>
+      {err && <div className="notes-err">{err}</div>}
+      <div className="notes-add">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
+          placeholder="记点内部信息：用户情绪、承诺事项、跟进计划…"
+          maxLength={2000}
+        />
+        <button className="btn secondary sm" onClick={add} disabled={busy || !text.trim()}>记下</button>
+      </div>
+    </div>
+  )
+}
+
 function normRole(r) {
   return r === 'agent' ? 'agent' : r === 'operator' ? 'operator' : r === 'system' ? 'system' : 'visitor'
 }
@@ -70,6 +122,7 @@ export default function OperatorDesk() {
   const [active, setActive] = useState(null)
   const [dialog, setDialog] = useState([])
   const [reply, setReply] = useState('')
+  const [notesOpen, setNotesOpen] = useState(false)
   const [error, setError] = useState('')
   const opId = useAppStore((s) => s.opId)
   const fb = useFeedback()
@@ -125,6 +178,7 @@ export default function OperatorDesk() {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
   }, [dialog, active])
 
+  useEffect(() => { setNotesOpen(false) }, [active])
   const openDialog = async (sid) => {
     setActive(sid)
     try {
@@ -246,12 +300,17 @@ export default function OperatorDesk() {
                 </button>
               )}
               <button className="btn ghost sm" onClick={() => openDialog(active)}><RefreshCw size={13} /> 刷新</button>
+              <button className="btn ghost sm" onClick={() => setNotesOpen((o) => !o)}>
+                <StickyNote size={13} /> 备注
+              </button>
               <button className="btn secondary sm" onClick={() => closeSess(active)}><X size={13} /> 关闭</button>
             </div>
           )}
         </div>
 
         {error && <div className="hint err" style={{ margin: '10px 20px 0' }}>{error}</div>}
+
+        {active && notesOpen && <NotesPanel sid={active} />}
 
         <div className={`op-dialog ${isMobile ? 'op-dialog-mobile' : ''}`} ref={bodyRef}>
           {!active && <div className="empty" style={{ margin: 'auto' }}>从队列接管一个会话后，这里会实时展示对话。</div>}

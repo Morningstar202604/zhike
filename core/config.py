@@ -17,6 +17,8 @@ def _defaults() -> dict:
             "max_tokens": 512,
             "api_key": None,
             "has_key": False,
+            # 已保存的提供商档案（AstrBot 多提供商对标）：不含 Key，Key 只跟随当前激活配置
+            "providers": [],
         },
         "retrieval": {
             "kb_top_k": int(os.environ.get("USER_KB_TOP_K", "4")),
@@ -60,12 +62,17 @@ def _defaults() -> dict:
     "engine": {
         "mode": "auto",
     },
-    "escalation": {
-        "confidence_threshold": float(os.environ.get("USER_ESCALATE_THRESHOLD", "0.6")),
-        "max_message_len": int(os.environ.get("USER_MAX_MESSAGE_LEN", "1000")),
-        "react_steps": int(os.environ.get("USER_REACT_STEPS", "3")),
-    },
-}
+        "escalation": {
+            "confidence_threshold": float(os.environ.get("USER_ESCALATE_THRESHOLD", "0.6")),
+            "max_message_len": int(os.environ.get("USER_MAX_MESSAGE_LEN", "1000")),
+            "react_steps": int(os.environ.get("USER_REACT_STEPS", "3")),
+        },
+        # 渠道准入（chatgpt-on-wechat 群白名单对标）：开启后仅白名单群可获得回复
+        "channels": {
+            "allowlist_enabled": os.environ.get("CHANNEL_GROUP_ALLOWLIST_ENABLED", "").lower() in ("1", "true", "yes"),
+            "group_allowlist": [g.strip() for g in os.environ.get("CHANNEL_GROUP_ALLOWLIST", "").split(",") if g.strip()],
+        },
+    }
 
 
 DEFAULTS = _defaults()
@@ -137,7 +144,7 @@ def get_config() -> dict:
 _SCHEMA: dict[str, dict[str, type | tuple]] = {
     "llm": {"base_url": str, "model": str, "fallback_model": str, "api_key": (str, type(None)),
             "temperature": (int, float), "top_p": (int, float), "max_tokens": int,
-            "has_key": bool, "key_source": str},
+            "has_key": bool, "key_source": str, "providers": list},
     "retrieval": {"kb_top_k": int, "min_overlap": (int, float), "embedding": str},
     "context": {"history_turns": int, "char_budget": int, "compress_threshold": int,
                 "summarize": bool, "relevant_only": bool, "modules": dict, "persona": str},
@@ -148,6 +155,7 @@ _SCHEMA: dict[str, dict[str, type | tuple]] = {
     "guardrail": {"injection_block": bool},
     "engine": {"mode": str},
     "escalation": {"confidence_threshold": (int, float), "max_message_len": int, "react_steps": int},
+    "channels": {"allowlist_enabled": bool, "group_allowlist": list},
 }
 
 

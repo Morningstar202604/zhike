@@ -525,6 +525,19 @@ def create_app() -> FastAPI:
         if not limiter.allow(identity):
             raise HTTPException(429, "请求过于频繁，请稍后再试")
         chat_key = body.group_id or body.channel_user_id
+        # 渠道准入（chatgpt-on-wechat 群白名单对标）：开启后白名单外的群一律静默不答
+        ch_cfg = config.get_config().get("channels", {})
+        if body.group_id and ch_cfg.get("allowlist_enabled"):
+            allow = [str(g).strip() for g in (ch_cfg.get("group_allowlist") or []) if str(g).strip()]
+            if allow and str(body.group_id) not in allow:
+                ev.info(f"group {body.group_id} not in allowlist, dropped")
+                return {
+                    "session_id": "", "message_id": None, "ticket_id": None,
+                    "reply": {"text": "", "citations": [], "confidence": 0.0,
+                              "escalate": False, "escalate_reason": "",
+                              "mode": "not_allowed", "tool_used": None,
+                              "tool_result": None, "thought": ""},
+                }
         sid = sessions.resolve_session(f"{body.channel_type}:{chat_key}", identity)
         if _is_human_handled(sid):
             # 已转人工/已接管：机器人不回话，消息落库并推给坐席台
@@ -609,6 +622,25 @@ def create_app() -> FastAPI:
         removed = store.delete_channel_session(channel)
         ev.info(f"channel reset {channel} (mapping removed: {removed})")
         return {"ok": True, "reset": True, "channel": channel}
+
+    # ---- 坐席内部备注（Chatwoot 对标）：团队可见，访客不可见 ----
+    @app.get("/api/operator/notes/{sid}", dependencies=[Depends(require_admin)])
+    def operator_notes_list(sid: str):
+        return {"notes": store.notes_list(sid)}
+
+    class NoteIn(BaseModel):
+        content: str
+
+    @app.post("/api/operator/notes/{sid}", dependencies=[Depends(require_admin)])
+    def operator_notes_add(sid: str, body: NoteIn):
+        content = body.content.strip()
+        if not content:
+            raise HTTPException(400, "备注内容不能为空")
+        if len(content) > 2000:
+            raise HTTPException(400, "备注过长（≤2000 字）")
+        note = store.notes_add(sid, "operator", content)
+        store.append_audit("operator", "session.note_added", {"session_id": sid})
+        return {"note": note}
 
     @app.post("/api/sessions")
     def new_session(body: NewSession, request: Request):
