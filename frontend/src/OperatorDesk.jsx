@@ -13,6 +13,49 @@ import { Spinner, ErrorBanner } from './components/Spinner'
 import './pages.css'
 import './pages2.css'
 
+/** 快捷回复（Chatwoot canned responses 对标）：常用话术一键插入，本地可编辑 */
+const CANNED_KEY = 'zhike-canned'
+const CANNED_DEFAULT = [
+  '您好，稍等，我帮您查询一下~',
+  '亲，这个问题的标准处理方式是：签收后 7 天内可无理由退货，质量问题 15 天内可换货。',
+  '已经为您登记，24 小时内会有专人跟进处理。',
+  '感谢您的耐心等待，还有其他可以帮您的吗？',
+]
+function CannedBar({ onPick }) {
+  const [items, setItems] = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem(CANNED_KEY)); return Array.isArray(v) && v.length ? v : CANNED_DEFAULT } catch { return CANNED_DEFAULT }
+  })
+  const [editing, setEditing] = useState(false)
+  const save = (list) => { setItems(list); localStorage.setItem(CANNED_KEY, JSON.stringify(list)) }
+  return (
+    <div className="canned-bar">
+      {!editing ? (
+        <>
+          {items.map((t, i) => (
+            <button key={i} className="canned-chip" title="点击插入到输入框" onClick={() => onPick(t)}>
+              {t.length > 18 ? t.slice(0, 18) + '…' : t}
+            </button>
+          ))}
+          <button className="canned-edit" onClick={() => setEditing(true)}>编辑</button>
+        </>
+      ) : (
+        <div className="canned-editing">
+          {items.map((t, i) => (
+            <div key={i} className="canned-row">
+              <input value={t} onChange={(e) => { const n = [...items]; n[i] = e.target.value; setItems(n) }} />
+              <button className="ac-del" onClick={() => save(items.filter((_, j) => j !== i))}>✕</button>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn secondary sm" onClick={() => setItems([...items, ''])}>+ 加一条</button>
+            <button className="btn sm" onClick={() => { save(items.filter((t) => t.trim())); setEditing(false) }}>完成</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function normRole(r) {
   return r === 'agent' ? 'agent' : r === 'operator' ? 'operator' : r === 'system' ? 'system' : 'visitor'
 }
@@ -249,6 +292,7 @@ export default function OperatorDesk() {
 
         {active && (
           <div ref={footRef} className={`op-foot ${isMobile ? 'op-foot-mobile' : ''}`} style={isMobile ? { position: 'sticky', bottom: 0 } : undefined}>
+            <CannedBar onPick={(text) => onReplyChange(reply ? reply + ' ' + text : text)} />
             <textarea
               rows={1}
               value={reply}

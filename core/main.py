@@ -555,6 +555,61 @@ def create_app() -> FastAPI:
             },
         }
 
+    class AnnotationIn(BaseModel):
+        question: str
+        answer: str
+
+    class AnnotationUpIn(BaseModel):
+        question: str | None = None
+        answer: str | None = None
+        enabled: bool | None = None
+
+    class ChannelResetIn(BaseModel):
+        channel_type: str
+        channel_user_id: str
+        group_id: str | None = None
+
+    # ---- 标注回复（Dify annotations 对标）：命中标准答案直接回复 ----
+    @app.get("/api/annotations", dependencies=[Depends(require_admin)])
+    def annotations_list():
+        return {"annotations": store.annotations_list()}
+
+    @app.post("/api/annotations", dependencies=[Depends(require_admin)])
+    def annotations_create(body: AnnotationIn):
+        q = body.question.strip()
+        a = body.answer.strip()
+        if not q or not a:
+            raise HTTPException(400, "问题与答案都不能为空")
+        if len(q) > 500 or len(a) > 4000:
+            raise HTTPException(400, "问题或答案过长（问 ≤500 字，答 ≤4000 字）")
+        ann = store.annotation_create(q, a)
+        store.append_audit("admin", "annotation.created", {"id": ann["id"]})
+        return {"annotation": ann}
+
+    @app.put("/api/annotations/{aid}", dependencies=[Depends(require_admin)])
+    def annotations_update(aid: int, body: AnnotationUpIn):
+        ann = store.annotation_update(aid, body.question, body.answer, body.enabled)
+        if not ann:
+            raise HTTPException(404, "标注不存在")
+        store.append_audit("admin", "annotation.updated", {"id": aid})
+        return {"annotation": ann}
+
+    @app.delete("/api/annotations/{aid}", dependencies=[Depends(require_admin)])
+    def annotations_delete(aid: int):
+        if not store.annotation_delete(aid):
+            raise HTTPException(404, "标注不存在")
+        store.append_audit("admin", "annotation.deleted", {"id": aid})
+        return {"ok": True}
+
+    # ---- 频道会话重置（AstrBot /reset 对标）：只清对话上下文，保留长期记忆 ----
+    @app.post("/v1/channel/reset", dependencies=[Depends(require_channel)])
+    async def channel_reset(body: ChannelResetIn):
+        chat_key = body.group_id or body.channel_user_id
+        channel = f"{body.channel_type}:{chat_key}"
+        removed = store.delete_channel_session(channel)
+        ev.info(f"channel reset {channel} (mapping removed: {removed})")
+        return {"ok": True, "reset": True, "channel": channel}
+
     @app.post("/api/sessions")
     def new_session(body: NewSession, request: Request):
         limiter: security.RateLimiter = app.state.limiter

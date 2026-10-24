@@ -137,6 +137,30 @@ def _v10_feedback_unique(conn: sqlite3.Connection) -> None:
     )
 
 
+def _v11_annotations(conn: sqlite3.Connection) -> None:
+    """0011：标注回复表（对标 Dify annotations）。
+
+    管理员把常见问答标成「标准答案」；管线在检索前做归一化精确匹配，
+    命中直接回复（mode=annotation），不再走 KB/LLM——客服场景里
+    「同样的问题每天问一百遍」，标注是最便宜且最可控的回复手段。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS annotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            hits INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_annotations_enabled ON annotations(enabled, id DESC)")
+
+
+
 MIGRATIONS: list[Migration] = [
     (1, "基线：标记已有结构", _v1_baseline),
     (2, "审计链 actor 索引", _v2_audit_index),
@@ -148,6 +172,7 @@ MIGRATIONS: list[Migration] = [
     (8, "消息软删除标记", _v8_message_deleted),
     (9, "访客身份令牌与热路径索引", _v9_visitor_identity_and_indexes),
     (10, "同一条消息反馈唯一", _v10_feedback_unique),
+    (11, "标注回复表（Dify annotations 对标）", _v11_annotations),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

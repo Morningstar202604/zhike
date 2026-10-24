@@ -105,6 +105,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             session_id TEXT,
             updated_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS annotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            hits INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_annotations_enabled ON annotations(enabled, id DESC);
         CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY,
             value TEXT
@@ -1613,4 +1623,108 @@ def approval_consume(approval_id: str) -> bool:
             "UPDATE approvals SET status = 'consumed' WHERE id = ? AND status = 'approved'",
             (approval_id,),
         )
+    return cur.rowcount > 0
+
+
+# ---- 标注回复（Dify annotations 对标）----
+
+
+def _norm_q(q: str) -> str:
+    """问题归一化：去空白/标点、小写——「退货政策是什么?」与「退货政策是什么」同一问。"""
+    return "".join(ch for ch in q.strip().lower() if ch.isalnum())
+
+
+def annotations_list(include_disabled: bool = True) -> list[dict]:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        sql = "SELECT * FROM annotations"
+        if not include_disabled:
+            sql += " WHERE enabled = 1"
+        rows = conn.execute(sql + " ORDER BY id DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def annotation_create(question: str, answer: str) -> dict:
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "INSERT INTO annotations (question, answer, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (question.strip(), answer.strip(), now, now),
+        )
+        row = conn.execute("SELECT * FROM annotations WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return dict(row)
+
+
+def annotation_update(aid: int, question: str | None = None, answer: str | None = None,
+                      enabled: bool | None = None) -> dict | None:
+    from datetime import datetime, timezone
+
+    fields, vals = [], []
+    if question is not None:
+        fields.append("question = ?"); vals.append(question.strip())
+    if answer is not None:
+        fields.append("answer = ?"); vals.append(answer.strip())
+    if enabled is not None:
+        fields.append("enabled = ?"); vals.append(1 if enabled else 0)
+    if not fields:
+        return annotation_get(aid)
+    fields.append("updated_at = ?"); vals.append(datetime.now(timezone.utc).isoformat())
+    vals.append(aid)
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"UPDATE annotations SET {', '.join(fields)} WHERE id = ?", vals)
+        row = conn.execute("SELECT * FROM annotations WHERE id = ?", (aid,)).fetchone()
+    return dict(row) if row else None
+
+
+def annotation_get(aid: int) -> dict | None:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM annotations WHERE id = ?", (aid,)).fetchone()
+    return dict(row) if row else None
+
+
+def annotation_delete(aid: int) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM annotations WHERE id = ?", (aid,))
+    return cur.rowcount > 0
+
+
+def annotation_hit(question: str) -> dict | None:
+    """归一化精确匹配 + 双向包含（长短问法互相覆盖），命中即回复并计数。
+
+    包含匹配双向：标注「退货政策」能接住「我想问下退货政策」，标注长句也能被短问命中。
+    """
+    nq = _norm_q(question)
+    if not nq:
+        return None
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM annotations WHERE enabled = 1").fetchall()
+    for r in rows:
+        nr = _norm_q(r["question"])
+        if not nr:
+            continue
+        if nq == nr or (len(nr) >= 4 and nr in nq) or (len(nq) >= 4 and nq in nr):
+            with get_conn() as conn:
+                conn.execute("UPDATE annotations SET hits = hits + 1 WHERE id = ?", (r["id"],))
+            return dict(r)
+    return None
+
+
+def delete_channel_session(channel: str) -> bool:
+    """删除频道会话映射（AstrBot /reset 对标）：下一条消息将开启全新会话。
+
+    只删映射与关闭旧会话，长期记忆保留——重置的是「对话上下文」，不是「对客人的了解」。
+    """
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE sessions SET status = 'closed', ended_at = ? "
+            "WHERE id IN (SELECT session_id FROM channel_sessions WHERE channel = ?) AND status = 'ongoing'",
+            (_now(), channel),
+        )
+        cur = conn.execute("DELETE FROM channel_sessions WHERE channel = ?", (channel,))
     return cur.rowcount > 0

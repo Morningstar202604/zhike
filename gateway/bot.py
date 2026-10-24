@@ -130,6 +130,70 @@ _sem = asyncio.Semaphore(MAX_CONCURRENT)
 
 matcher = on_message(rule=to_me(), priority=5, block=False)
 
+# ---- QQ 侧指令（AstrBot 对标）：/开头直接在网关处理，不进核心管线 ----
+# 设计原则：只做「无状态 + 只读 + 重置」三类；一切业务判断仍在 core。
+_CMD_START = time.time()
+_CMD_STATS = {"commands": 0, "handled": 0}
+HELP_TEXT = (
+    "知客指令（@我使用）：\n"
+    "/帮助 — 显示本菜单\n"
+    "/状态 — 机器人运行状态\n"
+    "/重置 — 开启全新对话（清除当前上下文，保留长期记忆）\n"
+    "其他任何问题直接发给我即可～"
+)
+
+
+def _uptime_text() -> str:
+    secs = int(time.time() - _CMD_START)
+    h, m = secs // 3600, (secs % 3600) // 60
+    return f"{h}小时{m}分" if h else f"{m}分钟"
+
+
+async def _handle_command(msg, text: str) -> bool:
+    """QQ 侧指令处理。返回 True 表示已作为指令消费（不再进核心管线）。"""
+    cmd = text.split()[0].lower()
+    alias = {
+        "/帮助": "help", "/help": "help", "/菜单": "help", "/指令": "help",
+        "/状态": "status", "/status": "status",
+        "/重置": "reset", "/reset": "reset", "/新对话": "reset", "/清空": "reset",
+    }
+    action = alias.get(cmd)
+    if action is None:
+        return False
+    _CMD_STATS["commands"] += 1
+    try:
+        if action == "help":
+            reply = HELP_TEXT
+        elif action == "status":
+            bot = _pick_bot()
+            reply = (
+                f"机器人：在线（{bot.self_id if bot else '未知'}）\n"
+                f"网关运行：{_uptime_text()}\n"
+                f"已处理消息：{_CMD_STATS['handled']} 条\n"
+                f"已执行指令：{_CMD_STATS['commands']} 次\n"
+                "发 /帮助 查看全部指令"
+            )
+        elif action == "reset":
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{CORE_BASE_URL}/v1/channel/reset",
+                    json={
+                        "channel_type": msg.channel,
+                        "channel_user_id": msg.sender_id,
+                        "group_id": msg.chat_id if msg.is_group else None,
+                    },
+                    headers=_channel_headers(),
+                )
+                resp.raise_for_status()
+            reply = "已开启全新对话～ 上下文已清空，长期记忆保留。"
+        else:
+            return False
+    except Exception as e:  # 指令失败给明确反馈，不吞异常
+        logger.warning("command %s failed: %s: %s", cmd, type(e).__name__, str(e)[:120])
+        reply = "指令执行失败，请稍后再试～"
+    await adapter.send(msg, reply)
+    return True
+
 
 def _dedup(message_id: str | None) -> bool:
     """True = 首次见到，可以处理；False = 重复投递。"""
@@ -364,6 +428,12 @@ async def handle(event: MessageEvent):
     msg = adapter.parse(_event_to_raw(event))
     if msg is None:
         return
+
+    # QQ 侧指令：/开头且命中已知指令时在网关本地消费，不进核心管线
+    if msg.text.startswith("/"):
+        if await _handle_command(msg, msg.text.strip()):
+            return
+
     if not _dedup(msg.message_id):
         logger.info("duplicate message skipped: %s", msg.message_id)
         return
@@ -408,6 +478,7 @@ async def handle(event: MessageEvent):
             # 发送失败重试一次（协议端偶发超时）；仍失败则只记录，不再回灌错误话术
             await asyncio.sleep(0.5)
             result = await adapter.send(msg, reply_text)
+    _CMD_STATS["handled"] += 1
     await bus.publish(EV_REPLY_OUT, {
         "channel": msg.channel, "chat_id": msg.chat_id, "ok": result.ok,
     })

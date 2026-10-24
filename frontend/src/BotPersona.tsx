@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bot, Save, RotateCcw, Zap, Send, Sparkles, Headset,
   Wrench, Heart, MessageCircle, Check, Loader2, FlaskConical,
+  Trash2, Download, Upload,
 } from 'lucide-react'
 import { useConfig, useUpdateConfig, http } from './lib/queries'
 import { useShell } from './components/ResponsiveShell'
@@ -66,6 +67,105 @@ const PRESETS: {
     temperature: 0.2,
   },
 ]
+
+/* ============ 角色库（AstrBot 情景管理对标）：
+   命名保存当前人设，随时切换/删除，支持导出导入 JSON 迁移 ============ */
+const ROLE_LIB_KEY = 'zhike-persona-roles'
+interface RoleEntry { name: string; persona: string; temperature: number; savedAt: string }
+
+function loadRoles(): RoleEntry[] {
+  try { return JSON.parse(localStorage.getItem(ROLE_LIB_KEY) || '[]') } catch { return [] }
+}
+function saveRoles(rs: RoleEntry[]) { localStorage.setItem(ROLE_LIB_KEY, JSON.stringify(rs)) }
+
+function RoleLibrary({ draft, onApply }: { draft: AgentConfig; onApply: (r: RoleEntry) => void }) {
+  const [roles, setRoles] = useState<RoleEntry[]>(loadRoles)
+  const [name, setName] = useState('')
+  const [expanded, setExpanded] = useState(false)
+
+  const persist = (rs: RoleEntry[]) => { setRoles(rs); saveRoles(rs) }
+  const saveCurrent = () => {
+    const n = name.trim() || `角色 ${new Date().toLocaleDateString()}`
+    const entry: RoleEntry = {
+      name: n, persona: draft.context.persona,
+      temperature: draft.llm.temperature, savedAt: new Date().toISOString(),
+    }
+    persist([entry, ...roles.filter((r) => r.name !== n)])
+    setName('')
+  }
+  const exportJson = () => {
+    const blob = new Blob([JSON.stringify(roles, null, 2)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'zhike-roles.json'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+  const importJson = (file: File) => {
+    const rd = new FileReader()
+    rd.onload = () => {
+      try {
+        const arr = JSON.parse(String(rd.result))
+        if (!Array.isArray(arr)) throw new Error('格式不是角色数组')
+        const merged = [...arr, ...roles.filter((r) => !arr.some((x: RoleEntry) => x.name === r.name))]
+        persist(merged)
+      } catch (e) { alert(`导入失败：${(e as Error).message}`) }
+    }
+    rd.readAsText(file)
+  }
+
+  return (
+    <section className="bp-sec">
+      <div className="bp-sec-head">
+        <h2>我的角色库</h2>
+        <span>{roles.length} 个 · 保存在本浏览器，可导出迁移</span>
+        <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => setExpanded((o) => !o)}>
+          {expanded ? '收起' : '展开'}
+        </button>
+      </div>
+      {expanded && (
+        <>
+          <div className="bp-role-save">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="给当前人设起个名字，如：双十一活动客服"
+              maxLength={40}
+            />
+            <button className="btn sm" onClick={saveCurrent} disabled={!draft.context.persona.trim()}>
+              保存当前人设
+            </button>
+            <label className="btn secondary sm" style={{ cursor: 'pointer' }}>
+              导入
+              <input type="file" accept="application/json" style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) importJson(f); e.currentTarget.value = '' }} />
+            </label>
+            <button className="btn secondary sm" onClick={exportJson} disabled={!roles.length}>导出</button>
+          </div>
+          {roles.length === 0 ? (
+            <div className="bp-hint">还没有保存的角色。调好提示词后起个名字存下来，随时一键切换。</div>
+          ) : (
+            <div className="bp-roles">
+              {roles.map((r) => (
+                <div key={r.name} className="bp-role">
+                  <div className="bp-role-main" onClick={() => onApply(r)} title="应用此人设">
+                    <b>{r.name}</b>
+                    <span>{r.persona.slice(0, 46)}{r.persona.length > 46 ? '…' : ''}</span>
+                    <em>temp {r.temperature} · {r.savedAt.slice(0, 10)}</em>
+                  </div>
+                  <button className="btn secondary sm ac-del" title="删除"
+                    onClick={() => persist(roles.filter((x) => x.name !== r.name))}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
 
 export default function BotPersona() {
   const { mobile } = useShell()
@@ -164,6 +264,14 @@ export default function BotPersona() {
           })}
         </div>
       </section>
+
+      {/* 角色库：命名保存 / 一键切换 / 导入导出 */}
+      <RoleLibrary draft={draft} onApply={(r) =>
+        patch((d) => {
+          d.context.persona = r.persona
+          d.llm.temperature = r.temperature
+        })
+      } />
 
       {/* 提示词编辑器 */}
       <section className="bp-sec">
