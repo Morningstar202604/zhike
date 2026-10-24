@@ -84,11 +84,13 @@ def _chain(llm_cfg: dict, model: str, vision: bool = False) -> list[dict]:
     return out
 
 
-async def _race_chain(chain: list[dict], messages: list, base_payload: dict) -> str | None:
+async def _race_chain(chain: list[dict], messages: list, base_payload: dict,
+                      parse=None) -> dict | None:
     """备援链竞速。规则：
     - 冷却中的候选直接跳过；
     - 始终保持至多 2 个候选并行（主 + 1 备），主候选 HEDGE 秒没回就拉起备胎；
-    - 任何候选先成功 → 取消其余并返回；失败者进冷却池，继续等在跑的/补新的。
+    - 任何候选先成功 → 取消其余并返回；失败者进冷却池，继续等在跑的/补新的；
+    - parse 可调用时，内容级失败（空答案/解析不出）同样视作候选失败，换下一个。
     """
     cands = [c for c in chain if not _cooling(c["base_url"], c["model"])]
     if not cands:
@@ -96,7 +98,7 @@ async def _race_chain(chain: list[dict], messages: list, base_payload: dict) -> 
         return None
     max_parallel = 2 if _HEDGE_S > 0 else 1
     pending: dict[asyncio.Task, dict] = {}
-    result: str | None = None
+    result: dict | None = None
     try:
         while (cands or pending) and result is None:
             while cands and len(pending) < max_parallel:
@@ -115,15 +117,22 @@ async def _race_chain(chain: list[dict], messages: list, base_payload: dict) -> 
             for d in done:
                 cand = pending.pop(d)
                 err = d.exception()
-                if err is None and d.result() is not None:
-                    result = d.result()
+                text = None if err is not None else d.result()
+                parsed = None
+                if text is not None:
+                    try:
+                        parsed = parse(text) if parse else ({"_raw": text} if text.strip() else None)
+                    except Exception:  # 解析器本身炸了也算候选失败
+                        parsed = None
+                if parsed is not None:
+                    result = parsed
                     _COOLDOWN.pop((cand["base_url"], cand["model"]), None)
                     lg.info("llm via %s@%s", cand["model"], cand["base_url"].split("//")[-1])
                 else:
                     _COOLDOWN[(cand["base_url"], cand["model"])] = \
                         time.monotonic() + _COOLDOWN_S
                     lg.warning("llm candidate failed (%s), cooldown %ss: %s@%s",
-                               type(err).__name__ if err else "empty",
+                               type(err).__name__ if err else ("empty" if text is not None else "bad-content"),
                                _COOLDOWN_S, cand["model"], cand["base_url"].split("//")[-1])
     finally:
         for t in pending:
@@ -259,13 +268,12 @@ async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict |
         "max_tokens": llm_cfg.get("max_tokens", 512),
         "response_format": {"type": "json_object"},
     }
-    # 备援链竞速：主配置 → fallback_model → providers；视觉调用只走主配置
-    raw = await _race_chain(_chain(llm_cfg, model, vision=bool(image_b64 and vision_model)),
-                            messages, payload)
-    _record_llm("ok" if raw is not None else "fail")
-    if raw is None:
-        return None
-    return _parse_llm_answer(raw)
+    # 备援链竞速：主配置 → fallback_model → providers；视觉调用只走主配置。
+    # 解析并入竞速：空答案/截断 JSON 也算候选失败，自动换下一个模型。
+    parsed = await _race_chain(_chain(llm_cfg, model, vision=bool(image_b64 and vision_model)),
+                               messages, payload, parse=_parse_llm_answer)
+    _record_llm("ok" if parsed is not None else "fail")
+    return parsed
 
 
 class _AnswerStreamer:
@@ -396,12 +404,29 @@ def _parse_llm_answer(raw: str) -> dict | None:
         raw = re.sub(r"^```(?:json)?\s*", "", raw).rstrip("`").strip()
     try:
         data = json.loads(raw)
-        return data if isinstance(data, dict) else None
     except json.JSONDecodeError:
+        # 半截 JSON（max_tokens 截断/模型跑偏）：先抢救 answer 字段，救不回来才当 prose。
+        # 绝不能把 "{...半截 JSON 原文" 发给用户。
+        if raw.startswith("{"):
+            m = re.search(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
+            if m and m.group(1).strip():
+                try:
+                    answer = json.loads('"' + m.group(1) + '"')
+                except json.JSONDecodeError:
+                    answer = m.group(1)
+                lg.info("llm truncated-json answer salvaged: %s", str(answer)[:120])
+                return {"answer": answer, "confidence": 0.6, "citations": [], "escalate": False}
+            return None  # 连 answer 都没有的残 JSON：宁走降级也不给用户看乱码
         if raw:
             lg.info("llm prose answer accepted: %s", raw[:120])
             return {"answer": raw, "confidence": 0.62, "citations": [], "escalate": False}
         return None
+    if not isinstance(data, dict):
+        return None
+    # 空答案当失败：交给规则降级，而不是把沉默发给用户
+    if not str(data.get("answer") or "").strip():
+        return None
+    return data
 
 
 async def probe() -> dict:

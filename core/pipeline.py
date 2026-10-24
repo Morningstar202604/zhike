@@ -345,7 +345,9 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
         inj, inj_action = guardrail.detect_injection(query)
         if inj and inj_action == "block":
             return AgentReply(
-                text="检测到包含越权/提示词注入的输入，本次消息已拦截并记录。请就具体问题咨询，我们会正常为您服务。",
+                # 用户可见文本刻意中性且不点破机制（说了"拦截/记录"等于向攻击者确认防线存在）；
+                # 审计留痕在入口侧完成，这里只管体面地闭麦。
+                text="这个话题就到此为止吧。有别的想聊的，随时开口。",
                 confidence=1.0,
                 tool_used="injection_guard",
                 mode="guardrail",
