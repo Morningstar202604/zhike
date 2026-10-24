@@ -5,6 +5,7 @@ import { http, isAuthError } from './lib/queries'
 import { useShell } from './components/ResponsiveShell'
 import { Spinner } from './components/Spinner'
 import TokenGate from './components/TokenGate'
+import { useFeedback } from './components/Feedback'
 import { PageHead, EmptyState } from './ui'
 
 interface Annotation {
@@ -21,6 +22,7 @@ interface Annotation {
  *  常见问答标成标准答案，用户问到时零延迟直接回复，不走 KB/LLM。 */
 export default function AnnotationCenter() {
   const { mobile } = useShell()
+  const fb = useFeedback()
   const qc = useQueryClient()
   const [q, setQ] = useState('')
   const [a, setA] = useState('')
@@ -41,9 +43,10 @@ export default function AnnotationCenter() {
     try {
       await http.post('/api/annotations', { question: q.trim(), answer: a.trim() })
       setQ(''); setA('')
+      fb.toast.success('标注已生效，命中即秒回')
       invalidate()
     } catch (e) {
-      alert((e as Error).message)
+      fb.toast.error((e as Error).message || '添加失败')
     } finally {
       setBusy(false)
     }
