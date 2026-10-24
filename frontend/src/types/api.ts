@@ -9,6 +9,8 @@ export interface AgentConfig {
     api_key?: string
     key_source?: string
     fallback_model?: string
+    /** 已保存的提供商档案（AstrBot 对标）：切换时写入 base_url/model */
+    providers?: { name: string; base_url: string; model: string }[]
   }
   retrieval: { kb_top_k: number; min_overlap: number; embedding?: 'auto' | 'off' }
   context: {
@@ -35,6 +37,10 @@ export interface AgentConfig {
     confidence_threshold: number
     max_message_len: number
     react_steps: number
+  }
+  channels?: {
+    allowlist_enabled: boolean
+    group_allowlist: string[]
   }
 }
 
@@ -83,6 +89,7 @@ export interface SessionRow {
   ended_at?: string | null
   message_count: number
   channel: string
+  first_response_seconds?: number | null
 }
 
 export interface LogEntry {

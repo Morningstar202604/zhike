@@ -156,6 +156,7 @@ export default function SessionsCenter() {
                 <th>访客</th>
                 <th>状态</th>
                 <th>消息</th>
+                <th>首响</th>
                 <th>升级原因</th>
                 <th></th>
               </tr>
@@ -172,6 +173,11 @@ export default function SessionsCenter() {
                     </span>
                   </td>
                   <td>{s.message_count}</td>
+                  <td className="muted">
+                    {s.first_response_seconds != null
+                      ? `${s.first_response_seconds < 60 ? `${s.first_response_seconds}s` : `${Math.round(s.first_response_seconds / 60)}分`}`
+                      : '-'}
+                  </td>
                   <td className="muted">{label(ESCALATE_REASON, s.escalate_reason, '-')}</td>
                   <td>
                     <button

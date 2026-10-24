@@ -161,6 +161,32 @@ def _v11_annotations(conn: sqlite3.Connection) -> None:
 
 
 
+def _v12_notes_and_sla(conn: sqlite3.Connection) -> None:
+    """0012：坐席内部备注（Chatwoot 对标）+ SLA 首响计时（审计报告 P0 差距）。
+
+    - session_notes：坐席在会话里写内部备注，只给团队看，访客不可见
+    - sessions.first_response_*：首条 agent/operator 回复时刻与耗时，
+      这是客服平台衡量响应速度的入场券指标
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            operator TEXT,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_session_notes_sid ON session_notes(session_id, id DESC)")
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+    if "first_response_at" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN first_response_at TEXT")
+    if "first_response_seconds" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN first_response_seconds INTEGER")
+
+
 MIGRATIONS: list[Migration] = [
     (1, "基线：标记已有结构", _v1_baseline),
     (2, "审计链 actor 索引", _v2_audit_index),
@@ -173,6 +199,7 @@ MIGRATIONS: list[Migration] = [
     (9, "访客身份令牌与热路径索引", _v9_visitor_identity_and_indexes),
     (10, "同一条消息反馈唯一", _v10_feedback_unique),
     (11, "标注回复表（Dify annotations 对标）", _v11_annotations),
+    (12, "坐席内部备注与 SLA 首响计时", _v12_notes_and_sla),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

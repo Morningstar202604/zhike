@@ -407,7 +407,7 @@ async def _post_ingest(payload: dict) -> str:
                     raise httpx.HTTPStatusError(
                         f"core {resp.status_code}", request=resp.request, response=resp)
                 resp.raise_for_status()
-                return resp.json()["reply"]["text"]
+                return resp.json()["reply"]
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout,
                 httpx.HTTPStatusError) as e:
             last_exc = e
@@ -460,7 +460,8 @@ async def handle(event: MessageEvent):
     # 同一会话串行 + 全局并发上限：群里刷屏时既不乱序也不打爆核心
     async with _sem, _chat_lock(f"{msg.channel}:{msg.chat_id}"):
         try:
-            reply_text = await _post_ingest(payload)
+            reply = await _post_ingest(payload)
+            reply_text = (reply or {}).get("text") or ""
             await bus.publish(EV_ACTION_DONE, {
                 "action": "ingest", "duration_ms": int((time.time() - started) * 1000), "ok": True,
             })
@@ -471,6 +472,10 @@ async def handle(event: MessageEvent):
                 "action": "ingest", "duration_ms": int((time.time() - started) * 1000),
                 "ok": False, "error": f"{type(e).__name__}",
             })
+
+        # 白名单外的群/空回复：静默，不发消息（mode=not_allowed 来自渠道准入）
+        if (reply or {}).get("mode") == "not_allowed" or not reply_text.strip():
+            return
 
         result = await adapter.send(msg, reply_text)
         if not result.ok:
