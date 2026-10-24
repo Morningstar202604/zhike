@@ -1,6 +1,16 @@
-"""LLM 调用（OpenAI 兼容 /chat/completions）：异步、不阻塞事件循环；任何失败返回 None 交给规则降级。"""
+"""LLM 调用（OpenAI 兼容 /chat/completions）：异步、不阻塞事件循环；任何失败返回 None 交给规则降级。
+
+多提供商备援链（failover）：
+- 候选顺序 = 主配置 → fallback_model → providers 档案（同站无 Key 沿用主 Key，异站必须自带 Key）；
+- 竞速并行：主候选先跑，USER_LLM_HEDGE_SECONDS（默认 10s）内没回就并行拉起下一个候选，
+  任何一个先成功立即采用并取消其余——某个模型/网络挂了不用干等，备胎随行待命；
+- 冷却熔断：失败的候选进 USER_LLM_COOLDOWN_SECONDS（默认 120s）冷却池，后续请求直接跳过。
+"""
+import asyncio
 import json
+import os
 import re
+import time
 
 import logging
 
@@ -29,6 +39,97 @@ def _creds() -> tuple[str, str, str, str]:
     model = cfg.get("model") or ""
     source = cfg.get("key_source") or "none"
     return key, base, model, source
+
+
+# ---- 多提供商备援链 -----------------------------------------------------------
+
+_HEDGE_S = max(0.0, float(os.environ.get("USER_LLM_HEDGE_SECONDS", "10") or 0))
+_COOLDOWN_S = max(0.0, float(os.environ.get("USER_LLM_COOLDOWN_SECONDS", "120") or 0))
+_COOLDOWN: dict[tuple[str, str], float] = {}   # (base_url, model) -> wake_at(monotonic)
+
+
+def _cooling(base: str, model: str) -> bool:
+    wake = _COOLDOWN.get((base, model))
+    return wake is not None and time.monotonic() < wake
+
+
+def _chain(llm_cfg: dict, model: str, vision: bool = False) -> list[dict]:
+    """构建候选链。vision 调用只在主配置上（视觉模型通常绑定特定端点与计费）。"""
+    key = llm_cfg.get("api_key") or ""
+    base = (llm_cfg.get("base_url") or "").rstrip("/")
+    out: list[dict] = []
+    if base and key:
+        out.append({"base_url": base, "model": model, "api_key": key})
+    if vision:
+        # 视觉模型通常绑定特定端点与计费，不参与换模型备援
+        return out
+    fb = (llm_cfg.get("fallback_model") or "").strip()
+    if fb and fb != model:
+        out.append({"base_url": base, "model": fb, "api_key": key})
+    seen = {(c["base_url"], c["model"]) for c in out}
+    for p in llm_cfg.get("providers") or []:
+        if not isinstance(p, dict):
+            continue
+        b = (p.get("base_url") or "").rstrip("/")
+        m = (p.get("model") or "").strip()
+        if not b or not m or (b, m) in seen:
+            continue
+        # 同站（同 base_url）没填 Key 视为沿用主 Key（同一账号下的多个模型）；
+        # 异站没填 Key 无法认证，跳过——省得每次请求都去撞一次 401。
+        k = (p.get("api_key") or "").strip() or (key if b == base else "")
+        if not k:
+            continue
+        seen.add((b, m))
+        out.append({"base_url": b, "model": m, "api_key": k})
+    return out
+
+
+async def _race_chain(chain: list[dict], messages: list, base_payload: dict) -> str | None:
+    """备援链竞速。规则：
+    - 冷却中的候选直接跳过；
+    - 始终保持至多 2 个候选并行（主 + 1 备），主候选 HEDGE 秒没回就拉起备胎；
+    - 任何候选先成功 → 取消其余并返回；失败者进冷却池，继续等在跑的/补新的。
+    """
+    cands = [c for c in chain if not _cooling(c["base_url"], c["model"])]
+    if not cands:
+        lg.warning("llm chain: 全部候选都在冷却中")
+        return None
+    max_parallel = 2 if _HEDGE_S > 0 else 1
+    pending: dict[asyncio.Task, dict] = {}
+    result: str | None = None
+    try:
+        while (cands or pending) and result is None:
+            while cands and len(pending) < max_parallel:
+                cand = cands.pop(0)
+                t = asyncio.ensure_future(_post_chat(
+                    cand["base_url"], cand["api_key"],
+                    {**base_payload, "model": cand["model"], "messages": messages}))
+                pending[t] = cand
+            if not pending:
+                break
+            # 单候选在跑且还有后备时用 HEDGE 超时触发加注；否则等到有结果
+            wait_kwargs = ({"timeout": _HEDGE_S}
+                           if len(pending) == 1 and cands and _HEDGE_S > 0 else {})
+            done, _ = await asyncio.wait(set(pending), return_when=asyncio.FIRST_COMPLETED,
+                                         **wait_kwargs)
+            for d in done:
+                cand = pending.pop(d)
+                err = d.exception()
+                if err is None and d.result() is not None:
+                    result = d.result()
+                    _COOLDOWN.pop((cand["base_url"], cand["model"]), None)
+                    lg.info("llm via %s@%s", cand["model"], cand["base_url"].split("//")[-1])
+                else:
+                    _COOLDOWN[(cand["base_url"], cand["model"])] = \
+                        time.monotonic() + _COOLDOWN_S
+                    lg.warning("llm candidate failed (%s), cooldown %ss: %s@%s",
+                               type(err).__name__ if err else "empty",
+                               _COOLDOWN_S, cand["model"], cand["base_url"].split("//")[-1])
+    finally:
+        for t in pending:
+            if not t.done():
+                t.cancel()
+    return result
 
 
 def _data_url(b64: str) -> str:
@@ -150,31 +251,18 @@ async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict |
         return None
 
     messages, model = _build_messages(query, ctx, cfg, image_b64)
+    vision_model = (cfg.get("multimodal", {}) or {}).get("vision_model", "") or ""
     payload = {
         "model": model,
-        "messages": messages,
         "temperature": llm_cfg.get("temperature", 0.2),
         "top_p": llm_cfg.get("top_p", 1.0),
         "max_tokens": llm_cfg.get("max_tokens", 512),
+        "response_format": {"type": "json_object"},
     }
-    payload["response_format"] = {"type": "json_object"}
-    raw = None
-    try:
-        raw = await _post_chat(base, api_key, payload)
-        _record_llm("ok" if raw is not None else "fail")
-    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
-        _record_llm("fail")
-        lg.warning("llm request failed: %s %s", type(e).__name__, str(e)[:120])
-    # 多模型备援：主模型失败且配了 fallback_model 时换模型重试一次
-    fallback = (llm_cfg.get("fallback_model", "") or "").strip()
-    if raw is None and fallback and fallback != payload["model"]:
-        lg.info("llm fallback model engaged: %s", fallback)
-        try:
-            raw = await _post_chat(base, api_key, {**payload, "model": fallback})
-            _record_llm("fallback")
-        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
-            _record_llm("fail")
-            lg.warning("llm fallback failed: %s %s", type(e).__name__, str(e)[:120])
+    # 备援链竞速：主配置 → fallback_model → providers；视觉调用只走主配置
+    raw = await _race_chain(_chain(llm_cfg, model, vision=bool(image_b64 and vision_model)),
+                            messages, payload)
+    _record_llm("ok" if raw is not None else "fail")
     if raw is None:
         return None
     return _parse_llm_answer(raw)

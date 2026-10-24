@@ -127,6 +127,13 @@ def get_config() -> dict:
     if stored_key:
         stored_key = crypto.decrypt_key(stored_key)
         cfg["llm"]["api_key"] = stored_key
+    # providers 档案的 Key 同样密文落库，读时解密（多模型备援链用）
+    for p in cfg["llm"].get("providers") or []:
+        if isinstance(p, dict) and p.get("api_key"):
+            try:
+                p["api_key"] = crypto.decrypt_key(p["api_key"])
+            except Exception:
+                p["api_key"] = ""
     if stored_key and stored_key != "your-api-key-here":
         cfg["llm"]["key_source"] = "ui"
     else:
@@ -202,6 +209,25 @@ def update_config(patch: dict) -> dict:
     # 落库前加密 api_key（Fernet），DB 里不再存明文
     if "api_key" in llm_patch and isinstance(llm_patch["api_key"], str):
         llm_patch["api_key"] = crypto.encrypt_key(llm_patch["api_key"])
+    # providers 档案的 Key：掩码回环保留旧值；新值加密；空值删除
+    provs = llm_patch.get("providers")
+    if isinstance(provs, list):
+        cur = get_config()["llm"].get("providers") or []
+        for i, p in enumerate(provs):
+            if not isinstance(p, dict) or "api_key" not in p:
+                continue
+            k = p.pop("api_key")
+            if not isinstance(k, str):
+                continue
+            if k.startswith("••"):
+                match = next((q for q in cur if isinstance(q, dict)
+                              and q.get("base_url") == p.get("base_url")
+                              and q.get("model") == p.get("model")
+                              and q.get("name") == p.get("name")),
+                             cur[i] if i < len(cur) else None)
+                k = (match or {}).get("api_key") or ""
+            if k.strip():
+                p["api_key"] = crypto.encrypt_key(k)
     store.set_config(patch)
     invalidate_cache()
     return get_config()
