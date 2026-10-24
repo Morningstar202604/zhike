@@ -18,6 +18,7 @@ const LogsCenter = lazy(() => import('./LogsCenter'))
 const SessionsCenter = lazy(() => import('./SessionsCenter'))
 const ActionsCenter = lazy(() => import('./ActionsCenter'))
 const AgentRuns = lazy(() => import('./AgentRuns'))
+const BotPersona = lazy(() => import('./BotPersona'))
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<VisitorChat />} />
                 <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/persona" element={<BotPersona />} />
                 <Route path="/sessions" element={<SessionsCenter />} />
                 <Route path="/actions" element={<ActionsCenter />} />
                 <Route path="/runs" element={<AgentRuns />} />
