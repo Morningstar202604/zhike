@@ -8,6 +8,7 @@ import base64
 import collections
 import logging
 import os
+import random
 import secrets
 import time
 import sys
@@ -24,9 +25,17 @@ from nonebot.rule import to_me
 
 from gateway.adapters import OneBot11Adapter, bus, registry
 from gateway.adapters.bus import EV_ACTION_DONE, EV_MESSAGE_IN, EV_REPLY_OUT
-from gateway.humanize import GroupThrottle, render, send_delay
+from gateway.humanize import EmoteLib, GroupThrottle, render, send_delay, split_reply
 
 logger = logging.getLogger("gateway")
+
+# 群友表情包收藏库（第三方表情包学习）：mface 回放 + 梗图本地缓存
+_EMOTE_DIR = os.environ.get("GATEWAY_EMOTE_DIR", "C:/Users/X1882/napcat/emotes")
+_EMOTE_LIB = EmoteLib(os.path.join(_EMOTE_DIR, "index.json"))
+os.makedirs(_EMOTE_DIR, exist_ok=True)
+# 梗图下载限流：每小时最多 30 张、并发 2——别把带宽和磁盘搞爆
+_EMOTE_DL_SEM = asyncio.Semaphore(2)
+_EMOTE_DL_TIMES: list[float] = []
 
 
 def _env_f(name: str, default: float) -> float:
@@ -141,10 +150,59 @@ _sem = asyncio.Semaphore(MAX_CONCURRENT)
 # 群里一次 @ 一条条秒回、刷屏式回答，是最容易被检测出自动化的行为。
 _GROUP_THROTTLE = GroupThrottle(
     min_gap=_env_f("GATEWAY_GROUP_MIN_GAP", 10.0),
-    hourly_cap=int(_env_f("GATEWAY_GROUP_HOURLY_CAP", 18)),
+    hourly_cap=int(_env_f("GATEWAY_GROUP_HOURLY_CAP", 24)),
 )
 
 matcher = on_message(rule=to_me(), priority=5, block=False)
+
+# ---- 表情包收藏器（AstrBot「梗图学习」对标）：监听全部群消息，只收集绝不回复 ----
+_collector_matcher = on_message(priority=1, block=False)
+
+
+async def _download_emote(url: str, group: str, summary: str) -> None:
+    """下载群友动画表情到本地（限 800KB、每小时 30 张、并发 2）。"""
+    now = time.time()
+    while _EMOTE_DL_TIMES and now - _EMOTE_DL_TIMES[0] > 3600:
+        _EMOTE_DL_TIMES.pop(0)
+    if len(_EMOTE_DL_TIMES) >= int(_env_f("GATEWAY_EMOTE_HOURLY", 30)):
+        return
+    try:
+        async with _EMOTE_DL_SEM:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                resp = await client.get(url)
+                if resp.status_code != 200 or len(resp.content) > 800 * 1024:
+                    return
+                _EMOTE_DL_TIMES.append(time.time())
+            ext = ".gif" if resp.content[:3] == b"GIF" else \
+                  ".png" if resp.content[:4] == b"\x89PNG" else ".jpg"
+            fname = f"e{int(time.time()*1000)}{ext}"
+            fpath = os.path.join(_EMOTE_DIR, fname)
+            with open(fpath, "wb") as f:
+                f.write(resp.content)
+        if _EMOTE_LIB.add("image", summary, fpath, group):
+            _EMOTE_LIB.save()
+    except Exception:  # 收藏失败绝不能影响正常收发
+        pass
+
+
+@_collector_matcher.handle()
+async def _collect(event: MessageEvent):
+    """扫群消息里的第三方表情：mface 直接记参数回放；动画表情图下载缓存。"""
+    try:
+        group = str(getattr(event, "group_id", "") or "")
+        for seg in event.message:
+            if seg.type == "mface":
+                summary = str(seg.data.get("summary", "") or "")
+                if _EMOTE_LIB.add("mface", summary, str(seg), group):
+                    _EMOTE_LIB.save()
+            elif seg.type == "image":
+                summary = str(seg.data.get("summary", "") or "")
+                url = str(seg.data.get("url", "") or "")
+                if url and ("动画表情" in summary or "表情" in summary):
+                    asyncio.create_task(_download_emote(url, group, summary))
+    except Exception:  # aqg: 收集器顶层兜底
+        pass
+
 
 # ---- QQ 侧指令（AstrBot 对标）：/开头直接在网关处理，不进核心管线 ----
 # 设计原则：只做「无状态 + 只读 + 重置」三类；一切业务判断仍在 core。
@@ -498,12 +556,12 @@ async def handle(event: MessageEvent):
         if mode in ("not_allowed", "rate_limited") or not reply_text.strip():
             return
 
-        # 表情包/图片标记 → OneBot CQ 码（未知标记直接删除，绝不把原文发出去）
-        out_text = render(reply_text)
+        # 渲染管线：markdown 净化 → 小黄脸/图片标记 → 表情包收藏 → CQ 码
+        out_text = _EMOTE_LIB.render(render(reply_text))
         if not out_text.strip():
             return
 
-        # 拟人化节奏：打字延迟 +（群聊）随机间隔与每小时上限——像人，不像脚本
+        # 拟人化节奏：群聊频控（首条前检查）+ 打字延迟
         if msg.is_group:
             wait = _GROUP_THROTTLE.wait_seconds(msg.chat_id)
             if wait < 0:
@@ -516,16 +574,27 @@ async def handle(event: MessageEvent):
                 return
             if wait > 0:
                 await asyncio.sleep(wait)
-        await asyncio.sleep(send_delay(len(out_text), msg.is_group))
 
-        result = await adapter.send(msg, out_text)
-        if msg.is_group:
-            _GROUP_THROTTLE.record(msg.chat_id)
-        if not result.ok:
-            logger.warning("reply send failed: %s", result.error)
-            # 发送失败重试一次（协议端偶发超时）；仍失败则只记录，不再回灌错误话术
-            await asyncio.sleep(0.5)
-            result = await adapter.send(msg, out_text)
+        # 长回复拆成几条连发——没有真人一次性甩 300 字，真人都是一条条蹦的
+        segments = split_reply(out_text,
+                               max_chunk=int(_env_f("GATEWAY_SPLIT_CHARS", 90)),
+                               max_parts=int(_env_f("GATEWAY_SPLIT_MAX", 3)))
+        result = None
+        for i, seg in enumerate(segments):
+            if i:
+                # 同一条回复的连发间隔短于跨回复间隔（2.5~4.5s），像真人刷屏式补充
+                await asyncio.sleep(_env_f("GATEWAY_SPLIT_GAP", 2.5) + random.random() * 2.0)
+            await asyncio.sleep(send_delay(len(seg), msg.is_group) * (1.0 if i == 0 else 0.6))
+            result = await adapter.send(msg, seg)
+            if msg.is_group:
+                _GROUP_THROTTLE.record(msg.chat_id)
+            if not result.ok:
+                logger.warning("reply send failed (part %d/%d): %s",
+                               i + 1, len(segments), result.error)
+                await asyncio.sleep(0.5)
+                result = await adapter.send(msg, seg)
+                if not result.ok:
+                    break
     _CMD_STATS["handled"] += 1
     await bus.publish(EV_REPLY_OUT, {
         "channel": msg.channel, "chat_id": msg.chat_id, "ok": result.ok,

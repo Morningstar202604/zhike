@@ -26,7 +26,12 @@ FACES: dict[str, int] = {
     "阴险": 49, "亲亲": 50, "吓": 51, "可怜": 52, "赞": 76, "踩": 77, "握手": 78,
     "胜利": 79, "抱拳": 80, "勾引": 81, "拳头": 82, "差劲": 83, "爱你": 84,
     "NO": 85, "OK": 86, "吃瓜": 146, "问号": 148, "滑稽": 178,
+    "抓狂": 19, "饥饿": 24, "骷髅": 37, "糗大了": 43, "示爱": 56, "抱抱": 57,
+    "太阳": 74, "月亮": 75, "转圈": 88, "猪头": 89, "让我想想": 171,
+    "冷漠": 192, "我酸了": 199, "给我整笑了": 200,
 }
+# QQ face id 现行上限：越界表情直接丢弃，绝不让非法 CQ 码带崩整条消息
+FACE_ID_MAX = 337
 _ALIASES: dict[str, str] = {
     "哈哈": "呲牙", "笑": "呲牙", "高兴": "呲牙", "笑哭": "憨笑", "捂脸": "憨笑",
     "生气": "发怒", "愤怒": "发怒", "疑惑": "疑问", "问": "疑问", "什么": "问号",
@@ -75,11 +80,15 @@ def render_faces(text: str) -> str:
         name = m.group(1).strip()
         key = name if name in FACES else _ALIASES.get(name) or _ALIASES.get(name.lower())
         fid = FACES.get(key) if key else None
-        return f"[CQ:face,id={fid}]" if fid is not None else ""
+        if fid is None or fid > FACE_ID_MAX:
+            return ""
+        return f"[CQ:face,id={fid}]"
 
     def sub_bare(m: re.Match) -> str:
         fid = FACES.get(m.group(1).strip())
-        return f"[CQ:face,id={fid}]" if fid is not None else m.group(0)
+        if fid is None or fid > FACE_ID_MAX:
+            return m.group(0)
+        return f"[CQ:face,id={fid}]"
 
     out = _FACE_RE.sub(sub, text or "")
     return _BARE_FACE_RE.sub(sub_bare, out)
@@ -152,3 +161,116 @@ class GroupThrottle:
 
     def record(self, chat_id: str) -> None:
         self._sent.setdefault(chat_id, []).append(self._now())
+
+
+# ---------------------------------------------------------------------------
+# 拟人分段：长回复拆成几条连发——没有真人一次性甩 300 字
+# ---------------------------------------------------------------------------
+def split_reply(text: str, max_chunk: int = 90, max_parts: int = 3) -> list[str]:
+    """按句子拆分长回复，模拟真人连发几条短消息。
+
+    - 短回复（<= max_chunk）原样返回单条；
+    - 按换行/句末标点切句后贪婪合并到 max_chunk；
+    - 超过 max_parts 时剩余内容并入最后一条（绝不丢内容，超长兜底交给 reply_segments）。
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+    if len(text) <= max_chunk:
+        return [text]
+    sentences = [s.strip() for s in re.split(r"(?<=[。！？!?…])\s*", text) if s.strip()]
+    if len(sentences) <= 1:
+        # 没有句读：按长度硬切
+        return [text[i:i + max_chunk] for i in range(0, len(text), max_chunk)][:max_parts] or [text]
+    chunks: list[str] = []
+    buf = ""
+    for s in sentences:
+        if buf and len(buf) + len(s) + 1 > max_chunk:
+            chunks.append(buf)
+            buf = s
+            if len(chunks) >= max_parts:
+                break
+        else:
+            buf = f"{buf} {s}" if buf else s
+    remaining = ""
+    if len(chunks) >= max_parts:
+        # 已到条数上限：剩余句子全部并入最后一条，绝不丢内容
+        joined = " ".join(sentences)
+        remaining = joined[sum(len(c) for c in chunks):].strip()
+        if chunks and remaining:
+            chunks[-1] = (chunks[-1] + " " + remaining).strip()
+        return chunks[:max_parts]
+    if buf:
+        chunks.append(buf)
+    return chunks or [text]
+
+
+# ---------------------------------------------------------------------------
+# 表情包收藏库：从群友聊天里学习第三方表情包（mface 商城表情 + 动画梗图）
+# ---------------------------------------------------------------------------
+class EmoteLib:
+    """群友表情包收藏：mface 参数原样回放、梗图下载到本地后以 file:// 发送。
+
+    索引 JSON 持久化；超过 max_items 时按最旧淘汰（图片文件由调用方清理）。
+    """
+
+    def __init__(self, path: str, max_items: int = 300):
+        self.path = path
+        self.max_items = max_items
+        self.items: list[dict] = []
+        try:
+            import json as _json
+            with open(path, encoding="utf-8") as f:
+                self.items = _json.load(f)
+        except Exception:
+            self.items = []
+
+    def save(self) -> None:
+        import json as _json
+        try:
+            with open(self.path, "w", encoding="utf-8") as f:
+                _json.dump(self.items[-self.max_items:], f, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def add(self, kind: str, summary: str, data: str, group: str = "") -> bool:
+        """新增收藏。kind: mface(回放CQ码) | image(本地文件路径)。去重 + LRU 淘汰。"""
+        summary = (summary or "").strip()
+        data = (data or "").strip()
+        if not data or len(data) > 2000:
+            return False
+        key = (kind, data)
+        if any((it["kind"], it["data"]) == key for it in self.items[-50:]):
+            return False
+        self.items.append({
+            "kind": kind, "summary": summary, "data": data,
+            "group": group, "ts": time.time(),
+        })
+        if len(self.items) > self.max_items:
+            self.items = self.items[-self.max_items:]
+        return True
+
+    def pick(self, keyword: str = "") -> dict | None:
+        """按关键词挑一张（匹配 summary 子串）；无匹配/关键词为空则随机取最近 60 条。"""
+        pool = [it for it in self.items if it["kind"] in ("mface", "image")]
+        if not pool:
+            return None
+        kw = (keyword or "").strip()
+        if kw and kw not in ("随便", "任意", "随机"):
+            hits = [it for it in pool if kw in (it.get("summary") or "")]
+            pool = hits or pool[-60:]
+        else:
+            pool = pool[-60:]
+        return random.choice(pool)
+
+    def render(self, text: str) -> str:
+        """[表情包:关键词] → 对应 CQ 码（mface 回放 / image 本地路径）；库里空则删标记。"""
+        def sub(m: re.Match) -> str:
+            it = self.pick(m.group(1))
+            if not it:
+                return ""
+            if it["kind"] == "mface":
+                return it["data"]
+            return f"[CQ:image,file=file:///{it['data'].lstrip('/')}]" \
+                if not it["data"].lower().startswith("file:") else f"[CQ:image,file={it['data']}]"
+        return re.sub(r"[\[（(【]\s*表情包\s*[:：]\s*([^\]）)】]{1,16}?)\s*[\]）)】]", sub, text or "")
