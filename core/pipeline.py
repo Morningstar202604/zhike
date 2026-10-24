@@ -364,6 +364,15 @@ async def run(message: ChannelMessage, history: list[dict], visitor_key: str) ->
             return prepared
         cfg, query, ctx = prepared
 
+        # 标注回复（Dify annotations 对标）：命中管理员标注的标准答案，直接回复，
+        # 不走 KB/LLM——最便宜、最可控、零延迟。放在所有引擎分支之前。
+        ann = store.annotation_hit(query)
+        if ann:
+            return AgentReply(
+                text=ann["answer"], mode="annotation", confidence=1.0,
+                citations=[f"标注#{ann['id']}"],
+            )
+
         mode = cfg.get("engine", {}).get("mode", "auto")
         llm_reply = None
         if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
@@ -392,6 +401,17 @@ async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: 
         yield ("final", prepared)
         return
     cfg, query, ctx = prepared
+
+    # 标注回复：流式入口同样先查标注（与 run() 语义一致）
+    ann = store.annotation_hit(query)
+    if ann:
+        reply = AgentReply(
+            text=ann["answer"], mode="annotation", confidence=1.0,
+            citations=[f"标注#{ann['id']}"],
+        )
+        yield ("delta", reply.text)
+        yield ("final", reply)
+        return
 
     mode = cfg.get("engine", {}).get("mode", "auto")
     final: AgentReply | None = None
