@@ -4,11 +4,11 @@ import {
   Wrench, Heart, MessageCircle, Check, Loader2, FlaskConical,
   Trash2, Download, Upload,
 } from 'lucide-react'
-import { useConfig, useUpdateConfig, http } from './lib/queries'
+import { useConfig, useUpdateConfig, http, isAuthError } from './lib/queries'
 import { useShell } from './components/ResponsiveShell'
 import { Spinner } from './components/Spinner'
 import TokenGate from './components/TokenGate'
-import { isAuthError } from './lib/queries'
+import { useFeedback } from './components/Feedback'
 import type { AgentConfig } from './types/api'
 import './pages2.css'
 
@@ -222,6 +222,7 @@ function RoleLibrary({ draft, onApply }: { draft: AgentConfig; onApply: (r: Role
 
 export default function BotPersona() {
   const { mobile } = useShell()
+  const fb = useFeedback()
   const { data: cfgRes, isLoading, error, refetch } = useConfig()
   const upd = useUpdateConfig()
   const cfg = cfgRes?.config
@@ -253,7 +254,10 @@ export default function BotPersona() {
 
   const save = () => {
     if (!draft) return
-    upd.mutate(pick(draft))
+    upd.mutate(pick(draft), {
+      onSuccess: () => fb.toast.success('机器人配置已保存并即时生效'),
+      onError: (e) => fb.toast.error(`保存失败：${(e as Error).message}`),
+    })
   }
   const reset = () => cfg && setDraft(structuredClone(cfg))
 
