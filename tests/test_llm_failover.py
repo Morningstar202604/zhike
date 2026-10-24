@@ -46,12 +46,14 @@ def test_race_failover_and_cooldown():
     llm._post_chat, llm._HEDGE_S = fake_post, 0.02
     llm._COOLDOWN.clear()
     try:
-        raw = asyncio.run(llm._race_chain(llm._chain(_cfg(fallback_model="m2"), "m1"), [], {}))
-        assert raw == "ok:m2"
+        raw = asyncio.run(llm._race_chain(llm._chain(_cfg(fallback_model="m2"), "m1"),
+                                          [], {}, parse=lambda t: {"a": t}))
+        assert raw == {"a": "ok:m2"}
         assert llm._cooling("https://a.cn/v1", "m1")
         # 冷却中的候选被跳过：下一次请求直接命中备胎，不再撞墙
-        raw2 = asyncio.run(llm._race_chain(llm._chain(_cfg(fallback_model="m2"), "m1"), [], {}))
-        assert raw2 == "ok:m2"
+        raw2 = asyncio.run(llm._race_chain(llm._chain(_cfg(fallback_model="m2"), "m1"),
+                                           [], {}, parse=lambda t: {"a": t}))
+        assert raw2 == {"a": "ok:m2"}
         assert calls.count("m1") == 1
     finally:
         llm._post_chat, llm._HEDGE_S = orig_post, orig_hedge
@@ -59,15 +61,19 @@ def test_race_failover_and_cooldown():
 
 
 def test_race_empty_answer_counts_as_failure():
+    """HTTP 200 但内容解析不出（空答案/截断 JSON）→ 视作候选失败，换下一个。"""
     async def fake_post(base, key, payload):
-        return None if payload["model"] == "m1" else "ok"
+        if payload["model"] == "m1":
+            return '{"answer": "", "confidence": 0.9}'   # 200 但空答案
+        return '{"answer": "ok", "confidence": 0.9}'
 
     orig_post, orig_hedge = llm._post_chat, llm._HEDGE_S
     llm._post_chat, llm._HEDGE_S = fake_post, 0.02
     llm._COOLDOWN.clear()
     try:
-        raw = asyncio.run(llm._race_chain(llm._chain(_cfg(fallback_model="m2"), "m1"), [], {}))
-        assert raw == "ok"
+        raw = asyncio.run(llm._race_chain(llm._chain(_cfg(fallback_model="m2"), "m1"),
+                                          [], {}, parse=llm._parse_llm_answer))
+        assert raw == {"answer": "ok", "confidence": 0.9}
         assert llm._cooling("https://a.cn/v1", "m1")
     finally:
         llm._post_chat, llm._HEDGE_S = orig_post, orig_hedge
