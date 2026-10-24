@@ -3,20 +3,42 @@ import { Link, useLocation } from 'react-router-dom'
 import {
   MessageCircle, Headset, Settings, Menu, X,
   LayoutDashboard, MessagesSquare, ScrollText, ShieldAlert, ListChecks,
+  Bot, BookOpen,
 } from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import Logo from './Logo'
 
-export const NAV = [
-  { to: '/dashboard', label: '运行总览', icon: <LayoutDashboard size={17} /> },
-  { to: '/sessions', label: '会话中心', icon: <MessagesSquare size={17} /> },
-  { to: '/actions', label: '动作审计', icon: <ShieldAlert size={17} /> },
-  { to: '/runs', label: '任务运行', icon: <ListChecks size={17} /> },
-  { to: '/operator', label: '坐席工作台', icon: <Headset size={17} /> },
-  { to: '/logs', label: '日志中心', icon: <ScrollText size={17} /> },
-  { to: '/', label: '访客对话', icon: <MessageCircle size={17} />, end: true },
-  { to: '/settings', label: '管理中心', icon: <Settings size={17} /> },
+/** 分组导航（Codex 式）：组名小字居上，条目紧凑排布。
+ *  match 可选：自定义激活判定（默认 startsWith，end 表示全等）。 */
+export const NAV_GROUPS = [
+  {
+    label: '工作台',
+    items: [
+      { to: '/dashboard', label: '运行总览', icon: <LayoutDashboard size={16} /> },
+      { to: '/sessions', label: '会话中心', icon: <MessagesSquare size={16} /> },
+      { to: '/operator', label: '坐席工作台', icon: <Headset size={16} /> },
+      { to: '/', label: '访客对话', icon: <MessageCircle size={16} />, end: true },
+    ],
+  },
+  {
+    label: '智能体',
+    items: [
+      { to: '/persona', label: '机器人角色', icon: <Bot size={16} /> },
+      { to: '/settings/kb', label: '知识库', icon: <BookOpen size={16} />, match: (p) => p.startsWith('/settings/kb') },
+      { to: '/runs', label: '任务运行', icon: <ListChecks size={16} /> },
+      { to: '/settings', label: '管理中心', icon: <Settings size={16} />, match: (p) => p.startsWith('/settings') && !p.startsWith('/settings/kb') },
+    ],
+  },
+  {
+    label: '审计',
+    items: [
+      { to: '/actions', label: '动作审计', icon: <ShieldAlert size={16} /> },
+      { to: '/logs', label: '日志中心', icon: <ScrollText size={16} /> },
+    ],
+  },
 ]
+
+export const NAV = NAV_GROUPS.flatMap((g) => g.items)
 
 const Ctx = React.createContext({ drawerOpen: false, setDrawerOpen: () => {}, mobile: false })
 export const useShell = () => useContext(Ctx)
@@ -33,16 +55,20 @@ function SideNav({ onNav }) {
   const loc = useLocation()
   return (
     <nav className="shell-nav">
-      {NAV.map((n) => {
-        const active = n.end ? loc.pathname === n.to : loc.pathname.startsWith(n.to)
-        return (
-          <Link key={n.to} to={n.to} onClick={onNav} className={`shell-item ${active ? 'active' : ''}`}>
-            {n.icon}
-            <span>{n.label}</span>
-            <span className="si-dot" />
-          </Link>
-        )
-      })}
+      {NAV_GROUPS.map((g) => (
+        <div className="nav-group" key={g.label}>
+          <div className="nav-group-label">{g.label}</div>
+          {g.items.map((n) => {
+            const active = n.match ? n.match(loc.pathname) : n.end ? loc.pathname === n.to : loc.pathname.startsWith(n.to)
+            return (
+              <Link key={n.to + n.label} to={n.to} onClick={onNav} className={`shell-item ${active ? 'active' : ''}`}>
+                {n.icon}
+                <span>{n.label}</span>
+              </Link>
+            )
+          })}
+        </div>
+      ))}
     </nav>
   )
 }
@@ -51,7 +77,7 @@ export default function ResponsiveShell({ children }) {
   const mobile = useMediaQuery('(max-width: 960px)')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const loc = useLocation()
-  const isApp = ['/', '/operator', '/settings'].includes(loc.pathname) || loc.pathname.startsWith('/settings/')
+  const isApp = ['/', '/operator', '/persona', '/settings'].includes(loc.pathname) || loc.pathname.startsWith('/settings/')
 
   React.useEffect(() => setDrawerOpen(false), [loc.pathname])
 
