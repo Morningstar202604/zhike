@@ -319,8 +319,9 @@ async def ws_push():
         subprotocols=["zhike-admin", ADMIN_TOKEN],
     ) as ws:
         uid = f"ws-{run_id}"
-        # 用「转人工」确保一定会产生 new_pending，不依赖知识库是否命中
-        sid = ingest("帮我转人工", uid, f"ws-g1-{run_id}")["session_id"]
+        # 必须制造「知识库未命中」来触发 new_pending：本系统没有人工坐席，
+        # 说「转人工」是明确不升级的（handoff 关闭时直接说明只有机器人）。
+        sid = ingest("帮我查一下根本不存在的神秘服务XYZ", uid, f"ws-g1-{run_id}")["session_id"]
         # 坐席通道是广播：可能先收到其他会话的 visitor_message/session_updated，
         # 必须按 type + session_id 匹配本次会话，不能拿第一条就断言。
         deadline = asyncio.get_running_loop().time() + 10
