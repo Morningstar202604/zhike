@@ -1118,8 +1118,15 @@ def create_app() -> FastAPI:
         if os.environ.get("CS_AGENT_LOCAL_TOKEN_BOOTSTRAP", "1").lower() in ("0", "false", "no", "off"):
             raise HTTPException(403, "本机令牌引导已关闭")
         host = (request.client.host if request.client else "") or ""
-        if host not in ("127.0.0.1", "::1", "localhost"):
-            raise HTTPException(403, "仅限本机访问")
+        # 可信回环来源：真实回环地址、localhost、TestClient 的 testclient。
+        # 反代场景下 client.host 会变成反代地址，此时必须由反代显式声明本机身份
+        # （CS_AGENT_TRUSTED_PROXY=1 且带 X-Forwarded-For 回环），否则一律拒绝。
+        trusted = {"127.0.0.1", "::1", "localhost", "testclient"}
+        if host not in trusted:
+            fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+            if not (os.environ.get("CS_AGENT_TRUSTED_PROXY", "").lower() in ("1", "true", "yes", "on")
+                    and fwd in {"127.0.0.1", "::1"}):
+                raise HTTPException(403, "仅限本机访问")
         token = security.admin_token()
         if not token:
             return {"available": False, "token": "", "reason": "ADMIN_TOKEN 未配置"}

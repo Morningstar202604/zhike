@@ -119,7 +119,7 @@ ssh -L 6099:127.0.0.1:6099 user@服务器IP   # 然后浏览器开 http://127.0.
 
 # ⑤ 验收
 curl http://127.0.0.1:8010/healthz            # {"ok":true}
-# 控制台 http://服务器IP:8010 → 管理中心 → 用 ADMIN_TOKEN 登录
+# 控制台 http://服务器IP:8010 → 本机打开会自动登录；远程访问用管理中心「访问令牌」里复制的令牌
 # QQ 群里 @机器人 问一句「订单什么时候发货」→ 应收到带引用的回复
 ```
 
@@ -159,7 +159,7 @@ curl http://127.0.0.1:8010/healthz            # {"ok":true}
 ### 3.3 基础项
 
 - [ ] `curl http://127.0.0.1:8010/healthz` 返回 `{"ok":true}`
-- [ ] 控制台「运行总览」能打开，管理中心用 ADMIN_TOKEN 登录成功
+- [ ] 控制台「运行总览」能打开（本机自动登录；远程用「访问令牌」复制的令牌登录）
 - [ ] `docker logs zhike-gateway` 无报错；控制台渠道页 onebot_v11 显示 online
 - [ ] 访客页（`/`）发消息 → 正常对话（LLM 配好时打字机逐字出）
 - [ ] 未带令牌 `curl -X POST http://IP:8010/v1/ingest` → **401**（安全生效）
@@ -211,6 +211,7 @@ ADMIN_TOKEN=... curl -s -H "X-Admin-Token: $ADMIN_TOKEN" localhost:8010/api/admi
 ## 6. 安全基线（生产必做）
 
 - `.env` 里 `ADMIN_TOKEN`、`CHANNEL_TOKEN` 均已随机化（脚本自动），不要改回占位符
+- 公网部署务必设 `CS_AGENT_LOCAL_TOKEN_BOOTSTRAP=0`：它会关闭「本机自动下发令牌」通道（默认只放行回环地址）
 - 不确定就收紧：`ZHIKE_BIND=127.0.0.1` + 反代/隧道对外
 - NapCat WebUI（6099）只绑本机，走 SSH 隧道访问
 - 公网直连场景建议 `CS_AGENT_CORS_ORIGINS` 填控制台实际域名
@@ -221,5 +222,5 @@ ADMIN_TOKEN=... curl -s -H "X-Admin-Token: $ADMIN_TOKEN" localhost:8010/api/admi
 |---|---|
 | gateway 一直连不上 NapCat | NapCat WebUI 网络配置里没开 WS 服务端 3001，或容器没在同一 compose 网络 |
 | 机器人登录频繁掉线 | 换固定设备登录、别频繁重启容器；NapCat 登录态在 napcat_data volume 里持久化 |
-| 控制台 401 | 管理中心输入 ADMIN_TOKEN；浏览器 localStorage 里是旧令牌就清掉重输 |
+| 控制台 401 | 本机应自动登录；远程访问到「管理中心 → 访问令牌」复制令牌粘贴；仍是旧令牌就清 localStorage |
 | LLM 不生效 | 管理中心「LLM 配置」看连通测试；`USER_LLM_API_KEY` 为空时是规则模式 |

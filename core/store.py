@@ -2106,10 +2106,12 @@ def search_messages(q: str, limit: int = 50, visitor_id: str = "") -> list[dict]
     term = (q or "").strip()
     if not term:
         return []
+    # LIKE 通配符必须转义：否则用户输入 % 会命中整表（已在 admin_sessions 踩过同一个坑）
+    esc = term.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
     sql = ("SELECT m.id, m.session_id, m.role, m.content, m.created_at, s.visitor_id "
            "FROM messages m JOIN sessions s ON s.id = m.session_id "
-           "WHERE m.deleted = 0 AND m.content LIKE ?")
-    args: list = [f"%{term}%"]
+           "WHERE m.deleted = 0 AND m.content LIKE ? ESCAPE '\\'")
+    args: list = [f"%{esc}%"]
     if visitor_id:
         sql += " AND s.visitor_id = ?"
         args.append(visitor_id)
