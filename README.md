@@ -8,7 +8,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Tests](https://img.shields.io/badge/tests-637%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-641%20passed-brightgreen)
 
 </div>
 
@@ -98,7 +98,7 @@ QQ 接入见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md)，Docker / 反代 / 免费部�
 ### 测试
 
 ```bash
-python -m pytest tests -q                      # 637 passed
+python -m pytest tests -q                      # 641 passed
 ruff check core executor gateway scripts --select E9,F63,F7,F82,F401,F841
 cd frontend && npx tsc --noEmit && npm test && npm run build
 ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010
@@ -119,7 +119,7 @@ core/       FastAPI 服务：管线、工具、检索、记忆、提醒、动作
 gateway/    NoneBot2 + OneBot v11 网关：QQ 消息、拟人节奏、群节流
 executor/   独立电脑执行器：路径白名单、命令白名单、删除默认进回收站
 frontend/   React 控制台（Vite + TS/JSX + ECharts + react-i18next）
-tests/      637 条 pytest 回归
+tests/      641 条 pytest 回归
 docs/       QQ 接入路径（QQ-LOGIN.md）与截图
 ```
 
@@ -213,7 +213,7 @@ Screenshots are captured against a demo database from `scripts/seed_demo.py` usi
 ### Tests
 
 ```bash
-python -m pytest tests -q                      # 637 passed
+python -m pytest tests -q                      # 641 passed
 ruff check core executor gateway scripts --select E9,F63,F7,F82,F401,F841
 cd frontend && npx tsc --noEmit && npm test && npm run build
 ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010
@@ -234,7 +234,7 @@ core/       FastAPI service: pipeline, tools, retrieval, memory, reminders, acti
 gateway/    NoneBot2 + OneBot v11 gateway: QQ messages, human-like pacing, group throttling
 executor/   Standalone computer executor: path allowlist, command allowlist, trash-by-default delete
 frontend/   React console (Vite + TS/JSX + ECharts + react-i18next)
-tests/      637 pytest regressions
+tests/      641 pytest regressions
 docs/       QQ setup (QQ-LOGIN.md) and screenshots
 ```
 

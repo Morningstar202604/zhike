@@ -185,6 +185,18 @@ def test_tier3_delete_radius_blocks_after_threshold(client, monkeypatch, tmp_pat
     assert reason and "安全阈值" in reason
 
 
+def test_delete_radius_counts_real_file_count(monkeypatch):
+    """一条 fs.delete 删掉整棵目录时按真实文件数累计，而不是 1 条动作。"""
+    from core.actions import computer
+
+    sid = "radius-tree"
+    store.action_log_create("tree-1", "fs.delete", 2, {"path": "/tmp/tree"}, "agent:admin", 3, sid)
+    store.action_log_update("tree-1", status="executed", result={"files": 200, "size": 1024})
+    monkeypatch.setattr(computer, "TIER3_MAX_DELETE_FILES", 50)
+    spec = __import__("core.actions.registry", fromlist=["get_spec"]).get_spec("fs.delete")
+    assert computer._check_tier3_radius(spec, {"path": "/tmp/x"}, sid)
+
+
 def test_delete_radius_not_applied_to_admin(client, fake_exec, monkeypatch):
     """阈值只约束 T3 自主执行，管理员手动删除不受累计限制。"""
     monkeypatch.setenv("ACTION_L2_ENABLED", "true")

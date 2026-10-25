@@ -158,12 +158,14 @@ def _delete_stats(session_id: str | None) -> tuple[int, int]:
     with store.get_conn() as conn:
         rows = conn.execute(sql, params).fetchall()
     for r in rows:
-        files += 1
+        # 一条 fs.delete 可能删掉整棵目录树：按执行器返回的真实 files/size 累计，
+        # 而不是按 action_log 行数（删 10 万文件曾只算 1 次、0 字节）。
         try:
             res = _json.loads(r["result"] or "{}")
-            total += int(res.get("size") or 0)
         except (ValueError, TypeError):
-            pass
+            res = {}
+        files += int(res.get("files") or 1)
+        total += int(res.get("size") or 0)
     return files, total
 
 
