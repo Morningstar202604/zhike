@@ -35,7 +35,7 @@ QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 
 
 | 能力 | 环境变量 | 不配置时的行为 |
 |---|---|---|
-| 联网搜索 | `SEARCH_PROVIDER` + `TAVILY_API_KEY` / `SERPER_API_KEY` / `SEARXNG_URL` | 前端开关提示"未配置"，对话照常 |
+| 联网搜索 | `SEARCH_PROVIDER` + `TAVILY_API_KEY` / `SERPER_API_KEY` / `SEARXNG_URL` | 前端开关提示"未配置"，对话照常。配置后按需自动联网：知识库命中则不搜，未命中的资讯类问题才自动搜 |
 | 订单查询 | `ORDER_QUERY_URL`（支持 `{order_id}` 占位）、`ORDER_QUERY_TOKEN` | 返回"未接入"并转人工，**不伪造物流信息** |
 | 退款申请 | `REFUND_API_URL`、`REFUND_API_TOKEN` | 同上 |
 | 电脑操作 | `EXECUTOR_POLICY_PATH` + `policy.json` 的 `allow_roots` | 电脑类动作返回 503，对话不受影响 |

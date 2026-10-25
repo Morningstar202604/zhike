@@ -87,6 +87,33 @@ def test_llm_failure_falls_back(monkeypatch):
     assert ans.text
 
 
+def test_websearch_skipped_when_kb_hits(monkeypatch):
+    """知识库已命中时不该自动联网。
+
+    回归：_FACT_RE 把「退货政策是什么」这类含疑问词的业务问题判成资讯类，
+    每次白跑 4 次搜索、多等 3~5 秒（页面实测出现「联网×4」徽章）。
+    """
+    import core.pipeline as pl
+    from core import websearch
+
+    grabbed = {"web": None}
+
+    async def fake_build(query, history, cfg, visitor_id, web_search=False):
+        grabbed["web"] = web_search
+        return {"kb_block": "", "hits": [], "tools_schema": [], "tools": {}, "memory_block": "",
+                "memory": {}, "history": [], "summary": "", "persona": "", "modules_on": {},
+                "used": {"kb": {"hits": []}, "web": {"enabled": web_search}, "memory": {}, "history": {}, "tools": {}}}
+
+    monkeypatch.setattr(pl, "build_context_async", fake_build)
+    monkeypatch.setattr(websearch, "available", lambda: True)
+
+    asyncio.run(pl.run(ChannelMessage(text="退货政策是什么"), [], "v-web-kb"))
+    assert grabbed["web"] is False, "KB 命中时不应自动联网"
+
+    asyncio.run(pl.run(ChannelMessage(text="今天的英伟达股价是多少"), [], "v-web-miss"))
+    assert grabbed["web"] is True, "KB 未命中的资讯类问题应自动联网"
+
+
 def test_long_message_truncated(monkeypatch):
     monkeypatch.setenv("USER_MAX_MESSAGE_LEN", "50")
     ans = _ask("开" * 500)
