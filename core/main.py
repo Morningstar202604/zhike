@@ -216,7 +216,20 @@ async def lifespan(app: FastAPI):
             "CHANNEL_TOKEN 未设置：/v1/ingest 与网关心跳已禁用（503）。生产部署必须设置。"
         )
     app.state.limiter = ratelimit.SQLiteRateLimiter()
-    yield
+
+    # 提醒调度：到点主动推回原渠道（QQ 群/私聊 or 网页会话）
+    from core import reminders
+
+    _rem_stop = asyncio.Event()
+    _rem_task = asyncio.create_task(reminders.run_forever(_rem_stop))
+    try:
+        yield
+    finally:
+        _rem_stop.set()
+        try:
+            await asyncio.wait_for(_rem_task, timeout=5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            _rem_task.cancel()
     # 退出时关闭共享 HTTP 连接池，避免资源泄漏
     try:
         from core import http_pool
@@ -414,33 +427,30 @@ def create_app() -> FastAPI:
     def _safe_reply(error: Exception) -> "pipeline.AgentReply":
         """管线内部异常时的兜底回复。
 
-        用户不该因为一次模型/网络故障看到 500，也不能看到沉默——统一转人工并留日志。
+        用户不该因为一次模型/网络故障看到 500，也不能看到沉默——统一给可重试话术并留日志。
         """
         ev.error("pipeline failed: %s: %s", type(error).__name__, str(error)[:200])
         return pipeline.AgentReply(
-            text="抱歉，刚才处理时出了点问题，已为您转接人工坐席。",
+            text="抱歉，刚才处理时出了点问题，你再说一遍？",
             confidence=0.0,
             escalate=True,
             escalate_reason="pipeline_error",
             mode="fallback",
         )
 
-    # 进入这些升级原因后，机器人必须停嘴：访客明确要人、差评升级、图片需人看、输出被拦。
-    # 知识库未命中自动升级不在此列——坐席还没接手时，机器人继续答比让访客干等更好。
-    HUMAN_ONLY_REASONS = {"visitor_requested", "feedback_not_helpful",
-                          "image_needs_human", "output_guardrail"}
-
     def _is_human_handled(sid: str) -> bool:
-        """会话是否已由人工接管（或已明确要求人工）：是则机器人不得再抢答。"""
+        """会话是否已由坐席在控制台实际接管。
+
+        只有「agent_handled」（真有人在控制台接管）才让机器人停嘴。
+        旧实现把 visitor_requested / feedback_not_helpful / image_needs_human /
+        output_guardrail 也当成停嘴条件——本系统没有人工客服，一旦触发这些原因
+        机器人就永久沉默，用户只能看到空气。
+        """
         sess = store.get_session(sid)
-        if not sess:
-            return False
-        if sess["status"] == "agent_handled":
-            return True
-        return sess["status"] == "pending_agent" and (sess.get("escalate_reason") or "") in HUMAN_ONLY_REASONS
+        return bool(sess and sess["status"] == "agent_handled")
 
     async def _route_to_operator(sid: str, text: str, image: str | None, visitor_key: str) -> None:
-        """人工接管期间：消息只落库并推给坐席台，不进入 AI 管线。"""
+        """坐席接管期间：消息只落库并推给坐席台，不进入 AI 管线。"""
         _preflight(sid, text, visitor_key)
         content = text or "（附图）"
         store.add_message(sid, "visitor", content)
@@ -550,7 +560,7 @@ def create_app() -> FastAPI:
                 }
         sid = sessions.resolve_session(f"{body.channel_type}:{chat_key}", identity)
         if _is_human_handled(sid):
-            # 已转人工/已接管：机器人不回话，消息落库并推给坐席台
+            # 已由坐席接管：机器人不回话，消息落库并推给坐席台
             await _route_to_operator(sid, text, body.image_b64, identity)
             return {
                 "session_id": sid, "message_id": None, "ticket_id": None,
@@ -595,11 +605,62 @@ def create_app() -> FastAPI:
         channel_user_id: str
         group_id: str | None = None
 
+    # ---- 提醒 / 待办（秘书核心能力）----
+    class ReminderIn(BaseModel):
+        text: str
+        when: str = ""
+        due_at: str = ""
+        visitor_id: str = ""
+        chat_key: str = ""
+        channel_type: str = "webchat"
+        group_id: str | None = None
+        channel_user_id: str | None = None
+
+    @app.get("/api/reminders", dependencies=[Depends(require_admin)])
+    def reminders_list(visitor_id: str = "", status: str = "pending", limit: int = 50):
+        return {"reminders": store.reminder_list(visitor_id=visitor_id, status=status,
+                                                 limit=min(max(limit, 1), 200))}
+
+    @app.post("/api/reminders", dependencies=[Depends(require_admin)])
+    def reminders_create(body: ReminderIn):
+        from core import tools as tools_mod
+
+        text = (body.text or "").strip()
+        if not text:
+            raise HTTPException(400, "提醒内容不能为空")
+        due_iso = (body.due_at or "").strip()
+        if not due_iso:
+            from datetime import datetime, timezone
+
+            due = tools_mod._parse_due(body.when, datetime.now(timezone.utc))
+            if due is None:
+                raise HTTPException(400, f"看不懂时间表达：{body.when or '(空)'}")
+            due_iso = due.isoformat()
+        rec = store.reminder_add(
+            visitor_id=(body.visitor_id or "admin").strip(),
+            chat_key=(body.chat_key or f"{body.channel_type}:{body.visitor_id or 'admin'}").strip(),
+            text=text, due_at=due_iso, channel_type=body.channel_type,
+            group_id=body.group_id, channel_user_id=body.channel_user_id,
+        )
+        return rec
+
+    @app.delete("/api/reminders/{rid}", dependencies=[Depends(require_admin)])
+    def reminders_cancel(rid: int):
+        if not store.reminder_cancel(rid):
+            raise HTTPException(404, "提醒不存在或已触发")
+        return {"cancelled": rid}
+
+    @app.post("/api/reminders/tick", dependencies=[Depends(require_admin)])
+    async def reminders_tick():
+        """手动触发一次到期扫描（排障/演示用）。"""
+        from core import reminders
+
+        return {"sent": await reminders.tick()}
+
     # ---- 标注回复（Dify annotations 对标）：命中标准答案直接回复 ----
     @app.get("/api/annotations", dependencies=[Depends(require_admin)])
     def annotations_list():
         return {"annotations": store.annotations_list()}
-
     @app.post("/api/annotations", dependencies=[Depends(require_admin)])
     def annotations_create(body: AnnotationIn):
         q = body.question.strip()
@@ -836,8 +897,8 @@ def create_app() -> FastAPI:
         if sess["status"] == "closed":
             raise HTTPException(409, "会话已关闭，请开始新会话")
         if _is_human_handled(sid):
-            # 与 ingest/非流式一致：只有「明确要人/已接管」才停机器人，
-            # 知识库未命中自动升级仍允许 AI 继续服务（坐席未接手时）
+            # 与 ingest/非流式一致：只有「真有人在控制台接管」才停机器人，
+            # 其他升级原因（未命中/差评/图片）机器人继续服务
             await _route_to_operator(sid, content, body.image, visitor_id)
 
             async def human_gen():
@@ -923,9 +984,11 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "会话不存在")
         if sess["status"] == "closed":
             raise HTTPException(409, "会话已关闭")
+        # 显式升级接口（控制台/坐席工具调用）保持原语义：真进待接管队列。
+        # 对客自动话术里的「转人工」不走这里，由 pipeline 的 escalation.handoff 决定。
         store.mark_escalated(sid, "visitor_requested")
         ticket_id = store.create_ticket(sid)
-        store.add_message(sid, "agent", "好的，正在为您转接人工坐席。")
+        store.add_message(sid, "agent", "这儿没有人工客服，只有我这个机器人。有问题直接说。")
         await hub.broadcast_to_operators(
             {"type": "new_pending", "session_id": sid, "ticket_id": ticket_id, "reason": "visitor_requested"}
         )
@@ -1007,7 +1070,7 @@ def create_app() -> FastAPI:
             if sess and sess["status"] == "ongoing":
                 store.mark_escalated(sid, "feedback_not_helpful")
                 ticket_id = store.create_ticket(sid)
-                store.add_message(sid, "agent", "很抱歉回答未帮到您，已为您转接人工坐席。", tool_used="feedback")
+                store.add_message(sid, "agent", "没帮上忙，抱歉。换个问法再试试？", tool_used="feedback")
                 return {"rating": body.rating, "escalated": True, "ticket_id": ticket_id}
         return {"rating": body.rating, "escalated": False}
 

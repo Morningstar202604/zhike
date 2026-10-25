@@ -5,7 +5,7 @@ import {
 import {
   MessageCircle, Headset, Settings, Menu, X,
   LayoutDashboard, MessagesSquare, ScrollText, ShieldAlert, ListChecks,
-  Bot, BookOpen, Stamp, Moon, Sun, Search, Command,
+  Bot, BookOpen, Stamp, Moon, Sun, Search, Command, Bell,
 } from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import Logo from './Logo'
@@ -17,9 +17,10 @@ export const NAV_GROUPS = [
     label: '工作台',
     items: [
       { to: '/dashboard', label: '运行总览', icon: <LayoutDashboard size={16} /> },
-      { to: '/sessions', label: '会话中心', icon: <MessagesSquare size={16} /> },
-      { to: '/operator', label: '坐席工作台', icon: <Headset size={16} /> },
-      { to: '/', label: '访客对话', icon: <MessageCircle size={16} />, end: true },
+      { to: '/', label: '和秘书聊', icon: <MessageCircle size={16} />, end: true },
+      { to: '/reminders', label: '提醒待办', icon: <Bell size={16} /> },
+      { to: '/sessions', label: '全部对话', icon: <MessagesSquare size={16} /> },
+      { to: '/operator', label: '协作台', icon: <Headset size={16} /> },
     ],
   },
   {
@@ -93,7 +94,7 @@ function CommandPalette({ close }) {
 function Brand({ onToggleTheme, theme }) {
   return (
     <div className="shell-brand">
-      <Logo size={30} onDark withText subtitle="在线客服台" />
+      <Logo size={30} onDark withText subtitle="私人秘书" />
       <button className="theme-toggle" onClick={onToggleTheme} title={theme === 'dark' ? '切换亮色' : '切换暗色'}>
         {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
       </button>
@@ -190,7 +191,7 @@ export default function ResponsiveShell({ children }) {
             <Command size={12} /> <span>K</span>
           </button>
           <div className="shell-foot">
-            知客<br />在线客服台 · MIT
+            知客<br />你的私人秘书 · MIT
           </div>
         </aside>
         <main className={mainClass}>{children}</main>

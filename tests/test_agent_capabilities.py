@@ -168,12 +168,14 @@ def test_pipeline_image_with_vision_model_goes_llm(monkeypatch, tmp_path):
     assert called["image"] == "iVBORw0KGgo"
 
 
-def test_pipeline_image_without_vision_still_escalates(monkeypatch, tmp_path):
+def test_pipeline_image_without_vision_asks_for_text(monkeypatch, tmp_path):
+    """没有视觉模型时不能让会话转人工（本系统没有人工），要请用户用文字描述。"""
     _init_store(monkeypatch, tmp_path)
     import core.config as config_mod
     monkeypatch.setattr(config_mod, "get_config", lambda: _cfg(multimodal={"enable": True, "vision_model": ""}))
     reply = asyncio.run(pipeline.run(pipeline.ChannelMessage(text="", image_b64="iVBORw0KGgo"), [], "v4"))
-    assert reply.escalate and reply.escalate_reason == "image_needs_human"
+    assert reply.escalate is False
+    assert "文字" in reply.text
 
 
 # ---------- 混合检索 ----------

@@ -136,7 +136,33 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     if "secret" not in cols:
         conn.execute("ALTER TABLE sessions ADD COLUMN secret TEXT")
     _ensure_action_schema(conn)
+    _ensure_reminder_schema(conn)
     _seed_builtins(conn)
+
+
+def _ensure_reminder_schema(conn: sqlite3.Connection) -> None:
+    """提醒表。必须与迁移 v15 保持同构——测试库只跑 _ensure_schema 不跑迁移。"""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            visitor_id TEXT NOT NULL,
+            chat_key TEXT NOT NULL,
+            channel_type TEXT NOT NULL DEFAULT 'webchat',
+            group_id TEXT,
+            channel_user_id TEXT,
+            text TEXT NOT NULL,
+            due_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            sent_at TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, due_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_visitor ON reminders(visitor_id, status)")
 
 
 def _ensure_action_schema(conn: sqlite3.Connection) -> None:
@@ -228,6 +254,53 @@ def _ensure_action_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+# 秘书向内置工具（第 2 批）：上下文 / 记忆 / 提醒 / 网页 / 文件 / 识图 / QQ。
+# 与业务工具不同，这些是"真能干活"的本地能力，默认全开。
+_EXTRA_TOOLS: list[dict] = [
+    ("current_context", "读当前对话", "查看这次对话最近说了什么、当前在哪个群", {}),
+    ("recall_memory", "回忆关于你的事", "读取长期记忆里保存的信息", {"key": "string"}),
+    ("remember", "记住一件事", "把用户的偏好或事实写入长期记忆",
+     {"key": "string", "value": "string"}),
+    ("remind", "设提醒", "在指定时间提醒用户（如 10分钟后 / 明天9点）",
+     {"text": "string", "when": "string"}),
+    ("list_reminders", "查看待提醒", "列出还没触发的提醒", {}),
+    ("cancel_reminder", "取消提醒", "按编号取消一条提醒", {"reminder_id": "string"}),
+    ("read_webpage", "读网页", "打开一个链接并读正文（仅公网地址）",
+     {"url": "string", "max_chars": "string"}),
+    ("web_search", "联网搜", "搜索实时信息", {"query": "string", "top_k": "string"}),
+    ("list_files", "列目录", "列出目录下的文件（受执行器策略白名单限制）",
+     {"path": "string", "depth": "string"}),
+    ("read_file", "读文件", "读取文本文件（受执行器策略白名单限制）",
+     {"path": "string", "max_chars": "string"}),
+    ("describe_image", "看图", "识别图片内容或读取图中文字", {"source": "string", "question": "string"}),
+    ("search_emote", "找表情包", "在收藏的表情包里按关键词查找", {"keyword": "string"}),
+    ("qq_group_history", "读群记录", "读取群聊最近的聊天记录",
+     {"group_id": "string", "count": "string"}),
+    ("qq_send", "发QQ消息", "主动往群里或私聊发一条消息", {"text": "string", "target": "string"}),
+]
+
+
+def _extra_tool_seeds() -> list[dict]:
+    return [
+        {"id": tid, "name": name, "desc": desc,
+         "args_json": json.dumps(args, ensure_ascii=False), "builtin": 1}
+        for tid, name, desc, args in _EXTRA_TOOLS
+    ]
+
+
+def _backfill_builtin_tools(conn: sqlite3.Connection) -> None:
+    """给已存在的库补上后加的内置工具（幂等：只插缺失项）。"""
+    existing = {r["id"] for r in conn.execute("SELECT id FROM tools").fetchall()}
+    for t in _extra_tool_seeds():
+        if t["id"] in existing:
+            continue
+        conn.execute(
+            "INSERT INTO tools (id, name, desc, args_json, enabled, builtin, updated_at) "
+            "VALUES (?, ?, ?, ?, 1, ?, ?)",
+            (t["id"], t["name"], t["desc"], t["args_json"], t["builtin"], _now()),
+        )
+
+
 def _seed_builtins(conn: sqlite3.Connection) -> None:
     existing_tools = conn.execute("SELECT COUNT(*) AS c FROM tools").fetchone()["c"]
     if existing_tools == 0:
@@ -239,11 +312,15 @@ def _seed_builtins(conn: sqlite3.Connection) -> None:
             {"id": "lookup_policy", "name": "查退改政策", "desc": "按主题检索退改签政策",
              "args_json": json.dumps({"topic": "string"}, ensure_ascii=False), "builtin": 1},
         ]
+        builtin_tools += _extra_tool_seeds()
         for t in builtin_tools:
             conn.execute(
                 "INSERT INTO tools (id, name, desc, args_json, enabled, builtin, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
                 (t["id"], t["name"], t["desc"], t["args_json"], t["builtin"], _now()),
             )
+    else:
+        # 老库补齐新内置工具：只补缺失的 id，不改用户已改过的描述/开关
+        _backfill_builtin_tools(conn)
     existing_rules = conn.execute("SELECT COUNT(*) AS c FROM injection_rules").fetchone()["c"]
     if existing_rules == 0:
         default_exprs = [
@@ -532,7 +609,7 @@ def get_session(session_id: str) -> dict | None:
 
 
 def mark_escalated(session_id: str, reason: str) -> None:
-    """标记转人工。已关闭的会话不允许被"复活"成待接管。
+    """标记升级。已关闭的会话不允许被"复活"成待接管。
 
     之前无条件改成 pending_agent，导致关闭后访客再发一条消息就把已结束
     的会话重新拉回队列（已复现），工单也会被重开。
@@ -1926,3 +2003,70 @@ def card_for_chat(chat_key: str) -> dict | None:
             "SELECT c.* FROM card_bindings b JOIN character_cards c ON c.id = b.card_id "
             "WHERE b.chat_key = ?", (chat_key,)).fetchone()
     return _card_row(r) if r else None
+
+
+# ============================================================
+# 提醒 / 待办（秘书核心能力）
+# ============================================================
+
+def reminder_add(visitor_id: str, chat_key: str, text: str, due_at: str,
+                 channel_type: str = "webchat", group_id: str | None = None,
+                 channel_user_id: str | None = None) -> dict:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO reminders (visitor_id, chat_key, channel_type, group_id, "
+            "channel_user_id, text, due_at, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+            (visitor_id, chat_key, channel_type, group_id, channel_user_id, text, due_at, _now()),
+        )
+        rid = cur.lastrowid
+    return reminder_get(int(rid)) or {}
+
+
+def reminder_get(rid: int) -> dict | None:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        r = conn.execute("SELECT * FROM reminders WHERE id = ?", (rid,)).fetchone()
+    return dict(r) if r else None
+
+
+def reminder_list(visitor_id: str = "", status: str = "pending", limit: int = 50) -> list[dict]:
+    sql = "SELECT * FROM reminders WHERE 1=1"
+    args: list = []
+    if visitor_id:
+        sql += " AND visitor_id = ?"
+        args.append(visitor_id)
+    if status:
+        sql += " AND status = ?"
+        args.append(status)
+    sql += " ORDER BY due_at LIMIT ?"
+    args.append(limit)
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def reminder_due(now: str, limit: int = 20) -> list[dict]:
+    """取出到期且仍待发的提醒。"""
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM reminders WHERE status = 'pending' AND due_at <= ? "
+            "ORDER BY due_at LIMIT ?", (now, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def reminder_mark(rid: int, status: str, error: str = "") -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE reminders SET status = ?, sent_at = ?, attempts = attempts + 1, "
+            "last_error = ? WHERE id = ?",
+            (status, _now() if status == "sent" else None, error[:200], rid),
+        )
+
+
+def reminder_cancel(rid: int) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE reminders SET status = 'cancelled' WHERE id = ? AND status = 'pending'", (rid,))
+    return cur.rowcount > 0

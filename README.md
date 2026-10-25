@@ -1,23 +1,23 @@
-# 知客 Zhike · 在线客服 Agent
+# 知客 Zhike · 你的私人秘书
 
 <div align="center">
 
 **知客 · 把每一次咨询，交到该在的人手上**
 
-QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 注入护栏
+QQ 群/私聊 · Web 对话 · 协作台 · RAG 检索 · 工具调用 · 提醒待办 · 注入护栏
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-475%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-534%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-80%25%20core-blue)
 
 </div>
 
 ---
 
-重做自 `badhope/online-cs-agent`（MIT）：把「Web 演示」升级为「渠道可接、可部署、可审计」的客服 Agent 底座。QQ 走 NapCat(OneBot v11) + NoneBot2 网关，核心服务独立成 API，React 控制台单端口托管。MIT 开源。
+重做自 `badhope/online-cs-agent`（MIT）：把「Web 演示」升级为「渠道可接、可部署、可审计」的私人秘书底座。QQ 走 NapCat(OneBot v11) + NoneBot2 网关，核心服务独立成 API，React 控制台单端口托管。MIT 开源。
 
 **仓库（三平台同步）**：[GitCode](https://gitcode.com/badhope/zhike) · [Gitee](https://gitee.com/badhope/zhike) · [GitHub](https://github.com/badhope/zhike)
 
@@ -36,25 +36,25 @@ QQ 群/私聊 · Web 访客 · 坐席工作台 · RAG 检索 · 工具调用 · 
 | 能力 | 环境变量 | 不配置时的行为 |
 |---|---|---|
 | 联网搜索 | `SEARCH_PROVIDER` + `TAVILY_API_KEY` / `SERPER_API_KEY` / `SEARXNG_URL` | 前端开关提示"未配置"，对话照常。配置后按需自动联网：知识库命中则不搜，未命中的资讯类问题才自动搜 |
-| 订单查询 | `ORDER_QUERY_URL`（支持 `{order_id}` 占位）、`ORDER_QUERY_TOKEN` | 返回"未接入"并转人工，**不伪造物流信息** |
+| 订单查询 | `ORDER_QUERY_URL`（支持 `{order_id}` 占位）、`ORDER_QUERY_TOKEN` | 返回"未接入"，**不伪造物流信息** |
 | 退款申请 | `REFUND_API_URL`、`REFUND_API_TOKEN` | 同上 |
 | 电脑操作 | `EXECUTOR_POLICY_PATH` + `policy.json` 的 `allow_roots` | 电脑类动作返回 503，对话不受影响 |
 | Agent 自主度 | `AGENT_TIER`（0-3）、`ALLOW_TIER3`、`ALLOWED_ACTIONS_T3` | 默认 T1：只读 + 白名单内可逆写 |
 | 破坏性动作 | `ACTION_L2_ENABLED=false` | 踢人/退群/删文件等一律拒绝 |
 
-**演进路线见 [docs/PLAN-AGENT-EVOLUTION.md](docs/PLAN-AGENT-EVOLUTION.md)**：从「客服机器人」到「控 QQ 账号 + 控电脑」的分级权限 Agent（T0 只读 → T3 自主，对齐 opencode 这类本地编程 Agent 的自主度），含 16 条已复现缺陷的修法、五个阶段的任务与验收标准。
+**演进路线见 [docs/PLAN-AGENT-EVOLUTION.md](docs/PLAN-AGENT-EVOLUTION.md)**：从「聊天秘书」到「控 QQ 账号 + 控电脑」的分级权限 Agent（T0 只读 → T3 自主，对齐 opencode 这类本地编程 Agent 的自主度），含 16 条已复现缺陷的修法、五个阶段的任务与验收标准。
 
 ## 架构
 
 ```
 QQ群/私聊 ─► NapCat ──OneBot v11──► NoneBot2 网关 ──┐
                                                     ├─► core (FastAPI)：护栏→检索→工具→LLM
-Web 访客 + 坐席工作台 ──/api + /ws──────────────────┘     会话/记忆/工单/限流
+Web 对话 + 协作台 ────/api + /ws──────────────────┘     会话/记忆/工单/限流
 ```
 
 ## 截图与演示
 
-**演示视频（真实浏览器录制 73 秒，带字幕：访客提问 / 坐席接管 / 审计链校验 / 知识库试召回）**：[docs/media/demo.mp4](docs/media/demo.mp4)（WebM 备选 [demo.webm](docs/media/demo.webm)）
+**演示视频（真实浏览器录制 73 秒，带字幕：用户提问 / 真人接管 / 审计链校验 / 知识库试召回）**：[docs/media/demo.mp4](docs/media/demo.mp4)（WebM 备选 [demo.webm](docs/media/demo.webm)）
 
 > 截图与视频来自 `scripts/seed_demo.py` 生成的演示数据（`docs/screenshots/`），不是测试残留；复现命令见「测试与验证」。
 
@@ -62,9 +62,9 @@ Web 访客 + 坐席工作台 ──/api + /ws───────────�
 |---|---|
 | ![访客对话](docs/screenshots/visitor-chat.png) | ![运行总览](docs/screenshots/dashboard.png) |
 
-| 坐席工作台 | 会话中心（关键字搜索） |
+| 协作台 | 会话中心（关键字搜索） |
 |---|---|
-| ![坐席工作台](docs/screenshots/operator.png) | ![会话中心](docs/screenshots/sessions.png) |
+| ![协作台](docs/screenshots/operator.png) | ![会话中心](docs/screenshots/sessions.png) |
 
 | 动作审计（权限档位 + 哈希链校验） | 任务运行（后台执行 + 步骤回放） |
 |---|---|
@@ -88,7 +88,7 @@ Web 访客 + 坐席工作台 ──/api + /ws───────────�
 
 | 项 | 结果 |
 |---|---|
-| 后端测试 | 475 passed（含 15 条第三轮回归） |
+| 后端测试 | 534 passed（含 15 条第三轮回归 + 秘书工具层 32 条） |
 | 覆盖率 | core 行 80% / 分支 79%（第三轮实测 4224 行） |
 | 变异测试 | 15 个关键变异全部被杀死（抽样） |
 | 在线体检 | `scripts/e2e_check.py` 18/18；`scripts/action_e2e.py` 13/13；`scripts/qq_e2e.py` 3/3（假协议端） |
@@ -167,7 +167,7 @@ ONEBOT_WS_URL=ws://127.0.0.1:3001 CORE_BASE_URL=http://127.0.0.1:8010 CHANNEL_TO
 
 LLM 配好后可用 `POST /api/admin/llm-test`（管理页）实测连通性与延迟。
 
-运行时还可以在坐席工作台「设置」里改 persona / 检索 top-K / 门槛 / 工具开关 / 注入规则（存 DB，即时生效）。
+运行时还可以在协作台「设置」里改 persona / 检索 top-K / 门槛 / 工具开关 / 注入规则（存 DB，即时生效）。
 
 ## 控制台页面（frontend :5173）
 
@@ -177,7 +177,7 @@ LLM 配好后可用 `POST /api/admin/llm-test`（管理页）实测连通性与�
 | 会话中心 | /sessions | 全部会话（渠道/状态筛选 + 关键字搜索访客/会话/消息内容），对话回放与关闭 |
 | 动作审计 | /actions | 43 个动作的权限档位、执行日志、L2 审批队列、哈希链校验 |
 | 任务运行 | /runs | 发起多步任务（后台执行）、1.5s 实时进度、步骤回放、一键取消 |
-| 坐席工作台 | /operator | 待接管队列 + 工单，接管/回复/关闭（WebSocket 实时），答案一键回流知识库 |
+| 协作台 | /operator | 待接管队列 + 工单，接管/回复/关闭（WebSocket 实时），答案一键回流知识库 |
 | 日志中心 | /logs | Agent 运行事件实时滚动（3 秒刷新，级别过滤，保留 1000 条） |
 | 访客对话 | / | 网页访客入口；思考过程折叠、Markdown/代码高亮、逐条删除、联网搜索开关 |
 | 管理中心 | /settings | 能力参数/工具注册表/注入规则/知识库/数据概览/长期记忆/注入日志 七大面板 |
@@ -208,7 +208,7 @@ ADMIN_TOKEN=demo-admin python scripts/record_demo.py http://127.0.0.1:8012   # �
 
 ## 安全与合规（必读）
 
-- **默认拒绝**：未设置 `ADMIN_TOKEN` 时所有管理/坐席接口返回 503；`/api/actions/execute` 与 `/api/agent/run` 必须先出示 ADMIN/AGENT/CHANNEL 令牌，匿名一律 401（此前匿名可执行 L0 读取动作，已修复并有回归用例）。
+- **默认拒绝**：未设置 `ADMIN_TOKEN` 时所有管理/协作接口返回 503；`/api/actions/execute` 与 `/api/agent/run` 必须先出示 ADMIN/AGENT/CHANNEL 令牌，匿名一律 401（此前匿名可执行 L0 读取动作，已修复并有回归用例）。
 - **会话归属**：访客会话为 `sid + session_secret` 双因子；WS 凭据走 `Sec-WebSocket-Protocol` 子协议（query 参数会进 access log，仅保留兼容）。
 - **访客身份**：`visitor_id` 由服务端随机生成；客户端自带 id 时首声明签发令牌，复用必须出示（防止填别人 id 读到对方长期记忆）。
 - **消息管线防护**：注入护栏（内置规则 + 管理台正则库，表达式 ≤300 字符防回溯滥用）、每身份 + 每 IP 滑动窗口限流（SQLite 存储，多 worker 共享）、SPA 静态服务 realpath 包含性校验（防路径穿越）。
@@ -217,4 +217,4 @@ ADMIN_TOKEN=demo-admin python scripts/record_demo.py http://127.0.0.1:8012   # �
 - **审计**：动作执行、审批、会话创建/关闭、配置变更写入 SHA-256 哈希链，可在「动作审计」页一键校验完整性。
 - **渠道健康**：网关 30 秒心跳上报，>90 秒无心跳控制台标记 stale；`/api/debug/conn` 已收进管理令牌。
 - NapCat 为**自定义非商用许可**的非官方协议端：个人/内部使用可接受，商用前必须复核其 LICENSE 原文并评估腾讯风控；合规优先场景改走 QQ 官方机器人 API（Roadmap P2）。
-- 微信侧不做个人号协议；走企业微信「微信客服」/公众号客服接口（官方 API，Roadmap）。
+- 微信侧不做个人号协议；走企业微信客服 / 公众号接口（官方 API，Roadmap）。

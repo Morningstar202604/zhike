@@ -61,14 +61,14 @@ export default function Dashboard() {
 
   const hourOption: EChartsOption | undefined = st ? {
     tooltip: { trigger: 'axis' },
-    legend: { data: ['访客', 'Agent', '坐席'], textStyle: { color: 'rgba(128,128,145,.9)', fontSize: 11 }, top: 0 },
+    legend: { data: ['访客', 'Agent', '真人'], textStyle: { color: 'rgba(128,128,145,.9)', fontSize: 11 }, top: 0 },
     grid: { left: 36, right: 12, top: 30, bottom: 26 },
     xAxis: { type: 'category', data: st.messages_by_hour.map((m) => m.bucket), ...AXIS, axisLabel: { ...AXIS.axisLabel, formatter: (v: string) => v.slice(5).replace('T', ' ') } },
     yAxis: { type: 'value', ...AXIS, splitLine: { lineStyle: { color: 'rgba(128,128,145,.15)' } } },
     series: [
       { name: '访客', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.visitor), itemStyle: { color: PALETTE[0] } },
       { name: 'Agent', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.agent), itemStyle: { color: PALETTE[1] } },
-      { name: '坐席', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.operator), itemStyle: { color: PALETTE[2] } },
+      { name: '真人', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.operator), itemStyle: { color: PALETTE[2] } },
     ],
   } : undefined
 
@@ -169,7 +169,7 @@ export default function Dashboard() {
     tooltip: { trigger: 'axis' },
     grid: { left: 80, right: 24, top: 10, bottom: 26 },
     xAxis: { type: 'value', minInterval: 1, ...AXIS, splitLine: { lineStyle: { color: 'rgba(128,128,145,.15)' } } },
-    yAxis: { type: 'category', data: ['消息', 'KB回答', '工具调用', '转人工', '拦截'], ...AXIS },
+    yAxis: { type: 'category', data: ['消息', 'KB回答', '工具调用', '升级', '拦截'], ...AXIS },
     series: [{
       name: '近 24 小时', type: 'bar', barWidth: 14,
       itemStyle: { color: PALETTE[4], borderRadius: [0, 6, 6, 0] },
@@ -225,8 +225,8 @@ export default function Dashboard() {
       {ov && ov.pending > 0 && (
         <Link to="/operator" className="block bg-warn-soft border border-warn rounded-xl p-4 flex items-center gap-3 hover:opacity-90 transition">
           <AlertTriangle size={18} className="text-warn" />
-          <span className="text-sm font-medium">有 {ov.pending} 个会话等待人工接管</span>
-          <span className="btn sm ml-auto"><Headset size={13} /> 前往坐席台</span>
+          <span className="text-sm font-medium">有 {ov.pending} 个会话等待接续</span>
+          <span className="btn sm ml-auto"><Headset size={13} /> 前往协作台</span>
         </Link>
       )}
 
@@ -296,7 +296,7 @@ export default function Dashboard() {
           <ChartCard title="渠道分布" icon={<Bot size={15} />}>
             <EChart option={channelOption ?? emptyOpt} height={250} />
           </ChartCard>
-          <ChartCard title="升级转人工原因" icon={<Headset size={15} />}>
+          <ChartCard title="升级原因" icon={<Headset size={15} />}>
             <EChart option={escalateOption ?? emptyOpt} height={250} />
           </ChartCard>
           <ChartCard title="工具调用排行" icon={<Zap size={15} />}>

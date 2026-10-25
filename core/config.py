@@ -38,7 +38,7 @@ def _defaults() -> dict:
             "persona": True,
             "summary": True,
         },
-        "persona": "你是知客，专业的在线客服 Agent，语气友好、简洁、可靠，使用中文回答。",
+        "persona": "你是知客，用户的私人秘书。语气友好、简洁、可靠，使用中文回答。你会记事、设提醒、查资料、读文件、看网页；不确定时如实说明。",
     },
     "memory": {
         "enable": True,
@@ -66,6 +66,10 @@ def _defaults() -> dict:
             "confidence_threshold": float(os.environ.get("USER_ESCALATE_THRESHOLD", "0.6")),
             "max_message_len": int(os.environ.get("USER_MAX_MESSAGE_LEN", "1000")),
             "react_steps": int(os.environ.get("USER_REACT_STEPS", "3")),
+            # 是否有真人可以接管：私人秘书场景通常没有，团队客服场景才有。
+            # 关掉后不再假装「正在转接」，避免承诺一个不存在的真人。
+            # 默认关闭：本产品默认是纯机器人（QQ 群/私聊），没有人工客服坐席。
+            "handoff": os.environ.get("USER_HANDOFF_ENABLED", "0").lower() in ("1", "true", "yes", "on"),
         },
         # 渠道准入（chatgpt-on-wechat 群白名单对标）：开启后仅白名单群可获得回复
         "channels": {
@@ -161,7 +165,7 @@ _SCHEMA: dict[str, dict[str, type | tuple]] = {
     "multimodal": {"enable": bool, "vision_model": str},
     "guardrail": {"injection_block": bool},
     "engine": {"mode": str},
-    "escalation": {"confidence_threshold": (int, float), "max_message_len": int, "react_steps": int},
+    "escalation": {"confidence_threshold": (int, float), "max_message_len": int, "react_steps": int, "handoff": bool},
     "channels": {"allowlist_enabled": bool, "group_allowlist": list},
 }
 

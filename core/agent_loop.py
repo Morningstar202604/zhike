@@ -270,7 +270,7 @@ async def _loop_body(*, run_id, principal, budget, tools, messages, usage, start
         messages.append({"role": "user", "content":
                          f"工具 {tool_name} 返回：\n<observation>{obs}</observation>"})
 
-    return finish("max_steps", "任务未在步数上限内完成，已转人工处理。")
+    return finish("max_steps", "任务未在步数上限内完成，已停止。请把任务拆小一点再试。")
 
 
 async def _invoke_tool(name: str, params: dict, principal: authz.Principal,
@@ -289,7 +289,7 @@ async def _invoke_tool(name: str, params: dict, principal: authz.Principal,
 
     if result.get("status") == "pending_approval":
         return ("pending_approval",
-                f"该操作需要人工确认才能执行（审批编号 {result.get('approval_id')}）。"
+                f"该操作需要管理员在控制台确认才能执行（审批编号 {result.get('approval_id')}）。"
                 f"摘要：{result.get('summary')}")
     # 用统一的截断函数（带"...(已截断)"标记），不要在这里裸切片：
     # 裸切片会把标记一起切掉，模型看不出内容已被截断。

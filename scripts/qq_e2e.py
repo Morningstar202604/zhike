@@ -2,8 +2,8 @@
 
 覆盖四条链路：
 1. 私聊文本 → 知识库命中回复（send_private_msg 含答案）
-2. 群聊 @机器人 + 图片 → 无视觉模型时转人工（send_group_msg）
-3. 私聊「转人工」 → 升级话术
+2. 群聊 @机器人 + 图片 → 无视觉模型时请用户用文字描述（send_group_msg）
+3. 私聊「转人工」 → 说明没有人工客服、只有机器人
 4. 逐动作 echo ack（OneBot v11 动作协议）
 
 用法：.venv/bin/python scripts/qq_e2e.py   （真机 QQ 登录验收清单见 DEPLOY.md §QQ 渠道）
@@ -225,8 +225,8 @@ async def main() -> int:
         print(f"  [{i}] {_msg_text(a)[:80] if a else '(无动作)'}")
     checks = [
         ("私聊 KB 问答", _is_reply(actions[0], "private") and "退货" in _msg_text(actions[0])),
-        ("群聊 @+图片→转人工", _is_reply(actions[1], "group") and "转接人工" in _msg_text(actions[1])),
-        ("私聊转人工→升级话术", _is_reply(actions[2], "private") and "转接" in _msg_text(actions[2])),
+        ("群聊 @+图片→请用文字描述", _is_reply(actions[1], "group") and "文字" in _msg_text(actions[1])),
+        ("私聊转人工→说明无人工客服", _is_reply(actions[2], "private") and "没有人工客服" in _msg_text(actions[2])),
     ]
     print()
     ok = True

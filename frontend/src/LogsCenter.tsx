@@ -66,7 +66,7 @@ export default function LogsCenter() {
         <EmptyState
           icon={<ScrollText size={22} />}
           title="暂无匹配日志"
-          desc="访客发消息、护栏拦截、工具调用、转人工都会实时出现在这里。"
+          desc="访客发消息、护栏拦截、工具调用、升级都会实时出现在这里。"
         />
       )}
 

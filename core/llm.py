@@ -174,6 +174,9 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
         parts.append("可用工具：\n" + json.dumps(ctx["tools_schema"], ensure_ascii=False))
     if modules_on.get("memory", True):
         parts.append("访客相关记忆：\n" + ctx["memory_block"])
+    if ctx.get("read_block"):
+        # 已经替你打开/读到的原文。中性表述，避免模型说"系统日志/搜索结果"这类机制腔。
+        parts.append(str(ctx["read_block"]))
     if ctx.get("web_block"):
         parts.append("联网搜索结果（仅供参考，引用时说明来源）：\n" + ctx["web_block"])
     if ctx.get("ambient_block"):
@@ -189,7 +192,9 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
         f"ReAct 最大步数 {react_steps}。请只输出 JSON：\n"
         '{"thought": str, "tool": name或null, "tool_args": {..}或null, '
         '"answer": str, "citations": [id], "confidence": 0-1, '
-        '"escalate": bool, "escalate_reason": str}'
+        '"escalate": bool, "escalate_reason": str}\n'
+        "注意：你没有人类同事，也没有任何人工客服/坐席可转接。"
+        "escalate 只表示「这条需要管理员后续补充资料」，绝不能对用户说转人工、转接真人或叫人来处理。"
     )
     # 可用于内容块的额度 = 总预算 - persona - 固定尾巴
     content_budget = max(120, budget - len(ctx["persona"]) - len(tail) - 4)

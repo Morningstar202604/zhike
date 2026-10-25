@@ -36,7 +36,7 @@ export function Avatar({ kind = 'agent', size = 34 }) {
       label: 'Agent',
     },
     visitor: { icon: <UserRound size={size * 0.5} />, bg: 'var(--visitor-soft)', color: 'var(--brand)', label: '访客' },
-    operator: { icon: <CircleCheck size={size * 0.5} />, bg: 'var(--operator-soft)', color: '#c2358f', label: '坐席' },
+    operator: { icon: <CircleCheck size={size * 0.5} />, bg: 'var(--operator-soft)', color: '#c2358f', label: '真人' },
   }
   const m = map[kind] || map.agent
   return (
@@ -117,7 +117,7 @@ export function FeedbackRow({ onFeedback, feedback, show }) {
       </button>
       <button className={`fb-btn ${feedback === 'not_helpful' ? 'on' : ''}`} onClick={() => onFeedback('not_helpful')}>
         <ThumbsDown size={13} />
-        {feedback === 'not_helpful' ? '已转人工' : '没用'}
+        {feedback === 'not_helpful' ? '已反馈' : '没用'}
       </button>
     </div>
   )

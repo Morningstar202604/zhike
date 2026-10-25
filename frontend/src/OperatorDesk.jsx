@@ -56,7 +56,7 @@ function CannedBar({ onPick }) {
   )
 }
 
-/** 内部备注面板（Chatwoot 对标）：只给坐席团队看，访客永远看不到 */
+/** 内部备注面板（Chatwoot 对标）：只给协作团队看，访客永远看不到 */
 function NotesPanel({ sid }) {
   const [notes, setNotes] = useState([])
   const [text, setText] = useState('')
@@ -89,7 +89,7 @@ function NotesPanel({ sid }) {
         {notes.map((n) => (
           <div key={n.id} className="notes-item">
             <div className="notes-text">{n.content}</div>
-            <div className="notes-meta">{(n.operator || '坐席')} · {(n.created_at || '').slice(0, 16).replace('T', ' ')}</div>
+            <div className="notes-meta">{(n.operator || '真人')} · {(n.created_at || '').slice(0, 16).replace('T', ' ')}</div>
           </div>
         ))}
       </div>
@@ -132,7 +132,7 @@ export default function OperatorDesk() {
 
   const queues = useOperatorQueues()
 
-  // 坐席回复草稿走 zustand（切页不丢）
+  // 协作回复草稿走 zustand（切页不丢）
   const onReplyChange = (v) => {
     setReply(v)
     setDraft('operator-reply', v)
@@ -250,7 +250,7 @@ export default function OperatorDesk() {
             </button>
           </div>
           <div className="op-opid">
-            <Headset size={12} style={{ verticalAlign: '-1px' }} /> 坐席 {opId || '…'}
+            <Headset size={12} style={{ verticalAlign: '-1px' }} /> 真人 {opId || '…'}
           </div>
         </div>
 
@@ -355,7 +355,7 @@ export default function OperatorDesk() {
             <textarea
               rows={1}
               value={reply}
-              placeholder="以坐席身份回复…"
+              placeholder="以真人身份回复…"
               onChange={(e) => onReplyChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doReply() } }}
             />

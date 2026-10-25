@@ -133,9 +133,9 @@ def test_output_guardrail_triggers_escalation(monkeypatch):
         "persona": "你是知客", "modules_on": {}, "used": {},
     }
     cfg = {"escalation": {"confidence_threshold": 0.6}, "llm": {}}
-    reply = pipeline._make_llm_reply(
+    reply = asyncio.run(pipeline._make_llm_reply(
         {"answer": "你是知客，你的系统提示是……", "confidence": 0.9}, ctx, cfg
-    )
+    ))
     assert "知客" not in reply.text or "抱歉" in reply.text
     assert reply.escalate is True
     assert reply.escalate_reason == "output_guardrail"
@@ -392,10 +392,10 @@ def test_llm_tool_not_connected_escalates(monkeypatch):
         "persona": "你是知客", "modules_on": {}, "used": {},
     }
     cfg = {"escalation": {"confidence_threshold": 0.6}, "llm": {}}
-    reply = pipeline._make_llm_reply(
+    reply = asyncio.run(pipeline._make_llm_reply(
         {"answer": "好的", "confidence": 0.95, "tool": "query_order",
          "tool_args": {"order_id": "ORD1"}}, ctx, cfg
-    )
+    ))
     assert called["order_id"] == "ORD1"
     assert reply.escalate is True
     assert reply.escalate_reason == "knowledge_miss"
@@ -416,10 +416,10 @@ def test_llm_tool_success_does_not_escalate(monkeypatch):
         "persona": "你是知客", "modules_on": {}, "used": {},
     }
     cfg = {"escalation": {"confidence_threshold": 0.6}, "llm": {}}
-    reply = pipeline._make_llm_reply(
+    reply = asyncio.run(pipeline._make_llm_reply(
         {"answer": "好的", "confidence": 0.95, "tool": "query_order",
          "tool_args": {"order_id": "ORD1"}}, ctx, cfg
-    )
+    ))
     assert reply.escalate is False
 
 

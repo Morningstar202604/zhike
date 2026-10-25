@@ -32,7 +32,7 @@ const SCENES = [
   { icon: <Package size={16} />, bg: 'var(--brand-soft)', color: 'var(--brand)', title: '查订单物流', text: '我的订单 ORD12345678 什么时候发货？' },
   { icon: <Undo2 size={16} />, bg: 'var(--ok-soft)', color: '#1a8f52', title: '申请退款', text: '我想申请退款，怎么操作？' },
   { icon: <ScrollText size={16} />, bg: 'var(--warn-soft)', color: '#b5731b', title: '查退改政策', text: '旅游团退改政策是怎么规定的？' },
-  { icon: <User size={16} />, bg: 'var(--operator-soft)', color: '#c2358f', title: '转人工坐席', text: '帮我转人工' },
+  { icon: <User size={16} />, bg: 'var(--operator-soft)', color: '#c2358f', title: '问模型', text: '你是机器人吗？' },
 ]
 
 function loadSessions() {
@@ -229,7 +229,7 @@ export default function VisitorChat() {
   // WS 实时通道（useWs 自动重连；sessionId 为空时不连接）
   // 访客 WS 必须带 secret query，否则后端 close(4401)
   // secret 不放 query：uvicorn 会把完整 URL 打进 access log（已复现）。
-  // 改走 Sec-WebSocket-Protocol 子协议，与坐席端一致。
+  // 改走 Sec-WebSocket-Protocol 子协议，与协作台一致。
   const wsSecret = sessionId ? useAppStore.getState().getSessionSecret(sessionId) || '' : ''
   const wsPath = sessionId ? `/ws/${sessionId}` : null
   const wsSubs = sessionId && wsSecret ? ['zhike-visitor', wsSecret] : undefined
@@ -243,10 +243,10 @@ export default function VisitorChat() {
         ])
         setLastMsg(null)
       } else if (p.type === 'agent_handled') {
-        setOperatorName(p.operator || '坐席')
+        setOperatorName(p.operator || '真人')
         setMessages((prev) => [
           ...prev,
-          { role: 'system', content: `坐席 ${p.operator || '已接管'} 为您服务`, ts: new Date().toISOString() },
+          { role: 'system', content: `${p.operator || '真人'} 已接手`, ts: new Date().toISOString() },
         ])
       } else if (p.type === 'session_closed') {
         setMessages((prev) => [
@@ -371,7 +371,7 @@ export default function VisitorChat() {
         latency_ms: Math.round(performance.now() - t0),
       }
       if (data.mode === 'human') {
-        // 已转人工：后端不再生成 AI 回答，也不渲染空气泡
+        // 已由坐席接管：后端不再生成 AI 回答，也不渲染空气泡
         setMessages((prev) => prev.slice(0, -1))
         setEscalated(true)
         setLastMsg(null)
@@ -573,7 +573,7 @@ export default function VisitorChat() {
           <div className="sh-left">
             <Avatar kind="agent" size={36} />
             <div>
-              <div className="sh-title">知客在线客服</div>
+              <div className="sh-title">知客 · 私人秘书</div>
               <div className="sh-sub">
                 {sessionId ? `会话 #${sessionId.slice(0, 8)}` : '未开始对话'}
               </div>
@@ -583,7 +583,7 @@ export default function VisitorChat() {
             {escalated && (
               <span className="badge warn">
                 <ShieldCheck size={12} />
-                已转人工{operatorName ? ` · ${operatorName}` : ''}{ticketId}
+                已升级{operatorName ? ` · ${operatorName}` : ''}{ticketId}
               </span>
             )}
             <button className="btn ghost sm" onClick={newChat} title="开始新对话" disabled={loading}>
@@ -603,9 +603,9 @@ export default function VisitorChat() {
               <div className="welcome-logo">
                 <Logo size={56} />
               </div>
-              <h2>您好，我是知客，你的专属客服</h2>
+              <h2>你好，我是知客，你的私人秘书</h2>
               <p>
-                订单、退款、政策都可以问我；需要人接手时，我会把你交给坐席。
+                日程、资料、待办、查东西，都可以交给我；需要真人接手时，我会替你叫人。
                 也可以上传截图，或从下面选一个场景开始。
               </p>
               <div className="welcome-cards">
@@ -653,7 +653,7 @@ export default function VisitorChat() {
           {escalated && !operatorName && (
             <div className="escalate-bar">
               <Headset size={14} />
-              已为您转接人工坐席，坐席在线后会实时出现在这里。
+              已为你叫了真人，上线后会实时出现在这里。
             </div>
           )}
         </div>

@@ -238,6 +238,35 @@ def _v14_character_cards(conn: sqlite3.Connection) -> None:
     )
 
 
+def _v15_reminders(conn: sqlite3.Connection) -> None:
+    """0015：提醒/待办（秘书核心能力）。
+
+    reminders：谁在哪个渠道要提醒什么、什么时候提醒。
+    chat_key 决定回推通道（qq_group:xxx / qq_private:uid / webchat:uid）。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            visitor_id TEXT NOT NULL,
+            chat_key TEXT NOT NULL,
+            channel_type TEXT NOT NULL DEFAULT 'webchat',
+            group_id TEXT,
+            channel_user_id TEXT,
+            text TEXT NOT NULL,
+            due_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            sent_at TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, due_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_visitor ON reminders(visitor_id, status)")
+
+
 MIGRATIONS: list[Migration] = [
     (1, "基线：标记已有结构", _v1_baseline),
     (2, "审计链 actor 索引", _v2_audit_index),
@@ -253,6 +282,7 @@ MIGRATIONS: list[Migration] = [
     (12, "坐席内部备注与 SLA 首响计时", _v12_notes_and_sla),
     (13, "回复自检表（反思修正机制）", _v13_self_critique),
     (14, "角色卡与按会话绑定", _v14_character_cards),
+    (15, "提醒与待办", _v15_reminders),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

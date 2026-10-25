@@ -27,7 +27,35 @@ def test_guardrail_block():
     assert ans.tool_used == "injection_guard"
 
 
-def test_explicit_human_handoff():
+def test_explicit_human_request_gets_robot_disclaimer(monkeypatch):
+    """没有真人值守时，说「转人工」必须直说只有机器人，不能假装在转接。"""
+    import core.config as config_mod
+
+    orig = config_mod.get_config
+
+    def patched():
+        c = orig()
+        c.setdefault("escalation", {})["handoff"] = False
+        return c
+
+    monkeypatch.setattr(config_mod, "get_config", patched)
+    ans = _ask("帮我转人工")
+    assert ans.escalate is False
+    assert "真人" in ans.text and "机器人" in ans.text
+
+
+def test_explicit_human_request_escalates_when_handoff_enabled(monkeypatch):
+    """有协作台/真人值守时（默认），转人工请求应真的进待接管队列。"""
+    import core.config as config_mod
+
+    orig = config_mod.get_config
+
+    def patched():
+        c = orig()
+        c.setdefault("escalation", {})["handoff"] = True
+        return c
+
+    monkeypatch.setattr(config_mod, "get_config", patched)
     ans = _ask("帮我转人工")
     assert ans.escalate is True
     assert ans.escalate_reason == "visitor_requested"

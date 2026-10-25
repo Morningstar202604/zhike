@@ -20,6 +20,7 @@ const ActionsCenter = lazy(() => import('./ActionsCenter'))
 const AgentRuns = lazy(() => import('./AgentRuns'))
 const BotPersona = lazy(() => import('./BotPersona'))
 const AnnotationCenter = lazy(() => import('./AnnotationCenter'))
+const Reminders = lazy(() => import('./Reminders'))
 
 export default function App() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<VisitorChat />} />
                 <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/reminders" element={<Reminders />} />
                 <Route path="/persona" element={<BotPersona />} />
                 <Route path="/annotations" element={<AnnotationCenter />} />
                 <Route path="/sessions" element={<SessionsCenter />} />

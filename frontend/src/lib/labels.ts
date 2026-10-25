@@ -13,13 +13,13 @@ export const ESCALATE_REASON: Record<string, string> = {
   output_guardrail: '输出被安全护栏拦截',
   image_needs_human: '图片需人工查看',
   pipeline_error: '系统处理异常',
-  agent_pending: '等待人工确认',
+  agent_pending: '等待管理员确认',
 };
 
 export const SESSION_STATUS: Record<string, string> = {
   ongoing: '进行中',
   pending_agent: '待接管',
-  agent_handled: '坐席处理中',
+  agent_handled: '真人处理中',
   closed: '已关闭',
 };
 

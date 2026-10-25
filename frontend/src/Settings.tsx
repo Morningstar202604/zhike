@@ -318,10 +318,10 @@ function ParamsPanel({ cfg, upd }: { cfg: AgentConfig; upd: ReturnType<typeof us
           <input type="checkbox" checked={cfg.multimodal.enable} onChange={(e) => set('multimodal', 'enable', e.target.checked)} />
         </div>
         <div className="f-row">
-          <span className="f-lb" title="填视觉模型名后，用户发图走 LLM 看图；留空则图片转人工">视觉模型</span>
+          <span className="f-lb" title="填视觉模型名后，用户发图走 LLM 看图；留空则请用户改用文字描述">视觉模型</span>
           <input
             type="text"
-            placeholder="如 glm-4v-flash，留空=图片转人工"
+            placeholder="如 glm-4v-flash，留空=请用户改用文字描述"
             value={cfg.multimodal.vision_model ?? ''}
             onChange={(e) => set('multimodal', 'vision_model', e.target.value.trim())}
             style={{ maxWidth: 260 }}
@@ -641,7 +641,7 @@ function KbPanel() {
           <div style={{ color: 'var(--muted)', marginBottom: 6 }}>
             top-K {kbTest.data.top_k} · 门槛 {kbTest.data.min_overlap} · 向量 {kbTest.data.embedding}
           </div>
-          {kbTest.data.hits.length === 0 && <div style={{ color: 'var(--muted)' }}>无命中（会走兜底转人工）</div>}
+          {kbTest.data.hits.length === 0 && <div style={{ color: 'var(--muted)' }}>无命中（会走兜底话术）</div>}
           {kbTest.data.hits.map((h: { id: string; title: string; score: number; answer: string }, i: number) => (
             <div key={h.id} className="f-row" style={{ justifyContent: 'flex-start', gap: 8, padding: '4px 0' }}>
               <span className={`badge ${i === 0 && h.score >= 0.3 ? 'ok' : 'info'}`}>{h.score.toFixed(2)}</span>
@@ -811,7 +811,7 @@ function DataPanel() {
               tone={kbRate >= 60 ? 'ok' : kbRate > 0 ? 'warn' : 'muted'}
             />
             <RepItem
-              label="转人工率"
+              label="升级率"
               value={`${escRate}%`}
               sub={`${totalEsc} 次升级`}
               tone={escRate > 40 ? 'warn' : 'ok'}

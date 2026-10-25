@@ -206,7 +206,7 @@ export default function SessionsCenter() {
             <div className="drawer-head">
               <h3 title={active.id}>会话 #{active.id.slice(0, 8)} · {label(CHANNEL_LABEL, active.channel)}</h3>
               <div className="flex gap-2">
-                <Link to="/operator" className="btn ghost sm"><Headset size={13} /> 坐席台</Link>
+                <Link to="/operator" className="btn ghost sm"><Headset size={13} /> 协作台</Link>
                 {active.status !== 'closed' && (
                   <button className="btn secondary sm" onClick={doClose} disabled={close.isPending}>
                     <X size={13} /> {close.isPending ? '关闭中…' : '关闭会话'}
@@ -224,7 +224,7 @@ export default function SessionsCenter() {
                   <div className="msg-body">
                     <div className="bubble">
                       <span className="text-[10px] text-muted mr-2">
-                        {m.role === 'visitor' ? '访客' : m.role === 'operator' ? '坐席' : 'Agent'}
+                        {m.role === 'visitor' ? '访客' : m.role === 'operator' ? '真人' : 'Agent'}
                       </span>
                       {m.role === 'visitor' ? m.content : <Markdown text={m.content} />}
                     </div>

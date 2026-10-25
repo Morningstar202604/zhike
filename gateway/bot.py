@@ -150,7 +150,7 @@ _sem = asyncio.Semaphore(MAX_CONCURRENT)
 # 群里一次 @ 一条条秒回、刷屏式回答，是最容易被检测出自动化的行为。
 _GROUP_THROTTLE = GroupThrottle(
     min_gap=_env_f("GATEWAY_GROUP_MIN_GAP", 10.0),
-    hourly_cap=int(_env_f("GATEWAY_GROUP_HOURLY_CAP", 24)),
+    hourly_cap=int(_env_f("GATEWAY_GROUP_HOURLY_CAP", 120)),
 )
 
 matcher = on_message(rule=to_me(), priority=5, block=False)
@@ -615,7 +615,8 @@ async def handle(event: MessageEvent):
         if msg.is_group:
             wait = _GROUP_THROTTLE.wait_seconds(msg.chat_id)
             if wait < 0:
-                logger.info("group %s hit hourly cap, reply dropped silently", msg.chat_id)
+                logger.warning("group %s hit hourly cap (%s/h), reply dropped",
+                               msg.chat_id, _GROUP_THROTTLE.cap)
                 _CMD_STATS["handled"] += 1
                 await bus.publish(EV_REPLY_OUT, {
                     "channel": msg.channel, "chat_id": msg.chat_id, "ok": False,

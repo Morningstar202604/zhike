@@ -43,7 +43,7 @@ QQ 机器人需要 7×24 在线，先说清楚物理规律：**"完全免费 + �
 USER_LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 USER_LLM_MODEL=glm-4-flash
 USER_LLM_API_KEY=（open.bigmodel.cn 注册即送，Flash 档 0 元调用）
-# 可选：看图（多模态）。配了视觉模型名，用户发图就走 LLM 看图，不配则图片转人工
+# 可选：看图（多模态）。配了视觉模型名，用户发图就走 LLM 看图，不配则请用户改用文字描述
 USER_VISION_MODEL=glm-4v-flash
 ```
 
@@ -61,6 +61,31 @@ pip install -r requirements-embedding.txt
 模型来源二选一：
 - Hub 名称（默认 `BAAI/bge-small-zh-v1.5`）：首次需联网下载，之后走本地缓存。
 - 本地目录（`USER_EMB_MODEL=/path/to/bge-small-zh-v1.5`，推荐离线部署）：代码自动置 `HF_HUB_OFFLINE=1`，不触网；也可显式设该变量，缺网时立即降级为字面检索，而不是卡在 Hub 重试上。
+
+### 秘书工具集（默认全开，缺后端会诚实说明）
+
+| 工具 | 作用 | 依赖 |
+|---|---|---|
+| `current_context` / `recall_memory` / `remember` | 读当前对话、读写长期记忆 | 无 |
+| `remind` / `list_reminders` / `cancel_reminder` | 设提醒、查待办、取消（到点自动推回原渠道） | 无 |
+| `read_webpage` / `web_search` | 读链接正文、联网搜索 | `SEARCH_PROVIDER` 等 |
+| `list_files` / `read_file` | 读本机文件 | **执行器进程** + `EXECUTOR_POLICY_PATH` |
+| `describe_image` | 看图/读图中文字 | `USER_VISION_MODEL` + LLM Key |
+| `search_emote` | 搜收藏的表情包 | NapCat 表情目录 |
+| `qq_group_history` / `qq_send` | 读群记录、主动发消息 | 网关在线 |
+
+安全边界：
+- `read_webpage` 只允许公网 http/https，内网/回环/元数据地址在**建连之前**就被拒绝（`core/url_guard.py`）。
+- `read_file` / `list_files` 受执行器 `allow_roots` + `deny_globs` 双重限制，越权直接拒绝并如实告知。
+- 提醒投递失败会重试（默认 5 次）并记录 `last_error`，不会静默丢失。
+
+启用执行器（文件工具）：
+
+```bash
+EXECUTOR_POLICY_PATH=/path/to/executor_policy.json EXECUTOR_BIND=127.0.0.1 EXECUTOR_PORT=8020 python -m executor.main
+```
+
+`executor_policy.json` 模板见 `executor/policy.example.json`；`allow_roots` 留空 = 全部拒绝（安全默认）。
 
 ## 1. 准备清单
 
@@ -109,8 +134,8 @@ curl http://127.0.0.1:8010/healthz            # {"ok":true}
 
 ```
 ✅ 私聊 KB 问答
-✅ 群聊 @+图片→转人工
-✅ 私聊转人工→升级话术
+✅ 群聊 @+图片→请用户改用文字描述
+✅ 私聊「转人工」→ 说明没有人工客服、机器人继续服务
 结果：QQ 渠道全链路全部通过 ✅
 ```
 
@@ -124,8 +149,8 @@ curl http://127.0.0.1:8010/healthz            # {"ok":true}
    - [ ] 私聊「退货政策是什么」→ 秒回知识库答案
    - [ ] 私聊发一张截图 → 回复"转接人工"（配了 `USER_VISION_MODEL` 则为看图回答）
    - [ ] 拉进群 @机器人 问一句 → 群里正常回复（没 @ 不理人）
-   - [ ] 群里只发图 @机器人 → 回复转人工
-   - [ ] 说「转人工」→ 升级话术 + 控制台出现待处理工单
+   - [ ] 群里只发图 @机器人 → 回复请用文字描述
+   - [ ] 说「转人工」→ 明确告知只有机器人，会话不进入待接管
 4. 控制台「会话/工单」能看到上述记录
 
 ### 3.3 基础项
