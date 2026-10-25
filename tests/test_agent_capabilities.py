@@ -147,9 +147,15 @@ def test_build_messages_vision_routing():
     assert content[1]["type"] == "image_url" and content[1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert "data:data:" not in content[1]["image_url"]["url"]
 
+    # 没有配视觉模型时沿用主模型，仍按多模态发送（不能把图丢掉）
     cfg2 = _cfg()
     msgs2, model2 = llm_mod._build_messages("你好", _mini_ctx(), cfg2, image_b64="iVBORw0KGgo")
-    assert model2 == "m" and isinstance(msgs2[-1]["content"], str)
+    assert model2 == "m"
+    assert isinstance(msgs2[-1]["content"], list)
+
+    # 没有图时保持纯文本消息
+    msgs3, model3 = llm_mod._build_messages("你好", _mini_ctx(), cfg2)
+    assert model3 == "m" and isinstance(msgs3[-1]["content"], str)
 
 
 def test_pipeline_image_with_vision_model_goes_llm(monkeypatch, tmp_path):
@@ -168,11 +174,13 @@ def test_pipeline_image_with_vision_model_goes_llm(monkeypatch, tmp_path):
     assert called["image"] == "iVBORw0KGgo"
 
 
-def test_pipeline_image_without_vision_asks_for_text(monkeypatch, tmp_path):
-    """没有视觉模型时不能让会话转人工（本系统没有人工），要请用户用文字描述。"""
+def test_pipeline_image_without_any_model_asks_for_text(monkeypatch, tmp_path):
+    """连主模型都没有（无 Key）时才请用户描述；有主模型就用主模型看图。"""
     _init_store(monkeypatch, tmp_path)
     import core.config as config_mod
-    monkeypatch.setattr(config_mod, "get_config", lambda: _cfg(multimodal={"enable": True, "vision_model": ""}))
+    base = _cfg(multimodal={"enable": True, "vision_model": ""})
+    base["llm"] = {**base["llm"], "has_key": False, "api_key": ""}
+    monkeypatch.setattr(config_mod, "get_config", lambda: base)
     reply = asyncio.run(pipeline.run(pipeline.ChannelMessage(text="", image_b64="iVBORw0KGgo"), [], "v4"))
     assert reply.escalate is False
     assert "文字" in reply.text

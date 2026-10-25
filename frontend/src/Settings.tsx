@@ -4,8 +4,7 @@ import {
   SlidersHorizontal, BookOpen, BarChart3, Brain, ShieldAlert,
   Save, Plus, Pencil, Trash2, X, Activity, Inbox, MessageSquare,
   FileText, Users, Search, Wrench, Zap, ChevronDown, ChevronUp,
-  ChevronLeft, ChevronRight, Upload, Download,
-} from 'lucide-react'
+  ChevronLeft, ChevronRight, Upload, Download, KeyRound, Check } from 'lucide-react'
 import {
   useConfig, useUpdateConfig, useKb, useKbMutations, useKbImport, useKbTest, useKbDocImport, exportKb, useTools, useToolMutations,
   useInjectionRules, useInjectionRuleMutations, useLlmTest, useLlmModels,
@@ -19,6 +18,7 @@ import { usePagination } from './lib/pagination'
 import { isAuthError } from './lib/queries'
 import { TOOL_LABEL } from './lib/labels'
 import TokenGate from './components/TokenGate'
+import { useAppStore } from './store/appStore'
 import { useFeedback } from './components/Feedback'
 import CardsPanel from './CardsPanel'
 import './pages2.css'
@@ -32,6 +32,7 @@ const TABS = [
   { key: 'data', icon: <BarChart3 size={15} />, label: '数据概览', sub: '运营统计' },
   { key: 'mem', icon: <Brain size={15} />, label: '长期记忆', sub: '跨会话沉淀' },
   { key: 'inj', icon: <Activity size={15} />, label: '注入日志', sub: '护栏审计' },
+  { key: 'token', icon: <KeyRound size={15} />, label: '访问令牌', sub: '控制台登录凭据' },
 ]
 
 export default function Settings() {
@@ -88,6 +89,7 @@ export default function Settings() {
         {tab === 'data' && <DataPanel />}
         {tab === 'mem' && <MemPanel />}
         {tab === 'inj' && <InjPanel />}
+        {tab === 'token' && <TokenPanel />}
       </main>
     </div>
   )
@@ -953,5 +955,88 @@ function InjPanel() {
       </div>
       {pg.hasPages && <Pager page={pg.page} maxPage={pg.maxPage} total={pg.total} onChange={pg.setPage} label="注入日志" />}
     </>
+  )
+}
+
+
+/* ============ 访问令牌（本机自动获取 + 可视化复制） ============ */
+function TokenPanel() {
+  const adminToken = useAppStore((s) => s.adminToken)
+  const setAdminToken = useAppStore((s) => s.setAdminToken)
+  const [copied, setCopied] = useState(false)
+  const [state, setState] = useState<'idle' | 'loading' | 'ok' | 'fail'>('idle')
+  const [msg, setMsg] = useState('')
+
+  const fetchToken = async () => {
+    setState('loading')
+    try {
+      const r = await fetch('/api/bootstrap/local-token')
+      const d = await r.json().catch(() => ({}))
+      if (r.ok && d.available && d.token) {
+        setAdminToken(d.token)
+        setState('ok'); setMsg('已从本机服务获取到令牌')
+      } else {
+        setState('fail'); setMsg(d.detail || d.reason || `HTTP ${r.status}`)
+      }
+    } catch (e) {
+      setState('fail'); setMsg((e as Error).message)
+    }
+  }
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(adminToken)
+      setCopied(true); setTimeout(() => setCopied(false), 1800)
+    } catch { setMsg('复制被浏览器拒绝，请手动选中') }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="text-sm text-muted" style={{ lineHeight: 1.8 }}>
+        控制台用的是「访问令牌」而不是账号密码。本机打开时自动获取，远程访问才需要手动粘贴。
+      </div>
+
+      <div className="card p-4 space-y-3">
+        <div className="flex items-center gap-2 text-sm font-semibold"><KeyRound size={15} /> 当前令牌</div>
+        {adminToken ? (
+          <>
+            <button
+              className="w-full text-left font-mono text-xs border border-line-2 rounded-lg p-3 break-all"
+              onClick={copy}
+              title="点击复制"
+            >
+              {copied ? <span className="text-ok"><Check size={12} /> 已复制到剪贴板</span> : adminToken}
+            </button>
+            <div className="flex gap-2">
+              <button className="btn sm" onClick={copy}>{copied ? '已复制' : '复制令牌'}</button>
+              <button className="btn secondary sm" onClick={fetchToken}>重新获取</button>
+              <button className="btn ghost sm" onClick={() => { setAdminToken(''); setMsg('已清除，刷新页面后需重新登录') }}>
+                清除
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="text-xs text-muted">本机还没有令牌。点下面的按钮从服务端获取。</div>
+        )}
+        {msg && <div className="text-[11px] text-muted">{msg}</div>}
+      </div>
+
+      <div className="card p-4 space-y-2">
+        <div className="text-sm font-semibold">换一台设备访问？</div>
+        <div className="text-xs text-muted" style={{ lineHeight: 1.8 }}>
+          1. 在这台机器上点「复制令牌」；<br />
+          2. 在另一台设备打开控制台，粘贴到登录框；<br />
+          3. 令牌只存在浏览器本地，不会上传。
+        </div>
+      </div>
+
+      <div className="card p-4 space-y-2">
+        <div className="text-sm font-semibold">安全说明</div>
+        <div className="text-xs text-muted" style={{ lineHeight: 1.8 }}>
+          本机自动获取只在 <code>127.0.0.1</code> / <code>::1</code> 回环地址生效，公网来源一律 403。
+          公网部署建议设 <code>CS_AGENT_LOCAL_TOKEN_BOOTSTRAP=0</code> 彻底关闭该通道。
+        </div>
+      </div>
+    </div>
   )
 }

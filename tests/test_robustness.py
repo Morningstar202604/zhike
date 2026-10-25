@@ -215,3 +215,36 @@ def test_ws_registry_cleanup_on_disconnect(client):
     with client.websocket_connect(f"/ws/{sid}", subprotocols=["zhike-visitor", secret]) as ws:
         assert sum(len(v) for v in hub.visitor_conns.values()) >= 1
     assert sum(len(v) for v in hub.visitor_conns.values()) == 0, "断开后连接未被清理"
+
+
+# ---------- 共享 HTTP 客户端池：跨事件循环不能复用 ----------
+
+def test_http_pool_isolated_per_event_loop():
+    """httpx.AsyncClient 绑定创建它的 loop；跨 loop 复用会 RuntimeError（已复现）。
+
+    这里连续两次 asyncio.run 取客户端，第二次必须是新实例而不是已关闭 loop 上的旧实例。
+    """
+    import asyncio
+
+    from core import http_pool
+
+    async def grab():
+        return http_pool.get_client("https://example.com", timeout=5)
+
+    c1 = asyncio.run(grab())
+    c2 = asyncio.run(grab())
+    assert c1 is not c2, "不同事件循环必须拿到不同客户端"
+    assert not c1.is_closed and not c2.is_closed
+
+
+def test_http_pool_same_loop_reuses_client():
+    import asyncio
+
+    from core import http_pool
+
+    async def grab():
+        return (http_pool.get_client("https://example.com", timeout=5),
+                http_pool.get_client("https://example.com", timeout=5))
+
+    a, b = asyncio.run(grab())
+    assert a is b, "同一循环内必须复用连接池"

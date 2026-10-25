@@ -56,7 +56,7 @@ USER_VISION_MODEL=glm-4v-flash
 pip install -r requirements-embedding.txt
 ```
 
-环境变量：`USER_VISION_MODEL`（看图，如 `glm-4v-flash`）；检索开关在管理配置 `retrieval.embedding`（auto/off）。
+环境变量：`USER_VISION_MODEL`（看图，如 `glm-4v-flash`；留空自动沿用主模型）、`USER_IMAGE_MODEL`（生图，默认 `agnes-image-2.1-flash`）；检索开关在管理配置 `retrieval.embedding`（auto/off）。
 
 模型来源二选一：
 - Hub 名称（默认 `BAAI/bge-small-zh-v1.5`）：首次需联网下载，之后走本地缓存。
@@ -70,9 +70,12 @@ pip install -r requirements-embedding.txt
 | `remind` / `list_reminders` / `cancel_reminder` | 设提醒、查待办、取消（到点自动推回原渠道） | 无 |
 | `read_webpage` / `web_search` | 读链接正文、联网搜索 | `SEARCH_PROVIDER` 等 |
 | `list_files` / `read_file` | 读本机文件 | **执行器进程** + `EXECUTOR_POLICY_PATH` |
-| `describe_image` | 看图/读图中文字 | `USER_VISION_MODEL` + LLM Key |
+| `describe_image` | 看图/读图中文字 | LLM Key（未配 `USER_VISION_MODEL` 时自动沿用主模型） |
+| `generate_image` / `send_image` | 文生图并发出、把图片发到当前会话 | LLM Key（`USER_IMAGE_MODEL`）/ 网关在线 |
+| `parse_document` | 解析 PDF/DOCX/XLSX/MD/TXT | 无（本机走执行器，链接走公网抓取） |
+| `now` / `calc` | 当前时间、数学计算 | 无 |
 | `search_emote` | 搜收藏的表情包 | NapCat 表情目录 |
-| `qq_group_history` / `qq_send` | 读群记录、主动发消息 | 网关在线 |
+| `qq_group_history` / `qq_group_members` / `qq_groups` / `qq_friends` / `qq_send` | 读群记录、查成员/群/好友、主动发消息 | 网关在线 |
 
 安全边界：
 - `read_webpage` 只允许公网 http/https，内网/回环/元数据地址在**建连之前**就被拒绝（`core/url_guard.py`）。

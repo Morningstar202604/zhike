@@ -48,6 +48,14 @@ _COOLDOWN_S = max(0.0, float(os.environ.get("USER_LLM_COOLDOWN_SECONDS", "120") 
 _COOLDOWN: dict[tuple[str, str], float] = {}   # (base_url, model) -> wake_at(monotonic)
 
 
+class RateLimited(Exception):
+    """429：不是模型坏了，是这一秒的配额用完了。不能按普通失败冷却 120s。"""
+
+    def __init__(self, retry_after: float = 0.0):
+        super().__init__("rate limited")
+        self.retry_after = retry_after
+
+
 def _cooling(base: str, model: str) -> bool:
     wake = _COOLDOWN.get((base, model))
     return wake is not None and time.monotonic() < wake
@@ -128,6 +136,12 @@ async def _race_chain(chain: list[dict], messages: list, base_payload: dict,
                     result = parsed
                     _COOLDOWN.pop((cand["base_url"], cand["model"]), None)
                     lg.info("llm via %s@%s", cand["model"], cand["base_url"].split("//")[-1])
+                elif isinstance(err, RateLimited):
+                    # 配额瞬时打满：短冷却（默认 5s，或服务端 retry-after），不按 120s 处理
+                    wait = min(max(err.retry_after or 0.0, _RATE_LIMIT_COOLDOWN_S), 60.0)
+                    _COOLDOWN[(cand["base_url"], cand["model"])] = time.monotonic() + wait
+                    lg.warning("llm rate limited, short cooldown %.0fs: %s@%s",
+                               wait, cand["model"], cand["base_url"].split("//")[-1])
                 else:
                     _COOLDOWN[(cand["base_url"], cand["model"])] = \
                         time.monotonic() + _COOLDOWN_S
@@ -224,7 +238,9 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
         role = "assistant" if m.get("role") in ("agent", "operator") else "user"
         messages.append({"role": role, "content": m.get("content")})
 
-    vision_model = (cfg.get("multimodal", {}) or {}).get("vision_model", "") or ""
+    # 未显式配置视觉模型时沿用主模型：agnes/deepseek 之外多数 OpenAI 兼容端点
+    # 的旗舰模型本身支持图片输入，留空就没图看属于白丢能力。
+    vision_model = ((cfg.get("multimodal", {}) or {}).get("vision_model", "") or "").strip()         or (llm_cfg.get("model") or "").strip()
     if image_b64 and vision_model:
         img = image_b64
         if img.startswith("data:"):
@@ -240,13 +256,23 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
 
 
 async def _post_chat(base: str, api_key: str, payload: dict) -> str | None:
-    """单次 chat/completions 调用（含 4xx 时去掉 response_format 的重试）。失败返回 None。"""
+    """单次 chat/completions 调用（含 4xx 时去掉 response_format 的重试）。
+
+    429 单独抛 RateLimited：调用方要短退避重试，而不是把整条候选链冷却 120 秒——
+    一次并发高峰就让机器人彻底沉默 2 分钟，是最难解释给用户的故障。
+    """
     client = get_client(base, timeout=60)
     resp = await client.post(
         f"{base}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
         json=payload,
     )
+    if resp.status_code == 429:
+        try:
+            retry_after = float(resp.headers.get("retry-after") or 0)
+        except (TypeError, ValueError):
+            retry_after = 0.0
+        raise RateLimited(retry_after)
     if resp.status_code in (400, 422):
         retry = dict(payload)
         retry.pop("response_format", None)
@@ -255,6 +281,8 @@ async def _post_chat(base: str, api_key: str, payload: dict) -> str | None:
             headers={"Authorization": f"Bearer {api_key}"},
             json=retry,
         )
+        if resp.status_code == 429:
+            raise RateLimited(1.0)
     resp.raise_for_status()
     return (resp.json()["choices"][0]["message"]["content"] or "").strip()
 

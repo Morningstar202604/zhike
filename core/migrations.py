@@ -267,6 +267,17 @@ def _v15_reminders(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_visitor ON reminders(visitor_id, status)")
 
 
+def _v16_reminder_repeat(conn: sqlite3.Connection) -> None:
+    """0016：周期提醒（每天/每周/每月）。
+
+    repeat_rule 存自然语言归一后的规则（daily / weekly:1 / monthly:15），
+    触发后调度器算出下一次 due_at 并重置为 pending，而不是标记 sent 结束。
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(reminders)").fetchall()}
+    if "repeat_rule" not in cols:
+        conn.execute("ALTER TABLE reminders ADD COLUMN repeat_rule TEXT DEFAULT ''")
+
+
 MIGRATIONS: list[Migration] = [
     (1, "基线：标记已有结构", _v1_baseline),
     (2, "审计链 actor 索引", _v2_audit_index),
@@ -283,6 +294,7 @@ MIGRATIONS: list[Migration] = [
     (13, "回复自检表（反思修正机制）", _v13_self_critique),
     (14, "角色卡与按会话绑定", _v14_character_cards),
     (15, "提醒与待办", _v15_reminders),
+    (16, "周期提醒", _v16_reminder_repeat),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

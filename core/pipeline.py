@@ -414,7 +414,7 @@ async def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
             tool_result = {"tool": tool_name, "status": "bad_args", "note": "工具参数不合法。"}
         parsed.answer = (tool_result or {}).get("note") or parsed.answer or "工具已执行。"
         # 工具自己说「没接入 / 没查到」时标记升级：对客话术必须与系统状态一致，
-        # 不承诺「已转人工」——本系统没有人工客服，只落一条待补充的工单。
+        # 不承诺「已转人工」——这里没有客服团队，只落一条待补充的工单。
         # status=empty（没待办/没记录）是正常答案，不算缺口。
         benign = (tool_result or {}).get("status") in ("need_context", "empty")
         tool_missed = not benign and (
@@ -586,14 +586,16 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
                 ctx_used=ctx["used"], mode="rule_react",
             )
         return AgentReply(
-            text="这儿就我一个机器人，没有真人可转。有事直接说，我尽力办。",
+            text="这儿就我一个人盯着，没别人可转。有事直接说，能办的我给你办。",
             confidence=1.0, escalate=False,
             ctx_used=ctx["used"], mode="rule_react",
         )
 
     if message.image_b64 and cfg.get("multimodal", {}).get("enable", True):
         # 配了视觉模型且有 Key → 交给 LLM 看图；否则请用户用文字描述
-        vision_ready = bool((cfg.get("multimodal", {}) or {}).get("vision_model")) and cfg.get("llm", {}).get("has_key", False)
+        # 未单独配视觉模型时视为沿用主模型（与 llm._build_messages 保持一致）
+        vision_ready = bool((cfg.get("multimodal", {}) or {}).get("vision_model")
+                            or (cfg.get("llm", {}) or {}).get("model"))             and bool(cfg.get("llm", {}).get("has_key", False))
         if not vision_ready:
             return AgentReply(
                 text="图收到了，但我这会儿看不了图。你用文字说一下图里有啥？",

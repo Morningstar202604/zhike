@@ -22,6 +22,7 @@ interface Reminder {
   due_at: string
   status: string
   created_at: string
+  repeat_rule?: string
   last_error?: string | null
 }
 
@@ -31,6 +32,27 @@ const PRESETS = [
   { label: '明天 9 点', when: '明天9点' },
   { label: '3 天后', when: '3天后' },
 ]
+
+/** 周期提醒的快捷写法：直接把规则写进 when，后端 _parse_repeat 会识别 */
+const REPEAT_PRESETS = [
+  { label: '每天 8 点', when: '每天8点' },
+  { label: '每个工作日 9 点', when: '每个工作日9点' },
+  { label: '每周一 10 点', when: '每周一10点' },
+  { label: '每月 1 号 9 点', when: '每月1号9点' },
+]
+
+const REPEAT_LABEL: Record<string, string> = {
+  daily: '每天',
+  weekday: '工作日',
+  weekly: '每周',
+  monthly: '每月',
+}
+
+function repeatText(rule?: string): string {
+  if (!rule) return ''
+  const [kind] = rule.split(':')
+  return REPEAT_LABEL[kind] || ''
+}
 
 function fmt(iso: string): string {
   const d = new Date(iso)
@@ -107,7 +129,7 @@ export default function Reminders() {
     <div className="bp-app">
       <PageHead
         title="提醒与待办"
-        sub="说一句「10 分钟后提醒我关火」就行，到点我会主动叫你——群里、私聊、网页都算"
+        sub="说一句「10 分钟后提醒我关火」「每天 8 点提醒我吃药」就行，到点我会主动叫你——群里、私聊、网页都算"
         right={
           <button className="btn secondary sm" onClick={tickNow} title="立即检查一次到期提醒">
             <RefreshCw size={13} /> 立即检查
@@ -147,6 +169,18 @@ export default function Reminders() {
               placeholder="或自定义时间"
             />
           </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span className="text-[11px] text-muted">重复：</span>
+            {REPEAT_PRESETS.map((p) => (
+              <button
+                key={p.when}
+                className={`btn sm ${when === p.when ? '' : 'secondary'}`}
+                onClick={() => setWhen(p.when)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
           <button className="btn" onClick={create} disabled={busy || !text.trim()}>
             {busy ? <Loader2 size={14} className="animate-spin" /> : <Bell size={14} />} 设提醒
           </button>
@@ -163,7 +197,7 @@ export default function Reminders() {
           <EmptyState
             icon={<Bell size={22} />}
             title="没有待提醒的事"
-            desc="在聊天里直接说「明天 9 点提醒我开会」，或者在上面新建一条。"
+            desc="在聊天里直接说「明天 9 点提醒我开会」或「每天 8 点提醒我吃药」，也可以在上面新建。"
           />
         ) : (
           <div className="ac-list">
@@ -173,6 +207,7 @@ export default function Reminders() {
                   <div className="ac-q"><Bell size={13} /> {r.text}</div>
                   <div className="ac-meta">
                     <em>{fmt(r.due_at)}</em>
+                    {repeatText(r.repeat_rule) && <em className="text-brand">🔁 {repeatText(r.repeat_rule)}</em>}
                     <em>{r.channel_type.startsWith('qq') ? 'QQ' : '网页'}</em>
                     <em>{r.chat_key}</em>
                     {r.last_error && <em title={r.last_error}>上次投递失败</em>}

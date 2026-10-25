@@ -163,6 +163,10 @@ def _ensure_reminder_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, due_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_visitor ON reminders(visitor_id, status)")
+    # 后加的列：老库没有则补（测试库只跑这里，不跑迁移）
+    rcols = {r["name"] for r in conn.execute("PRAGMA table_info(reminders)").fetchall()}
+    if "repeat_rule" not in rcols:
+        conn.execute("ALTER TABLE reminders ADD COLUMN repeat_rule TEXT DEFAULT ''")
 
 
 def _ensure_action_schema(conn: sqlite3.Connection) -> None:
@@ -272,11 +276,23 @@ _EXTRA_TOOLS: list[dict] = [
      {"path": "string", "depth": "string"}),
     ("read_file", "读文件", "读取文本文件（受执行器策略白名单限制）",
      {"path": "string", "max_chars": "string"}),
+    ("write_file", "写文件", "写入或追加文本到文件（受执行器策略白名单限制）",
+     {"path": "string", "content": "string", "append": "string"}),
     ("describe_image", "看图", "识别图片内容或读取图中文字", {"source": "string", "question": "string"}),
     ("search_emote", "找表情包", "在收藏的表情包里按关键词查找", {"keyword": "string"}),
     ("qq_group_history", "读群记录", "读取群聊最近的聊天记录",
      {"group_id": "string", "count": "string"}),
     ("qq_send", "发QQ消息", "主动往群里或私聊发一条消息", {"text": "string", "target": "string"}),
+    ("now", "看时间", "查当前日期、时间和星期", {}),
+    ("calc", "算数", "计算数学表达式", {"expression": "string"}),
+    ("send_image", "发图片", "把一张图片发到当前会话", {"source": "string"}),
+    ("generate_image", "画图", "按描述生成一张图片并发出去", {"prompt": "string", "size": "string"}),
+    ("parse_document", "读文档", "解析 PDF/DOCX/XLSX/MD/TXT 并返回正文",
+     {"path": "string", "url": "string"}),
+    ("qq_group_members", "查群成员", "列出群成员，可按昵称筛选",
+     {"group_id": "string", "keyword": "string"}),
+    ("qq_groups", "查我的群", "列出机器人加入的 QQ 群", {}),
+    ("qq_friends", "查好友", "列出机器人的 QQ 好友", {}),
 ]
 
 
@@ -2011,13 +2027,14 @@ def card_for_chat(chat_key: str) -> dict | None:
 
 def reminder_add(visitor_id: str, chat_key: str, text: str, due_at: str,
                  channel_type: str = "webchat", group_id: str | None = None,
-                 channel_user_id: str | None = None) -> dict:
+                 channel_user_id: str | None = None, repeat_rule: str = "") -> dict:
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO reminders (visitor_id, chat_key, channel_type, group_id, "
-            "channel_user_id, text, due_at, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-            (visitor_id, chat_key, channel_type, group_id, channel_user_id, text, due_at, _now()),
+            "channel_user_id, text, due_at, status, created_at, repeat_rule) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            (visitor_id, chat_key, channel_type, group_id, channel_user_id, text, due_at,
+             _now(), repeat_rule),
         )
         rid = cur.lastrowid
     return reminder_get(int(rid)) or {}
@@ -2056,6 +2073,14 @@ def reminder_due(now: str, limit: int = 20) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def reminder_reschedule(rid: int, next_due: str) -> None:
+    """周期提醒触发后：重置为 pending 并把 due_at 推到下一次。"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE reminders SET status = 'pending', due_at = ?, sent_at = NULL, "
+            "attempts = 0, last_error = '' WHERE id = ?", (next_due, rid))
+
+
 def reminder_mark(rid: int, status: str, error: str = "") -> None:
     with get_conn() as conn:
         conn.execute(
@@ -2070,3 +2095,34 @@ def reminder_cancel(rid: int) -> bool:
         cur = conn.execute(
             "UPDATE reminders SET status = 'cancelled' WHERE id = ? AND status = 'pending'", (rid,))
     return cur.rowcount > 0
+
+
+def search_messages(q: str, limit: int = 50, visitor_id: str = "") -> list[dict]:
+    """跨会话搜消息内容（控制台「对话搜索」用）。
+
+    用 LIKE 而不是 FTS5：消息表没有维护 FTS 索引，而这里是人工发起的低频查询，
+    全表扫几十万行也在几十毫秒量级；LIKE 还能支持中文子串匹配，FTS 默认分词做不到。
+    """
+    term = (q or "").strip()
+    if not term:
+        return []
+    sql = ("SELECT m.id, m.session_id, m.role, m.content, m.created_at, s.visitor_id "
+           "FROM messages m JOIN sessions s ON s.id = m.session_id "
+           "WHERE m.deleted = 0 AND m.content LIKE ?")
+    args: list = [f"%{term}%"]
+    if visitor_id:
+        sql += " AND s.visitor_id = ?"
+        args.append(visitor_id)
+    sql += " ORDER BY m.id DESC LIMIT ?"
+    args.append(max(1, min(limit, 200)))
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def export_session(session_id: str) -> dict | None:
+    """导出一个会话的全部消息（Markdown/JSON 由调用方格式化）。"""
+    sess = get_session(session_id)
+    if not sess:
+        return None
+    return {"session": sess, "messages": get_messages(session_id, limit=None, include_deleted=False)}

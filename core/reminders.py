@@ -67,6 +67,63 @@ async def _deliver_web(rec: dict, text: str) -> tuple[bool, str]:
     return True, ""
 
 
+def next_due(rule: str, current_iso: str) -> str | None:
+    """按周期规则算下一次触发时间；无法识别返回 None（当作一次性）。
+
+    实现要点：以「当前 due」为锚点向前推一个周期，再用 while 跳过已经过去的时刻
+    （进程停机很久后恢复时只补最近一次，不补发历史）。
+    月末必须按当月实际天数夹紧——1/31 + 每月31号 → 2/28，不能 replace 出非法日期。
+    """
+    import calendar
+    from datetime import timedelta
+
+    try:
+        cur = datetime.fromisoformat(current_iso)
+    except (TypeError, ValueError):
+        return None
+    if cur.tzinfo is None:
+        cur = cur.replace(tzinfo=timezone.utc)
+
+    kind, _, arg = rule.partition(":")
+    if kind not in ("daily", "weekday", "weekly", "monthly"):
+        return None
+    now = datetime.now(timezone.utc)
+
+    def advance(dt: datetime) -> datetime:
+        if kind == "daily":
+            return dt + timedelta(days=1)
+        if kind == "weekday":
+            nxt = dt + timedelta(days=1)
+            while nxt.weekday() >= 5:
+                nxt += timedelta(days=1)
+            return nxt
+        if kind == "weekly":
+            target = int(arg)
+            nxt = dt + timedelta(days=1)
+            return nxt + timedelta(days=(target - nxt.weekday()) % 7)
+        # monthly
+        day = int(arg)
+        year, month = dt.year, dt.month + 1
+        if month > 12:
+            year, month = year + 1, 1
+        day = min(day, calendar.monthrange(year, month)[1])
+        return dt.replace(year=year, month=month, day=day,
+                          hour=cur.hour, minute=cur.minute, second=0, microsecond=0)
+
+    try:
+        if kind in ("weekly", "monthly"):
+            int(arg)
+        nxt = advance(cur)
+        # 停机很久时只保留最近一个未来时刻（上限防止死循环）
+        guard = 0
+        while nxt <= now and guard < 2000:
+            nxt = advance(nxt)
+            guard += 1
+    except (TypeError, ValueError):
+        return None
+    return nxt.isoformat()
+
+
 async def deliver(rec: dict) -> bool:
     when = ""
     try:
@@ -85,8 +142,14 @@ async def deliver(rec: dict) -> bool:
         ok, err = False, f"{type(e).__name__}: {str(e)[:120]}"
 
     if ok:
-        store.reminder_mark(int(rec["id"]), "sent")
-        logger.info("reminder %s sent via %s", rec["id"], channel)
+        rule = (rec.get("repeat_rule") or "").strip()
+        nxt = next_due(rule, rec.get("due_at") or "") if rule else None
+        if nxt:
+            store.reminder_reschedule(int(rec["id"]), nxt)
+            logger.info("reminder %s sent via %s; next at %s", rec["id"], channel, nxt)
+        else:
+            store.reminder_mark(int(rec["id"]), "sent")
+            logger.info("reminder %s sent via %s", rec["id"], channel)
         return True
     attempts = int(rec.get("attempts") or 0) + 1
     store.reminder_mark(int(rec["id"]), "failed" if attempts >= MAX_ATTEMPTS else "pending", err)

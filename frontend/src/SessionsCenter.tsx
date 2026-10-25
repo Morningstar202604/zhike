@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { MessagesSquare, X, RefreshCw, Headset, Inbox, Search } from 'lucide-react'
+import { MessagesSquare, X, RefreshCw, Headset, Inbox, Search, Download } from 'lucide-react'
 import { http, useAdminSessions, useCloseSession, isAuthError } from './lib/queries'
 import TokenGate from './components/TokenGate'
 import type { AgentMsg, SessionRow } from './types/api'
@@ -65,6 +65,23 @@ export default function SessionsCenter() {
     if (!sessions.data) return
     if (page > maxPage) setPage(maxPage)
   }, [page, maxPage, sessions.data])
+
+  const exportSession = async () => {
+    if (!active) return
+    try {
+      const r = await http.get<{ markdown: string; filename: string }>(
+        `/api/sessions/${active.id}/export?fmt=md`)
+      const blob = new Blob([r.markdown], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = r.filename || `session-${active.id.slice(0, 8)}.md`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert((e as Error).message)
+    }
+  }
 
   const open = async (s: SessionRow) => {
     setActive(s)
@@ -206,6 +223,9 @@ export default function SessionsCenter() {
             <div className="drawer-head">
               <h3 title={active.id}>会话 #{active.id.slice(0, 8)} · {label(CHANNEL_LABEL, active.channel)}</h3>
               <div className="flex gap-2">
+                <button className="btn ghost sm" onClick={exportSession} title="导出为 Markdown">
+                  <Download size={13} /> 导出
+                </button>
                 <Link to="/operator" className="btn ghost sm"><Headset size={13} /> 协作台</Link>
                 {active.status !== 'closed' && (
                   <button className="btn secondary sm" onClick={doClose} disabled={close.isPending}>

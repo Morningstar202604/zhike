@@ -54,7 +54,11 @@ def _defaults() -> dict:
     },
     "multimodal": {
         "enable": True,
+        # 看图模型：留空时自动沿用主模型（agnes 系主模型本身支持图片输入，
+        # 早期默认空导致「图片一律走规则话术」，等于工具装了却从来不跑）。
         "vision_model": os.environ.get("USER_VISION_MODEL", ""),
+        # 生图模型：用于 generate_image（文生图），与看图模型分开配。
+        "image_model": os.environ.get("USER_IMAGE_MODEL", "agnes-image-2.1-flash"),
     },
     "guardrail": {
         "injection_block": True,
@@ -162,7 +166,7 @@ _SCHEMA: dict[str, dict[str, type | tuple]] = {
     "memory": {"enable": bool, "retrieval_top_k": int, "auto_capture": bool,
                "capture_keywords": list, "visit_greeting": bool},
     "tools": {},
-    "multimodal": {"enable": bool, "vision_model": str},
+    "multimodal": {"enable": bool, "vision_model": str, "image_model": str},
     "guardrail": {"injection_block": bool},
     "engine": {"mode": str},
     "escalation": {"confidence_threshold": (int, float), "max_message_len": int, "react_steps": int, "handoff": bool},

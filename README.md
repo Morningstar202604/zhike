@@ -10,7 +10,7 @@ QQ 群/私聊 · Web 对话 · 协作台 · RAG 检索 · 工具调用 · 提醒
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-551%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-577%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-80%25%20core-blue)
 
 </div>
@@ -24,7 +24,8 @@ QQ 群/私聊 · Web 对话 · 协作台 · RAG 检索 · 工具调用 · 提醒
 ## 设计原则
 
 - **降级可用**：LLM 没配/挂了 → 规则+检索照样答；核心不可达 → 网关回兜底话术，用户不面对沉默
-- **三种 Agent 能力（成熟范式）**：SSE 流式打字机回复（断流自动回退整段）· 图片多模态（OpenAI 视觉内容格式，配 `USER_VISION_MODEL` 即看图）· 混合检索（可选装 BGE 中文向量模型与字面 bigram 取 max；不装自动纯字面）
+- **三种 Agent 能力（成熟范式）**：SSE 流式打字机回复（断流自动回退整段）· 图片多模态（OpenAI 视觉内容格式，未配 `USER_VISION_MODEL` 时自动沿用主模型）· 混合检索（可选装 BGE 中文向量模型与字面 bigram 取 max；不装自动纯字面）
+- **26 个内置工具**：看图、生图/发图、联网搜索、读网页、读文档（PDF/DOCX/XLSX）、算数、当前时间、长期记忆、提醒、群记录/群成员/好友、主动发消息——缺后端时诚实说明，不假装成功
 - **安全默认**：注入护栏（内置规则+正则库）、ADMIN/CHANNEL 双令牌鉴权、每身份限流、静态服务防路径穿越
 - **全程可审计**：会话/工具/升级/拦截全量落库，控制台可回放
 - **零重依赖**：向量库可选不装、存储用 SQLite、一条命令起服务
@@ -110,7 +111,7 @@ Web 对话 + 协作台 ────/api + /ws───────────�
 
 | 项 | 结果 |
 |---|---|
-| 后端测试 | 551 passed（含 15 条第三轮回归 + 秘书工具层 47 条） |
+| 后端测试 | 577 passed（含 15 条第三轮回归 + 秘书工具层 71 条） |
 | 覆盖率 | core 行 80% / 分支 79%（第三轮实测 4224 行） |
 | 变异测试 | 15 个关键变异全部被杀死（抽样） |
 | 在线体检 | `scripts/e2e_check.py` 18/18；`scripts/action_e2e.py` 13/13；`scripts/qq_e2e.py` 3/3（假协议端） |

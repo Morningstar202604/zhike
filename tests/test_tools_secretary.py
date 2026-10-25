@@ -430,3 +430,238 @@ def test_rule_react_empty_list_does_not_escalate():
     }
     reply = asyncio.run(pipeline._rule_react("列一下我的待办", ctx, {}))
     assert reply.escalate is False
+
+
+# ------------------------------------------------------------
+# 时间 / 计算：模型没有时钟，也不该靠 eval
+# ------------------------------------------------------------
+
+def test_now_reports_date_and_weekday():
+    res = tools.tool_now(ctx=EMPTY)
+    assert res["found"] is True
+    assert res["date"] and res["weekday"] in "一二三四五六日"
+    assert "现在" in res["note"]
+
+
+@pytest.mark.parametrize("expr,expected", [
+    ("1+1", 2), ("(3+5)*2/4", 4), ("2**10", 1024), ("10%3", 1),
+    ("3.5*2", 7), ("2**-3", 0.125), ("-3 + 4", 1),
+])
+def test_calc_basic_math(expr, expected):
+    res = tools.tool_calc(expression=expr)
+    assert res["found"] is True, res
+    assert res["value"] == expected
+
+
+@pytest.mark.parametrize("expr", [
+    '__import__("os").system("echo hi")',
+    "open('x')",
+    "[1,2,3]",
+    "1 if 1 else 2",
+    "9**9**9",
+])
+def test_calc_rejects_non_arithmetic(expr):
+    """calc 绝不能变成任意代码执行入口，也不能被大指数算死。"""
+    res = tools.tool_calc(expression=expr)
+    assert res["found"] is False
+    assert res.get("status") != "empty"
+
+
+def test_calc_division_by_zero_is_readable():
+    res = tools.tool_calc(expression="1/0")
+    assert res["found"] is False
+    assert "ZeroDivision" in res["note"]
+
+
+def test_detect_tool_routes_time_and_calc():
+    enabled = {"now": 1, "calc": 1}
+    assert tools.detect_tool("现在几点了", enabled)[0] == "now"
+    assert tools.detect_tool("今天几号", enabled)[0] == "now"
+    assert tools.detect_tool("算一下 1+1", enabled) == ("calc", {"expression": "1+1"})
+    assert tools.detect_tool("3*7等于多少", enabled) == ("calc", {"expression": "3*7"})
+    # 不能把正文里的数字误判成算式
+    assert tools.detect_tool("帮我解释一下 3*7 是什么意思", enabled)[0] is None
+
+
+# ------------------------------------------------------------
+# 发图 / 生图 / 文档：没有 QQ 上下文时必须追问，不瞎发
+# ------------------------------------------------------------
+
+def test_send_image_needs_qq_context():
+    res = asyncio.run(tools.tool_send_image(ctx=ToolContext(visitor_id="v"), source="C:/tmp/a.png"))
+    assert res.get("status") == "need_context"
+
+
+def test_send_image_requires_source():
+    res = asyncio.run(tools.tool_send_image(ctx=ToolContext(group_id="1"), source=""))
+    assert res.get("status") == "need_context"
+
+
+def test_send_image_blocks_private_url():
+    """图片链接同样走 SSRF 校验：内网地址不能发。"""
+    res = asyncio.run(tools.tool_send_image(ctx=ToolContext(group_id="1"),
+                                            source="http://127.0.0.1:8010/api/config"))
+    assert res["found"] is False
+    assert "不能发" in res["note"]
+
+
+def test_generate_image_needs_prompt():
+    res = asyncio.run(tools.tool_generate_image(ctx=ToolContext(group_id="1"), prompt="  "))
+    assert res.get("status") == "need_context"
+
+
+def test_parse_document_needs_source():
+    res = asyncio.run(tools.tool_parse_document(ctx=EMPTY))
+    assert res.get("status") == "need_context"
+
+
+def test_parse_document_markdown_via_executor(monkeypatch):
+    from core import executor_client
+
+    async def fake_invoke(cap, params, timeout_s=30.0):
+        import base64
+        assert cap == "fs.read_b64"
+        return {"b64": base64.b64encode("# 标题\n\n正文内容".encode()).decode()}
+
+    monkeypatch.setattr(executor_client, "invoke", fake_invoke)
+    res = asyncio.run(tools.tool_parse_document(ctx=EMPTY, path="C:/tmp/a.md"))
+    assert res["found"] is True
+    assert "正文内容" in res["note"]
+
+
+def test_qq_group_members_needs_group():
+    res = asyncio.run(tools.tool_qq_group_members(ctx=ToolContext(visitor_id="v")))
+    assert res.get("status") == "need_context"
+
+
+# ------------------------------------------------------------
+# 视觉模型回落：不配 vision_model 时用主模型，不能静默「看不了图」
+# ------------------------------------------------------------
+
+def test_llm_build_messages_uses_main_model_for_vision_when_unset():
+    from core import llm
+
+    cfg = {"llm": {"model": "m-main"}, "multimodal": {"vision_model": ""},
+           "context": {"char_budget": 2400}, "escalation": {"react_steps": 3}}
+    ctx = {"persona": "p", "modules_on": {}, "kb_block": "", "tools_schema": [],
+           "memory_block": "", "summary": "", "history": []}
+    msgs, model = llm._build_messages("看图", ctx, cfg, image_b64="iVBORw0KGgo")
+    assert model == "m-main"
+    assert isinstance(msgs[-1]["content"], list), "未配视觉模型时应按多模态消息发送"
+
+
+def test_llm_build_messages_prefers_explicit_vision_model():
+    from core import llm
+
+    cfg = {"llm": {"model": "m-main"}, "multimodal": {"vision_model": "v-model"},
+           "context": {"char_budget": 2400}, "escalation": {"react_steps": 3}}
+    ctx = {"persona": "p", "modules_on": {}, "kb_block": "", "tools_schema": [],
+           "memory_block": "", "summary": "", "history": []}
+    _, model = llm._build_messages("看图", ctx, cfg, image_b64="iVBORw0KGgo")
+    assert model == "v-model"
+
+
+# ------------------------------------------------------------
+# 周期提醒
+# ------------------------------------------------------------
+
+def test_parse_repeat_variants():
+    cases = {
+        "每天8点": "daily",
+        "每日提醒": "daily",
+        "每个工作日9点": "weekday",
+        "每周三10点": "weekly:2",
+        "每月15号9点": "monthly:15",
+        "明天9点": "",
+    }
+    for text, expected in cases.items():
+        rule, _cleaned = tools._parse_repeat(text)
+        assert rule == expected, f"{text} -> {rule} (期望 {expected})"
+
+
+def test_parse_repeat_strips_rule_from_text():
+    rule, cleaned = tools._parse_repeat("每天提醒我吃药")
+    assert rule == "daily"
+    assert "每天" not in cleaned
+
+
+def test_next_due_daily_and_weekday():
+    from core.reminders import next_due
+
+    base = "2026-10-30T09:00:00+00:00"  # 周五
+    assert next_due("daily", base).startswith("2026-10-31")
+    assert next_due("weekday", base).startswith("2026-11-02")  # 跳过周末
+
+
+def test_next_due_weekly_lands_on_target_weekday():
+    from core.reminders import next_due
+
+    nxt = next_due("weekly:2", "2026-10-25T09:00:00+00:00")  # 周日 → 下周三
+    assert nxt.startswith("2026-10-28")
+
+
+def test_next_due_monthly_clamps_to_month_end(monkeypatch):
+    """1/31 + 每月31号 → 2 月必须退到 28 日（2026 非闰年），不能生成非法日期。
+
+    注意：next_due 会把锚点推进到"最近一个未来时刻"，所以这里把"现在"固定在锚点前一刻，
+    否则锚点若早已过去，函数会一路推到当前月份（那是正确行为，但测不到夹紧逻辑）。
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    from core import reminders
+
+    class _Frozen(_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _dt(2026, 1, 31, 8, 0, tzinfo=_tz.utc)
+
+    monkeypatch.setattr(reminders, "datetime", _Frozen)
+    nxt = reminders.next_due("monthly:31", "2026-01-31T09:00:00+00:00")
+    assert nxt.startswith("2026-02-28")
+
+
+def test_next_due_returns_none_for_unknown_rule():
+    from core.reminders import next_due
+
+    assert next_due("", "2026-10-25T09:00:00+00:00") is None
+    assert next_due("yearly", "2026-10-25T09:00:00+00:00") is None
+
+
+def test_recurring_reminder_reschedules_after_send(monkeypatch):
+    """周期提醒发完必须回到 pending 且 due_at 前移，不能变成 sent 结束。"""
+    from core import reminders, store
+
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    rec = store.reminder_add("v-rep", "webchat:v-rep", "吃药", past, "webchat",
+                             repeat_rule="daily")
+
+    async def fake_web(rec_, text):
+        return True, ""
+
+    monkeypatch.setattr(reminders, "_deliver_web", fake_web)
+    asyncio.run(reminders.tick())
+
+    after = store.reminder_get(rec["id"])
+    assert after["status"] == "pending"
+    assert after["due_at"] > past
+
+
+# ------------------------------------------------------------
+# 文件写入
+# ------------------------------------------------------------
+
+def test_write_file_reports_permission_denial(monkeypatch):
+    from core import executor_client
+
+    async def denied(*a, **kw):
+        raise executor_client.ExecutorDenied("路径不在允许范围内")
+
+    monkeypatch.setattr(executor_client, "invoke", denied)
+    res = asyncio.run(tools.tool_write_file(path="C:/Windows/x.txt", content="x"))
+    assert res["found"] is False
+    assert "没有权限" in res["note"]
+
+
+def test_write_file_requires_content():
+    res = asyncio.run(tools.tool_write_file(path="C:/Users/x/a.txt", content=""))
+    assert res["status"] == "need_context"

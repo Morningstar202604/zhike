@@ -96,6 +96,43 @@ def fs_read(policy: Policy, path: str, encoding: str = "utf-8") -> dict:
     }
 
 
+def fs_read_b64(policy: Policy, path: str, max_bytes: int = 8_000_000) -> dict:
+    """读原始字节并返回 base64（图片/表情包这类二进制用）。
+
+    与 fs_read 分开：后者按文本解码，二进制会被 errors=replace 破坏。
+    仍然走同一条 policy.check_path，越权行为与文本读取完全一致。
+    """
+    import base64
+
+    p = policy.check_path(path)
+    if not os.path.isfile(p):
+        raise CapabilityError("不是文件")
+    size = os.path.getsize(p)
+    limit = min(int(max_bytes or 8_000_000), policy.max_read() * 8)
+    if size > limit:
+        raise CapabilityError(f"文件过大（{size} > {limit} 字节上限）")
+    with open(p, "rb") as f:
+        raw = f.read(limit + 1)
+    if len(raw) > limit:
+        raise CapabilityError(f"文件超过读取上限 {limit} 字节")
+    head = raw[:12]
+    if head.startswith(b"\x89PNG"):
+        mime = "image/png"
+    elif head.startswith(b"\xff\xd8"):
+        mime = "image/jpeg"
+    elif head.startswith(b"GIF8"):
+        mime = "image/gif"
+    elif head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        mime = "image/webp"
+    else:
+        mime = "application/octet-stream"
+    return {
+        "path": p, "size": size, "mime": mime,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "b64": base64.b64encode(raw).decode(),
+    }
+
+
 def fs_write(policy: Policy, path: str, content: str = "", encoding: str = "utf-8") -> dict:
     p = policy.check_path(path, for_write=True)
     data = (content or "").encode(encoding)

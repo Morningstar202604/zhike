@@ -27,8 +27,8 @@ def test_guardrail_block():
     assert ans.tool_used == "injection_guard"
 
 
-def test_explicit_human_request_gets_robot_disclaimer(monkeypatch):
-    """没有真人值守时，说「转人工」必须直说只有机器人，不能假装在转接。"""
+def test_explicit_human_request_gets_no_false_handoff(monkeypatch):
+    """没有真人值守时，说「转人工」必须实话实说这里只有我，不能假装在转接。"""
     import core.config as config_mod
 
     orig = config_mod.get_config
@@ -41,7 +41,8 @@ def test_explicit_human_request_gets_robot_disclaimer(monkeypatch):
     monkeypatch.setattr(config_mod, "get_config", patched)
     ans = _ask("帮我转人工")
     assert ans.escalate is False
-    assert "真人" in ans.text and "机器人" in ans.text
+    assert ("没别人" in ans.text or "没有人工" in ans.text or "就我一个" in ans.text), ans.text
+    assert "转接" not in ans.text
 
 
 def test_explicit_human_request_escalates_when_handoff_enabled(monkeypatch):

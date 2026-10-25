@@ -443,7 +443,7 @@ def create_app() -> FastAPI:
 
         只有「agent_handled」（真有人在控制台接管）才让机器人停嘴。
         旧实现把 visitor_requested / feedback_not_helpful / image_needs_human /
-        output_guardrail 也当成停嘴条件——本系统没有人工客服，一旦触发这些原因
+        output_guardrail 也当成停嘴条件——这里没有客服团队，一旦触发这些原因
         机器人就永久沉默，用户只能看到空气。
         """
         sess = store.get_session(sid)
@@ -617,6 +617,7 @@ def create_app() -> FastAPI:
         channel_type: str = "webchat"
         group_id: str | None = None
         channel_user_id: str | None = None
+        repeat_rule: str = ""
 
     @app.get("/api/reminders", dependencies=[Depends(require_admin)])
     def reminders_list(visitor_id: str = "", status: str = "pending", limit: int = 50):
@@ -631,10 +632,15 @@ def create_app() -> FastAPI:
         if not text:
             raise HTTPException(400, "提醒内容不能为空")
         due_iso = (body.due_at or "").strip()
+        repeat_rule = (getattr(body, "repeat_rule", "") or "").strip()
+        when_raw = (body.when or "").strip()
+        # 周期规则可能写在 when 里（「每天8点」），先剥出来再解析时间
+        if not repeat_rule:
+            repeat_rule, when_raw = tools_mod._parse_repeat(when_raw)
         if not due_iso:
             from datetime import datetime, timezone
 
-            due = tools_mod._parse_due(body.when, datetime.now(timezone.utc))
+            due = tools_mod._parse_due(when_raw, datetime.now(timezone.utc))
             if due is None:
                 raise HTTPException(400, f"看不懂时间表达：{body.when or '(空)'}")
             due_iso = due.isoformat()
@@ -643,6 +649,7 @@ def create_app() -> FastAPI:
             chat_key=(body.chat_key or f"{body.channel_type}:{body.visitor_id or 'admin'}").strip(),
             text=text, due_at=due_iso, channel_type=body.channel_type,
             group_id=body.group_id, channel_user_id=body.channel_user_id,
+            repeat_rule=repeat_rule,
         )
         return rec
 
@@ -990,7 +997,7 @@ def create_app() -> FastAPI:
         # 对客自动话术里的「转人工」不走这里，由 pipeline 的 escalation.handoff 决定。
         store.mark_escalated(sid, "visitor_requested")
         ticket_id = store.create_ticket(sid)
-        store.add_message(sid, "agent", "这儿没有人工客服，只有我这个机器人。有问题直接说。")
+        store.add_message(sid, "agent", "这儿就我一个人盯着，没别人可转。有问题直接说。")
         await hub.broadcast_to_operators(
             {"type": "new_pending", "session_id": sid, "ticket_id": ticket_id, "reason": "visitor_requested"}
         )
@@ -1102,6 +1109,22 @@ def create_app() -> FastAPI:
             "escalate_threshold": cfg.get("escalation", {}).get("confidence_threshold"),
             "react_steps": cfg.get("escalation", {}).get("react_steps"),
         }
+
+    # ---- 本机令牌引导（免手输管理员令牌）----
+    # 只对回环地址开放：本机浏览器打开控制台时自动取令牌，等同"这台电脑的信任"。
+    # 公网/内网来源一律 403，绝不泄露令牌。可用 CS_AGENT_LOCAL_TOKEN_BOOTSTRAP=0 关闭。
+    @app.get("/api/bootstrap/local-token")
+    def bootstrap_local_token(request: Request):
+        if os.environ.get("CS_AGENT_LOCAL_TOKEN_BOOTSTRAP", "1").lower() in ("0", "false", "no", "off"):
+            raise HTTPException(403, "本机令牌引导已关闭")
+        host = (request.client.host if request.client else "") or ""
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            raise HTTPException(403, "仅限本机访问")
+        token = security.admin_token()
+        if not token:
+            return {"available": False, "token": "", "reason": "ADMIN_TOKEN 未配置"}
+        return {"available": True, "token": token,
+                "hint": "令牌只在本机回环地址下发；公网部署请用 CS_AGENT_LOCAL_TOKEN_BOOTSTRAP=0 关闭"}
 
     @app.get("/api/config", dependencies=[Depends(require_admin)])
     def get_config():
@@ -1532,6 +1555,30 @@ def create_app() -> FastAPI:
             "detail": body.detail or {},
         }
         return {"ok": True}
+
+    @app.get("/api/search/messages", dependencies=[Depends(require_admin)])
+    def search_messages(q: str = "", limit: int = 50, visitor_id: str = ""):
+        return {"query": q, "results": store.search_messages(q, limit=limit, visitor_id=visitor_id)}
+
+    @app.get("/api/sessions/{sid}/export", dependencies=[Depends(_require_admin_or_session)])
+    def export_session(sid: str, fmt: str = "md"):
+        data = store.export_session(sid)
+        if not data:
+            raise HTTPException(404, "会话不存在")
+        sess, msgs = data["session"], data["messages"]
+        if fmt == "json":
+            return {"session": sess, "messages": msgs}
+        lines = [f"# 会话 {sess['id'][:8]}", "",
+                 f"- 访客：{sess.get('visitor_id') or '匿名'}",
+                 f"- 开始：{sess.get('started_at') or ''}",
+                 f"- 状态：{sess.get('status') or ''}", ""]
+        for m in msgs:
+            who = {"visitor": "用户", "agent": "秘书", "operator": "真人"}.get(m.get("role"), m.get("role"))
+            lines.append(f"**{who}**（{(m.get('created_at') or '')[:19].replace('T', ' ')}）")
+            lines.append("")
+            lines.append(str(m.get("content") or ""))
+            lines.append("")
+        return {"markdown": "\n".join(lines), "filename": f"session-{sess['id'][:8]}.md"}
 
     @app.get("/api/admin/sessions", dependencies=[Depends(require_admin)])
     def admin_sessions(status: str | None = None, limit: int = 50, offset: int = 0,

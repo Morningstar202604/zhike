@@ -209,6 +209,21 @@ def _parse_due(text: str, now: datetime | None = None) -> datetime | None:
                  "小时": timedelta(hours=n), "天": timedelta(days=n), "周": timedelta(weeks=n)}[unit]
         return now + delta
 
+    # 裸钟点（「8点」「早上9点」「下午3点半」）：周期提醒剥掉「每天」后剩的就是这种
+    m = re.search(r"^(早上|上午|中午|下午|晚上)?\s*(\d{1,2})\s*[:：点]\s*(半|\d{1,2})?$", t.strip())
+    if m:
+        period, hh, mm = m.groups()
+        hour = int(hh)
+        minute = 30 if mm == "半" else int(mm or 0)
+        if period in ("下午", "晚上") and hour < 12:
+            hour += 12
+        if period == "中午" and hour < 11:
+            hour += 12
+        base = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if base <= now:
+            base += timedelta(days=1)
+        return base
+
     m = re.search(r"(明天|后天|今天|今晚)\s*(早上|上午|中午|下午|晚上)?\s*(\d{1,2})\s*[:：点]\s*(\d{1,2})?", t)
     if m:
         day_word, period, hh, mm = m.groups()
@@ -225,24 +240,60 @@ def _parse_due(text: str, now: datetime | None = None) -> datetime | None:
     return None
 
 
+_REPEAT_PATTERNS = [
+    (r"每天|每日|天天", "daily"),
+    (r"每个?工作日", "weekday"),
+    (r"每周([一二三四五六日天])", None),      # weekly:N
+    (r"每月\s*(\d{1,2})\s*[号日]", None),   # monthly:D
+]
+
+
+def _parse_repeat(text: str) -> tuple[str, str]:
+    """从「每天/每周三/每月15号」解析重复规则，返回 (rule, 去掉规则后的文本)。"""
+    t = text or ""
+    m = re.search(r"每(?:周|星期)([一二三四五六日天])", t)
+    if m:
+        idx = "一二三四五六日".find(m.group(1))
+        day = 0 if m.group(1) == "天" else (idx if idx >= 0 else 0)
+        return f"weekly:{day}", (t[:m.start()] + t[m.end():]).strip(" ，,。")
+    m = re.search(r"每月\s*(\d{1,2})\s*[号日]", t)
+    if m:
+        return f"monthly:{int(m.group(1))}", (t[:m.start()] + t[m.end():]).strip(" ，,。")
+    if re.search(r"(?:每)?个?工作日", t):
+        return "weekday", re.sub(r"(?:每)?个?工作日", "", t).strip(" ，,。")
+    if re.search(r"每天|每日|天天", t):
+        return "daily", re.sub(r"每天|每日|天天", "", t).strip(" ，,。")
+    return "", t
+
+
 def tool_remind(ctx: ToolContext, text: str, when: str, **_kw) -> dict:
     """加一条提醒。when 支持「10 分钟后 / 明天 9 点 / ISO」。"""
     if not ctx.visitor_id:
         return need_ctx("remind", "访客身份")
-    text = (text or "").strip()[:200]
-    if not text:
+    raw_text = (text or "").strip()
+    if not raw_text:
         return need_ctx("remind", "要提醒的内容")
-    due = _parse_due(when)
+    # 周期提醒：「每天 8 点提醒我喝水」——规则从 text/when 两处都可能出现
+    rule, cleaned = _parse_repeat(raw_text)
+    when_clean = when or ""
+    if not rule:
+        rule, when_clean = _parse_repeat(when_clean)
+    text = (cleaned or raw_text)[:200]
+    due = _parse_due(when_clean)
     if due is None:
         return need_ctx("remind", f"提醒时间（「{when}」没看懂，请说清几点或多久后）")
     rec = store.reminder_add(
         visitor_id=ctx.visitor_id, chat_key=ctx.chat_key, text=text,
         due_at=due.isoformat(), channel_type=ctx.channel_type,
         group_id=ctx.group_id, channel_user_id=ctx.channel_user_id,
+        repeat_rule=rule,
     )
     local = due.astimezone().strftime("%m-%d %H:%M")
-    return ok_result("remind", f"好，{local} 提醒你：{text}", reminder_id=rec.get("id"),
-                     due_at=due.isoformat())
+    suffix = {"daily": "，每天这个点", "weekday": "，工作日每天",
+              "weekly": "，每周同一天", "monthly": "，每月同一天"}.get(
+        rule.split(":")[0], "")
+    return ok_result("remind", f"好，{local} 提醒你：{text}{suffix}", reminder_id=rec.get("id"),
+                     due_at=due.isoformat(), repeat_rule=rule)
 
 
 def tool_list_reminders(ctx: ToolContext, **_kw) -> dict:
@@ -411,6 +462,44 @@ async def tool_read_file(path: str, max_chars: str = "4000", **_kw) -> dict:
     return ok_result("read_file", note, path=path, truncated=truncated)
 
 
+async def tool_write_file(path: str, content: str, append: str = "", **_kw) -> dict:
+    """写文件。走执行器策略：allow_roots 之外一律拒绝。
+
+    append=true 时追加而不是覆盖——秘书场景里「把这条记到笔记里」
+    远比「覆盖整个文件」常见，默认覆盖是危险的。
+    """
+    from core import executor_client
+
+    body = content or ""
+    if not body:
+        return need_ctx("write_file", "要写入的内容")
+    do_append = str(append).lower() in ("1", "true", "yes", "on", "追加")
+    if do_append:
+        # 执行器只有整文件写；追加 = 读旧内容 + 拼接。读不到文件时按新建处理。
+        try:
+            old = await executor_client.invoke("fs.read", {"path": path})
+            prev = str(old.get("content") or "")
+            if prev and not prev.endswith("\n"):
+                prev += "\n"
+            body = prev + body
+        except executor_client.ExecutorDenied as e:
+            return miss_result("write_file", f"没有权限读这个路径：{e}", path=path)
+        except executor_client.ExecutorError:
+            body = body          # 文件不存在 → 直接新建
+    try:
+        data = await executor_client.invoke(
+            "fs.write", {"path": path, "content": body})
+    except executor_client.ExecutorOffline:
+        return off_result("write_file", "文件工具没启用（执行器未运行）。")
+    except executor_client.ExecutorDenied as e:
+        return miss_result("write_file", f"没有权限写这个路径：{e}", path=path)
+    except executor_client.ExecutorError as e:
+        return miss_result("write_file", f"写入失败：{e}", path=path)
+    size = data.get("bytes") or data.get("size") or len(body.encode("utf-8"))
+    verb = "追加" if do_append else "写入"
+    return ok_result("write_file", f"已{verb} {path}（{size} 字节）。", path=path, append=do_append)
+
+
 # ============================================================
 # 图片 / 表情包
 # ============================================================
@@ -422,7 +511,7 @@ async def tool_describe_image(ctx: ToolContext, source: str = "", question: str 
     from core import config, llm
 
     cfg = config.get_config()
-    vision_model = (cfg.get("multimodal", {}) or {}).get("vision_model", "") or ""
+    vision_model = ((cfg.get("multimodal", {}) or {}).get("vision_model", "") or "").strip()         or str((cfg.get("llm") or {}).get("model") or "")
     if not vision_model:
         return off_result("describe_image", "还没配视觉模型，我看不了图。")
     if not (cfg.get("llm") or {}).get("has_key"):
@@ -564,6 +653,275 @@ async def tool_qq_send(ctx: ToolContext, text: str, target: str = "", **_kw) -> 
 
 
 # ============================================================
+# 时间 / 计算：模型没有时钟也没有可靠算术，这两件必须给工具
+# ============================================================
+
+def tool_now(ctx: ToolContext, **_kw) -> dict:
+    """当前时间。模型自己不知道今天几号，猜日期是常见幻觉来源。"""
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now().astimezone()
+    week = "一二三四五六日"[now.weekday()]
+    return ok_result(
+        "now",
+        f"现在是 {now.strftime('%Y-%m-%d %H:%M:%S')}（星期{week}，{now.tzname() or '本地时区'}），"
+        f"UTC 时间 {_dt.now(_tz.utc).strftime('%Y-%m-%d %H:%M')}。",
+        iso=now.isoformat(), date=now.strftime("%Y-%m-%d"), time=now.strftime("%H:%M:%S"),
+        weekday=week, tz=now.tzname() or "", epoch=int(now.timestamp()),
+    )
+
+
+def tool_calc(expression: str, **_kw) -> dict:
+    """只算数学表达式，不执行代码。
+
+    用 ast 白名单求值（+ - * / // % ** 括号/常数），绝不 eval：
+    eval 会让「算一下 1+1」变成任意代码执行入口。
+    """
+    import ast
+
+    expr = (expression or "").strip()
+    if not expr:
+        return need_ctx("calc", "要计算的表达式")
+    if len(expr) > 200:
+        return miss_result("calc", "表达式太长（上限 200 字符）。")
+    try:
+        tree = ast.parse(expr.replace("×", "*").replace("÷", "/").replace("^", "**"), mode="eval")
+    except SyntaxError:
+        return miss_result("calc", f"看不懂这个算式：{expr}")
+
+    allowed = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Add, ast.Sub,
+               ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow, ast.USub, ast.UAdd)
+    exponent_ok = True
+    for node in ast.walk(tree):
+        if not isinstance(node, allowed):
+            return miss_result("calc", "只支持加减乘除、整除、取余、乘方和括号。")
+        if isinstance(node, ast.Constant) and not isinstance(node.value, (int, float)):
+            return miss_result("calc", "只支持数字。")
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
+            # 防「9**9**9」把进程算死：指数必须是可静态判断的小数字
+            right = node.right
+            if isinstance(right, ast.Constant) and isinstance(right.value, (int, float)):
+                exponent_ok = exponent_ok and abs(right.value) <= 1000
+            elif isinstance(right, ast.UnaryOp) and isinstance(right.operand, ast.Constant):
+                val = getattr(right.operand, "value", 0) or 0
+                exponent_ok = exponent_ok and isinstance(val, (int, float)) and abs(val) <= 1000
+            else:
+                exponent_ok = False
+    if not exponent_ok:
+        return miss_result("calc", "指数太大或不是常数，拒绝计算。")
+    try:
+        value = eval(compile(tree, "<calc>", "eval"), {"__builtins__": {}}, {})
+    except (ZeroDivisionError, OverflowError, ValueError) as e:
+        return miss_result("calc", f"算不出来：{type(e).__name__}")
+    if isinstance(value, float):
+        out = round(value, 10)
+        if out == int(out) and abs(out) < 1e15:
+            out = int(out)
+    else:
+        out = value
+    return ok_result("calc", f"{expr} = {out}", expression=expr, value=out)
+
+
+# ============================================================
+# 发图 / 生图：QQ 侧真发出去，不是把链接丢给用户
+# ============================================================
+
+async def _send_cq_image(ctx: ToolContext, cq_file: str) -> dict:
+    """把一段 [CQ:image,...] 发给当前会话。url/file/base64 三种来源由调用方拼好。"""
+    from core.actions import client as action_client
+
+    if ctx.group_id:
+        action, target = "send_group_msg", int(ctx.group_id) if str(ctx.group_id).isdigit() else ctx.group_id
+        params = {"group_id": target, "message": cq_file}
+    elif ctx.channel_user_id:
+        action, target = "send_private_msg", int(ctx.channel_user_id) if str(ctx.channel_user_id).isdigit() else ctx.channel_user_id
+        params = {"user_id": target, "message": cq_file}
+    else:
+        return need_ctx("send_image", "当前会话不是 QQ，发不了图")
+    try:
+        await action_client.call_action(action, params, timeout_s=20)
+    except Exception as e:
+        return miss_result("send_image", f"发图失败：{type(e).__name__}")
+    return ok_result("send_image", "图发出去了。", action=action)
+
+
+async def tool_send_image(ctx: ToolContext, source: str = "", **_kw) -> dict:
+    """发一张图：支持 http 链接、data URL、或执行器白名单内的本地路径。"""
+    raw = (source or "").strip()
+    if not raw:
+        return need_ctx("send_image", "图片地址或路径")
+    # 先确认有 QQ 会话可发，再去读文件/下载：否则白跑一趟还可能读本地文件
+    if not ctx.group_id and not ctx.channel_user_id:
+        return need_ctx("send_image", "当前会话不是 QQ，发不了图")
+    if raw.startswith(("http://", "https://")):
+        from core import url_guard
+
+        try:
+            safe = url_guard.check_url(raw)
+        except url_guard.UnsafeUrl as e:
+            return miss_result("send_image", f"这个图片地址不能发：{e}")
+        return await _send_cq_image(ctx, f"[CQ:image,file={safe}]")
+    if raw.startswith("data:"):
+        b64 = raw.split(",", 1)[-1]
+        return await _send_cq_image(ctx, f"[CQ:image,file=base64://{b64}]")
+
+    # 本地路径：必须过执行器策略，不能直接读机器上的任意文件
+    from core import executor_client
+
+    try:
+        data = await executor_client.invoke("fs.read_b64", {"path": raw})
+    except executor_client.ExecutorOffline:
+        return off_result("send_image", "文件工具没启用（执行器未运行），发不了本地图。")
+    except executor_client.ExecutorDenied as e:
+        return miss_result("send_image", f"没有权限读这个文件：{e}")
+    except executor_client.ExecutorError as e:
+        return miss_result("send_image", f"读图失败：{e}")
+    b64 = str(data.get("b64") or "")
+    if not b64:
+        return miss_result("send_image", "这张图读出来是空的。")
+    return await _send_cq_image(ctx, f"[CQ:image,file=base64://{b64}]")
+
+
+async def tool_generate_image(ctx: ToolContext, prompt: str, size: str = "1024x1024", **_kw) -> dict:
+    """文生图：调同站点的 /images/generations，再把图真的发到会话里。"""
+    from core import config, http_pool
+
+    text = (prompt or "").strip()
+    if not text:
+        return need_ctx("generate_image", "画面描述")
+    cfg = config.get_config()
+    llm_cfg = cfg.get("llm") or {}
+    if not llm_cfg.get("has_key"):
+        return off_result("generate_image", "还没配模型 Key，画不了图。")
+    model = (cfg.get("multimodal") or {}).get("image_model") or "agnes-image-2.1-flash"
+    base = str(llm_cfg.get("base_url") or "").rstrip("/")
+    try:
+        resp = await http_pool.get_client(timeout=90).post(
+            f"{base}/images/generations",
+            headers={"Authorization": f"Bearer {llm_cfg.get('api_key', '')}"},
+            json={"model": model, "prompt": text[:900], "n": 1, "size": size or "1024x1024"},
+        )
+        resp.raise_for_status()
+        item = (resp.json().get("data") or [{}])[0]
+    except Exception as e:  # 生成失败不能拖垮对话
+        return miss_result("generate_image", f"画图失败：{type(e).__name__}")
+    url = str(item.get("url") or "")
+    b64 = str(item.get("b64_json") or "")
+    if not url and not b64:
+        return miss_result("generate_image", "画图服务没返回图片。")
+    sent = await _send_cq_image(
+        ctx, f"[CQ:image,file=base64://{b64}]" if b64 else f"[CQ:image,file={url}]")
+    if sent.get("found"):
+        return ok_result("generate_image", "图画好了，已经发出去。", prompt=text, url=url)
+    # 非 QQ 渠道（网页）：把链接交给前端渲染，照样算成功
+    if url:
+        return ok_result("generate_image", f"图画好了：{url}", prompt=text, url=url)
+    return sent
+
+
+# ============================================================
+# 文档解析：把 PDF/DOCX/XLSX 变成可读文字
+# ============================================================
+
+async def tool_parse_document(ctx: ToolContext, path: str = "", url: str = "", **_kw) -> dict:
+    """解析 PDF/DOCX/XLSX/MD/TXT 并返回正文摘要。"""
+    from core import docparse, executor_client
+
+    src = (path or url or "").strip()
+    if not src:
+        return need_ctx("parse_document", "文档路径或链接")
+    data = b""
+    name = src
+    if src.startswith(("http://", "https://")):
+        from core import url_guard
+
+        try:
+            safe = url_guard.check_url(src)
+        except url_guard.UnsafeUrl as e:
+            return miss_result("parse_document", f"这个链接不能下载：{e}")
+        try:
+            from core.http_pool import get_client
+
+            resp = await get_client(timeout=30).get(safe)
+            resp.raise_for_status()
+            data = resp.content
+        except httpx.HTTPError as e:
+            return miss_result("parse_document", f"下载失败：{type(e).__name__}")
+        name = safe.split("?")[0].rsplit("/", 1)[-1] or "download"
+    else:
+        try:
+            raw = await executor_client.invoke("fs.read_b64", {"path": src})
+        except executor_client.ExecutorOffline:
+            return off_result("parse_document", "文件工具没启用（执行器未运行），读不了本机文档。")
+        except executor_client.ExecutorDenied as e:
+            return miss_result("parse_document", f"没有权限读这个文件：{e}")
+        except executor_client.ExecutorError as e:
+            return miss_result("parse_document", f"读取失败：{e}")
+        import base64 as _b64
+
+        try:
+            data = _b64.b64decode(str(raw.get("b64") or ""))
+        except ValueError:
+            return miss_result("parse_document", "文件内容不是合法 base64。")
+
+    if not data:
+        return miss_result("parse_document", "文档是空的。")
+    try:
+        text = docparse.extract_text(name, data)
+    except RuntimeError as e:
+        return miss_result("parse_document", str(e)[:200])
+    except Exception as e:  # 解析器自身异常也要可读
+        return miss_result("parse_document", f"解析失败：{type(e).__name__}")
+    body = (text or "").strip()
+    if not body:
+        return empty_result("parse_document", "文档里没有可读文字（可能是扫描件）。")
+    return ok_result("parse_document", body[:6000], filename=name,
+                     chars=len(body), truncated=len(body) > 6000)
+
+
+# ============================================================
+# 通用 QQ 查询：群成员 / 群列表 / 好友列表
+# ============================================================
+
+async def _qq_query(action: str, params: dict, tool: str) -> dict:
+    from core.actions import client as action_client
+
+    try:
+        data = await action_client.call_action(action, params, timeout_s=15)
+    except Exception as e:
+        return miss_result(tool, f"查询失败：{type(e).__name__}")
+    return ok_result(tool, json.dumps(data.get("data"), ensure_ascii=False)[:3000], raw=data.get("data"))
+
+
+async def tool_qq_group_members(ctx: ToolContext, group_id: str = "", keyword: str = "", **_kw) -> dict:
+    gid = (group_id or ctx.group_id or "").strip()
+    if not gid:
+        return need_ctx("qq_group_members", "群号（当前不是群聊）")
+    res = await _qq_query("get_group_member_list",
+                          {"group_id": int(gid) if gid.isdigit() else gid}, "qq_group_members")
+    if not res.get("found"):
+        return res
+    members = res.get("raw") or []
+    kw = (keyword or "").strip()
+    rows = []
+    for m in members if isinstance(members, list) else []:
+        nick = str(m.get("card") or m.get("nickname") or "")
+        if kw and kw not in nick:
+            continue
+        rows.append(f"{nick}（{m.get('user_id')}）")
+    if not rows:
+        return empty_result("qq_group_members", f"群 {gid} 里没找到匹配「{kw}」的成员。")
+    return ok_result("qq_group_members", "；".join(rows[:40]), count=len(rows))
+
+
+async def tool_qq_groups(ctx: ToolContext, **_kw) -> dict:
+    return await _qq_query("get_group_list", {}, "qq_groups")
+
+
+async def tool_qq_friends(ctx: ToolContext, **_kw) -> dict:
+    return await _qq_query("get_friend_list", {}, "qq_friends")
+
+
+# ============================================================
 # 注册表
 # ============================================================
 
@@ -579,6 +937,8 @@ _SYNC_IMPLS: dict[str, Callable[..., dict]] = {
     "list_reminders": tool_list_reminders,
     "cancel_reminder": tool_cancel_reminder,
     "search_emote": tool_search_emote,
+    "now": tool_now,
+    "calc": tool_calc,
 }
 
 # 异步实现
@@ -587,9 +947,16 @@ _ASYNC_IMPLS: dict[str, Callable[..., Any]] = {
     "web_search": tool_web_search,
     "list_files": tool_list_files,
     "read_file": tool_read_file,
+    "write_file": tool_write_file,
     "describe_image": tool_describe_image,
     "qq_group_history": tool_qq_group_history,
     "qq_send": tool_qq_send,
+    "send_image": tool_send_image,
+    "generate_image": tool_generate_image,
+    "parse_document": tool_parse_document,
+    "qq_group_members": tool_qq_group_members,
+    "qq_groups": tool_qq_groups,
+    "qq_friends": tool_qq_friends,
 }
 
 # 元数据：名称/描述/参数/是否写操作（写操作在群聊里默认不自动执行）
@@ -621,9 +988,24 @@ TOOL_META: dict[str, dict] = {
                          "args": {"group_id": "string", "count": "string"}},
     "qq_send": {"name": "发QQ消息", "desc": "主动往群里或私聊发一条消息",
                 "args": {"text": "string", "target": "string"}},
+    "now": {"name": "看时间", "desc": "查当前日期、时间和星期（模型自己不知道今天几号）",
+            "args": {}},
+    "calc": {"name": "算数", "desc": "计算数学表达式（加减乘除、取余、乘方、括号）",
+             "args": {"expression": "string"}},
+    "send_image": {"name": "发图片", "desc": "把一张图片发到当前会话（链接 / 本地路径 / data URL）",
+                   "args": {"source": "string"}},
+    "generate_image": {"name": "画图", "desc": "按描述生成一张图片并发出去",
+                       "args": {"prompt": "string", "size": "string"}},
+    "parse_document": {"name": "读文档", "desc": "解析 PDF/DOCX/XLSX/MD/TXT 并返回正文",
+                       "args": {"path": "string", "url": "string"}},
+    "qq_group_members": {"name": "查群成员", "desc": "列出群成员，可按昵称筛选",
+                         "args": {"group_id": "string", "keyword": "string"}},
+    "qq_groups": {"name": "查我的群", "desc": "列出机器人加入的 QQ 群", "args": {}},
+    "qq_friends": {"name": "查好友", "desc": "列出机器人的 QQ 好友", "args": {}},
 }
 
-WRITE_TOOLS = frozenset({"remember", "remind", "cancel_reminder", "qq_send"})
+WRITE_TOOLS = frozenset({"remember", "remind", "cancel_reminder", "qq_send",
+                         "send_image", "generate_image"})
 
 
 def _builtin_impls() -> dict:
@@ -758,10 +1140,14 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
     # 用「搜索 + 删除」而不是一个复杂正则：两种语序（时间在前/在后）
     # 都能正确切分，也不会因非贪婪量词把 "10分钟后" 咬成 "1"。
     if "提醒" in q and "remind" in enabled:
-        # 时间片段要按「最长可识别形态」匹配：先试「明天早上9点」，再退到裸「明天」。
-        # 反过来会把 "明天早上9点" 切成 when=明天 + text=早上9点，时间就丢了。
+        # 时间片段要按「最长可识别形态」匹配：先试完整的「每天8点 / 每周三下午3点 /
+        # 每月31号 / 明天早上9点」，再退到裸「明天」。反过来会把 "明天早上9点"
+        # 切成 when=明天 + text=早上9点，时间就丢了。
         tm = (
-            re.search(r"(\d+\s*(?:分钟|小时|天|周|秒)后)", q)
+            # 周期规则 + 可选钟点；钟点可选（「每月31号」本身就够定位）
+            re.search(r"((?:每天|每日|天天|(?:每)?个?工作日|每(?:周|星期)[一二三四五六日天]|每月\s*\d{1,2}\s*[号日])"
+                      r"(?:\s*(?:早上|上午|中午|下午|晚上)?\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)?)", q)
+            or re.search(r"(\d+\s*(?:分钟|小时|天|周|秒)后)", q)
             or re.search(r"((?:明天|后天|今天|今晚)\s*(?:早上|上午|中午|下午|晚上)?\s*\d{0,2}\s*[点:：]\s*\d{0,2})", q)
             or re.search(r"(明天|后天|今天|今晚)", q)
         )
@@ -787,6 +1173,21 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
             w in q for w in ("聊什么", "聊啥", "在聊", "说了什么", "说了啥", "最近")
     ) and "qq_group_history" in enabled:
         return "qq_group_history", {}
+
+    # 现在几点/今天几号：模型没有时钟，必须交给工具（否则它会编日期）
+    if "now" in enabled and re.search(
+            r"(现在|今天|当前).{0,4}(几点|什么时间|日期|几号|星期几|周几)"
+            r"|(几点|现在时间|当前时间)", q):
+        return "now", {}
+
+    # 纯算式：只认「算一下/等于几」或整句就是算式，避免把正文里的数字当计算
+    if "calc" in enabled:
+        m = re.search(r"(?:算一下|算算|计算)\s*[:：]?\s*([-+*/%().\d\s^×÷]+)", q) or             re.search(r"([-+*/%().\d\s^×÷]+?)\s*(?:等于多少|等于几|=)", q)
+        expr = m.group(1).strip() if m else ""
+        if not expr and re.fullmatch(r"[\d\s+\-*/%().^×÷]+", q) and re.search(r"[\d]", q):
+            expr = q.strip()
+        if expr and re.search(r"[-+*/%^×÷]", expr):
+            return "calc", {"expression": expr}
 
     url = re.search(r"https?://[^\s，。；）)]+", q)
     if url and ("看" in q or "读" in q or "打开" in q or "总结" in q or "内容" in q) and "read_webpage" in enabled:

@@ -62,6 +62,7 @@ CAPABILITIES = {
     "fs.stat": cap.fs_stat,
     "fs.list": cap.fs_list,
     "fs.read": cap.fs_read,
+    "fs.read_b64": cap.fs_read_b64,
     "fs.write": cap.fs_write,
     "fs.mkdir": cap.fs_mkdir,
     "fs.move": cap.fs_move,
