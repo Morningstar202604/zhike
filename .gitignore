@@ -27,3 +27,7 @@ coverage.xml
 
 # 本地工作记录（会话记忆/同步脚本，仅本机）
 .workbuddy/
+
+# 执行器覆盖前备份
+*.zksave
+*.zktmp
