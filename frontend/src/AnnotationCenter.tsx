@@ -79,6 +79,7 @@ export default function AnnotationCenter() {
       <PageHead
         title="标注回复"
         sub="常见问答标成标准答案，命中直接回复（零延迟、不走模型）· 对标 Dify Annotations"
+        right={null}
       />
 
       <section className="bp-sec">

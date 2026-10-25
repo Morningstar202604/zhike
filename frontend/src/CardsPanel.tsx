@@ -30,14 +30,14 @@ export default function CardsPanel() {
   const [bindKey, setBindKey] = useState('')
   const [bindCard, setBindCard] = useState('')
   const [busy, setBusy] = useState(false)
-  const { notify } = useFeedback()
+  const fb = useFeedback()
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await http.get('/api/cards')
-      setCards(r.data.cards || [])
-      setBindings(r.data.bindings || [])
+      const r = await http.get<{ cards: Card[]; bindings: Binding[] }>('/api/cards')
+      setCards(r.cards || [])
+      setBindings(r.bindings || [])
       setErr('')
     } catch (e) {
       if (isAuthError(e)) setAuthErr(true)
@@ -54,11 +54,11 @@ export default function CardsPanel() {
     setBusy(true)
     try {
       await http.post('/api/cards', { card: editing })
-      notify('角色卡已保存')
+      fb.toast.success('角色卡已保存')
       setEditing(null)
       await load()
     } catch (e) {
-      notify((e as Error).message, 'error')
+      fb.toast.error((e as Error).message)
     } finally {
       setBusy(false)
     }
@@ -70,11 +70,11 @@ export default function CardsPanel() {
     try {
       const obj = JSON.parse(stJson)
       await http.post('/api/cards', { card: obj })
-      notify('SillyTavern 卡已导入')
+      fb.toast.success('SillyTavern 卡已导入')
       setStJson('')
       await load()
     } catch (e) {
-      notify(`导入失败：${(e as Error).message}`, 'error')
+      fb.toast.error(`导入失败：${(e as Error).message}`)
     } finally {
       setBusy(false)
     }
@@ -82,11 +82,11 @@ export default function CardsPanel() {
 
   const remove = async (cid: number) => {
     try {
-      await http.delete(`/api/cards/${cid}`)
-      notify('已删除')
+      await http.del(`/api/cards/${cid}`)
+      fb.toast.success('已删除')
       await load()
     } catch (e) {
-      notify((e as Error).message, 'error')
+      fb.toast.error((e as Error).message)
     }
   }
 
@@ -98,11 +98,11 @@ export default function CardsPanel() {
         chat_key: bindKey.trim(),
         card_id: bindCard ? Number(bindCard) : null,
       })
-      notify(bindCard ? '已绑定' : '已解绑')
+      fb.toast.success(bindCard ? '已绑定' : '已解绑')
       setBindKey('')
       await load()
     } catch (e) {
-      notify((e as Error).message, 'error')
+      fb.toast.error((e as Error).message)
     } finally {
       setBusy(false)
     }

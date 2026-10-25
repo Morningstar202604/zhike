@@ -120,9 +120,15 @@ async def napcat_server(actions: list[dict | None]):
                     print(f"[napcat] 收到帧：{str(raw)[:140]}", flush=True)
                     data = json.loads(raw)
                     if data.get("action"):
-                        await ws.send(json.dumps({"status": "ok", "retcode": 0, "data": {"message_id": 1}, "echo": data.get("echo")}))
-                        got = data
-                        break
+                        act = data.get("action")
+                        reply_data = {"message_id": 1}
+                        if act == "get_group_info":
+                            reply_data = {"group_id": 20250101, "group_name": "演练群"}
+                        await ws.send(json.dumps({"status": "ok", "retcode": 0, "data": reply_data, "echo": data.get("echo")}))
+                        # 网关会先发 get_group_info 这类查询动作（群名感知），ack 后继续等真正的回复动作
+                        if act.startswith("send_"):
+                            got = data
+                            break
             except (asyncio.TimeoutError, websockets.ConnectionClosed) as e:
                 print(f"[napcat] 事件「{name}」等待动作失败：{type(e).__name__}", flush=True)
             actions.append(got)
@@ -137,6 +143,8 @@ def _msg_text(action: dict | None) -> str:
     if not action:
         return ""
     msg = (action.get("params") or {}).get("message")
+    if msg is None:
+        return ""
     if isinstance(msg, str):
         return msg
     return "".join(str(seg.get("data", {}).get("text", "")) for seg in msg if isinstance(seg, dict))
@@ -150,6 +158,8 @@ async def main() -> int:
     # 演练里统一设一个固定值，core 与 gateway 共用，保证链路能打通。
     env["CHANNEL_TOKEN"] = "qq-e2e-channel-token"
     env.setdefault("ADMIN_TOKEN", "qq-e2e-admin-token")
+    # BGE 懒加载若无外网，HF Hub HEAD 重试会阻塞分钟级；离线模式直接用本地缓存（无缓存则快速失败走 bigram）
+    env["HF_HUB_OFFLINE"] = "1"
     procs: list[subprocess.Popen] = []
     actions: list[dict | None] = []
     try:

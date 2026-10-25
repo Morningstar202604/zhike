@@ -105,6 +105,9 @@ def _get_encoder():
     if _EMB_STATE["model"] is None:
         try:
             from sentence_transformers import SentenceTransformer
+            if os.path.isdir(BGE_MODEL):
+                # 本地目录直载必须离线：否则无外网时 HF Hub HEAD 指数退避重试可阻塞分钟级
+                os.environ.setdefault("HF_HUB_OFFLINE", "1")
             _EMB_STATE["model"] = SentenceTransformer(BGE_MODEL)
         except Exception as e:
             _EMB_STATE["failed"] = True
