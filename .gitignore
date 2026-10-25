@@ -24,3 +24,6 @@ coverage.xml
 
 # 演示数据库（scripts/seed_demo.py 生成，不入库）
 .demo/
+
+# 本地工作记录（会话记忆/同步脚本，仅本机）
+.workbuddy/
