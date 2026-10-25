@@ -328,3 +328,16 @@ def test_prefetch_file_reports_permission_denial(monkeypatch):
     res = asyncio.run(pipeline._prefetch_file("读一下 C:/Windows/win.ini 内容", ctx, {}))
     assert res is not None
     assert "没有权限" in res.text
+
+
+def test_detect_tool_keeps_full_time_expression():
+    """「明天早上9点」必须整体作为 when，不能切成 when=明天 + text=早上9点。"""
+    name, args = tools.detect_tool("明天早上9点提醒我交周报")
+    assert name == "remind"
+    assert args["when"] == "明天早上9点"
+    assert args["text"] == "交周报"
+
+
+def test_detect_tool_routes_group_history():
+    name, _ = tools.detect_tool("群里最近在聊什么")
+    assert name == "qq_group_history"

@@ -748,7 +748,13 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
     # 用「搜索 + 删除」而不是一个复杂正则：两种语序（时间在前/在后）
     # 都能正确切分，也不会因非贪婪量词把 "10分钟后" 咬成 "1"。
     if "提醒" in q and "remind" in enabled:
-        tm = re.search(r"(\d+\s*(?:分钟|小时|天|周|秒)后|明天|后天|今天\s*\d{0,2}\s*[点:：]?\s*\d{0,2})", q)
+        # 时间片段要按「最长可识别形态」匹配：先试「明天早上9点」，再退到裸「明天」。
+        # 反过来会把 "明天早上9点" 切成 when=明天 + text=早上9点，时间就丢了。
+        tm = (
+            re.search(r"(\d+\s*(?:分钟|小时|天|周|秒)后)", q)
+            or re.search(r"((?:明天|后天|今天|今晚)\s*(?:早上|上午|中午|下午|晚上)?\s*\d{0,2}\s*[点:：]\s*\d{0,2})", q)
+            or re.search(r"(明天|后天|今天|今晚)", q)
+        )
         if tm:
             when = tm.group(1).strip()
             text = (q[:tm.start()] + " " + q[tm.end():]).replace("提醒我", " ").replace("提醒", " ")
@@ -766,6 +772,11 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
         return "query_order", {"order_id": order_match.group(1)}
     if ("政策" in q or "规定" in q or "条款" in q) and "lookup_policy" in enabled:
         return "lookup_policy", {"topic": q}
+
+    if ("群里" in q or "群聊" in q or "大家" in q) and any(
+            w in q for w in ("聊什么", "聊啥", "在聊", "说了什么", "说了啥", "最近")
+    ) and "qq_group_history" in enabled:
+        return "qq_group_history", {}
 
     url = re.search(r"https?://[^\s，。；）)]+", q)
     if url and ("看" in q or "读" in q or "打开" in q or "总结" in q or "内容" in q) and "read_webpage" in enabled:
