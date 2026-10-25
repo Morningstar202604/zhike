@@ -37,3 +37,7 @@ coverage.xml
 
 # 临时文件
 .tmp/
+
+# 覆盖率/缓存产物
+.coverage
+.ruff_cache/
