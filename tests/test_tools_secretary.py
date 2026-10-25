@@ -665,3 +665,60 @@ def test_write_file_reports_permission_denial(monkeypatch):
 def test_write_file_requires_content():
     res = asyncio.run(tools.tool_write_file(path="C:/Users/x/a.txt", content=""))
     assert res["status"] == "need_context"
+
+
+# ------------------------------------------------------------
+# 周期提醒：必须按规则算"下一次"，且用本地时区
+# ------------------------------------------------------------
+
+def _remind(when: str, text: str = "喝水"):
+    ctx = ToolContext(visitor_id="v-recur", channel_type="webchat")
+    return tools.tool_remind(ctx=ctx, text=text, when=when)
+
+
+def test_recurring_daily_uses_local_timezone():
+    """「每天8点」必须是本地 08:00。曾用 UTC 构造，整体偏 8 小时（16:00）。"""
+    res = _remind("每天8点")
+    assert res["repeat_rule"] == "daily"
+    due = datetime.fromisoformat(res["due_at"])
+    assert due.hour == 8 and due.minute == 0
+    assert due.utcoffset() == datetime.now().astimezone().utcoffset()
+
+
+def test_recurring_weekly_hits_target_weekday():
+    res = _remind("每周三下午3点")
+    due = datetime.fromisoformat(res["due_at"])
+    assert due.weekday() == 2 and due.hour == 15
+    assert res["repeat_rule"] == "weekly:2"
+
+
+def test_recurring_monthly_does_not_fire_today():
+    """「每月15号」今天是 25 号 → 下一次必须是下个月，不能算成今天。"""
+    res = _remind("每月15号")
+    assert res["repeat_rule"] == "monthly:15"
+    due = datetime.fromisoformat(res["due_at"])
+    assert due.day == 15 and due > datetime.now().astimezone()
+
+
+def test_recurring_monthly_31_clamps_in_short_month():
+    """每月31号在 2 月要落到当月最后一天（不能抛 ValueError）。"""
+    from core import tools as t
+
+    now = datetime(2026, 1, 31, 12, 0).astimezone()
+    due = t._next_occurrence("monthly:31", 9, 0, now)
+    assert due is not None
+    assert due.month == 2 and due.day == 28
+
+
+def test_recurring_weekday_skips_weekend():
+    res = _remind("工作日上午9点")
+    due = datetime.fromisoformat(res["due_at"])
+    assert due.weekday() < 5 and due.hour == 9
+    assert res["repeat_rule"] == "weekday"
+
+
+def test_detect_tool_routes_recurring_reminders():
+    enabled = {"remind": 1}
+    assert tools.detect_tool("每天8点提醒我喝水", enabled) == ("remind", {"text": "喝水", "when": "每天8点"})
+    assert tools.detect_tool("工作日上午9点提醒我打卡", enabled) == ("remind", {"text": "打卡", "when": "工作日上午9点"})
+    assert tools.detect_tool("每月31号提醒我交房租", enabled) == ("remind", {"text": "交房租", "when": "每月31号"})

@@ -191,7 +191,8 @@ def _parse_due(text: str, now: datetime | None = None) -> datetime | None:
     只支持明确的时间表达；解析不出来返回 None（由工具向用户追问），
     绝不默认「1 小时后」这种猜测——提醒错了比不提醒更糟。
     """
-    now = now or datetime.now(timezone.utc)
+    # 用户说的「8 点」是本地时间：必须用本地时区构造，否则 UTC+8 会整体偏 8 小时
+    now = now or datetime.now().astimezone()
     t = (text or "").strip()
     if not t:
         return None
@@ -240,6 +241,77 @@ def _parse_due(text: str, now: datetime | None = None) -> datetime | None:
     return None
 
 
+def _parse_clock(text: str) -> tuple[int, int] | None:
+    """从文本里抽钟点（「上午9点」「下午3点半」「8:30」），返回 (时, 分)。"""
+    m = re.search(r"(早上|上午|中午|下午|晚上)?\s*(\d{1,2})\s*[:：点]\s*(半|\d{1,2})?", text or "")
+    if not m:
+        return None
+    period, hh, mm = m.groups()
+    hour = int(hh)
+    minute = 30 if mm == "半" else int(mm or 0)
+    if period in ("下午", "晚上") and hour < 12:
+        hour += 12
+    if period == "中午" and hour < 11:
+        hour += 12
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour, minute
+
+
+def _next_occurrence(rule: str, hour: int, minute: int, now: datetime) -> datetime | None:
+    """按周期规则算下一次触发时刻（含钟点），停机后也只补最近一次。"""
+    import calendar as _cal
+
+    kind, _, arg = (rule or "").partition(":")
+    base = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    def at(day_offset: int) -> datetime:
+        d = (now + timedelta(days=day_offset)).replace(
+            hour=hour, minute=minute, second=0, microsecond=0)
+        return d
+
+    if kind == "daily":
+        return base if base > now else at(1)
+
+    if kind == "weekday":
+        for i in range(1, 8):
+            cand = at(i) if base <= now else base
+            if i == 1 and base > now:
+                cand = base
+            if cand.weekday() < 5:
+                return cand
+        return None
+
+    if kind == "weekly":
+        try:
+            target = int(arg) % 7
+        except ValueError:
+            return None
+        for i in range(0, 8):
+            cand = at(i)
+            if cand > now and cand.weekday() == target:
+                return cand
+        return None
+
+    if kind == "monthly":
+        try:
+            day = int(arg)
+        except ValueError:
+            return None
+        for i in range(0, 14):
+            y, m = now.year, now.month + i
+            y += (m - 1) // 12
+            m = (m - 1) % 12 + 1
+            d = min(day, _cal.monthrange(y, m)[1])
+            cand = now.replace(year=y, month=m, day=d,
+                               hour=hour, minute=minute, second=0, microsecond=0)
+            if cand > now:
+                return cand
+        return None
+
+    return None
+
+
 _REPEAT_PATTERNS = [
     (r"每天|每日|天天", "daily"),
     (r"每个?工作日", "weekday"),
@@ -279,7 +351,13 @@ def tool_remind(ctx: ToolContext, text: str, when: str, **_kw) -> dict:
     if not rule:
         rule, when_clean = _parse_repeat(when_clean)
     text = (cleaned or raw_text)[:200]
-    due = _parse_due(when_clean)
+    if rule:
+        # 周期提醒：钟点缺省 9:00。必须按规则算「下一次」，不能拿今天的钟点顶替
+        # （"每月15号"若今天是 26 号，直接取 10:00 会立刻误触发）。
+        hm = _parse_clock(when_clean) or _parse_clock(raw_text) or (9, 0)
+        due = _next_occurrence(rule, hm[0], hm[1], datetime.now().astimezone())
+    else:
+        due = _parse_due(when_clean)
     if due is None:
         return need_ctx("remind", f"提醒时间（「{when}」没看懂，请说清几点或多久后）")
     rec = store.reminder_add(
