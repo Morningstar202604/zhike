@@ -53,21 +53,6 @@ def shot(page, url, name, full=False, wait=2200, action=None):
     print("saved", name)
 
 
-def open_run_detail(page):
-    page.get_by_text("步骤", exact=True).first.click()
-    page.wait_for_timeout(900)
-
-
-def open_session_drawer(page):
-    page.locator("tbody tr").first.click()
-    page.wait_for_timeout(900)
-
-
-def open_action_detail(page):
-    page.locator("tbody tr").first.click()
-    page.wait_for_timeout(700)
-
-
 def ask_agent(page):
     page.fill(".composer-bar textarea", "怎么开发票")
     page.press(".composer-bar textarea", "Enter")
@@ -85,25 +70,17 @@ with sync_playwright() as p:
     inject_token(desk)
     shot(desk, "/dashboard", "dashboard.png", full=True, wait=3200)
     shot(desk, "/sessions", "sessions.png", wait=2000)
-    shot(desk, "/sessions", "session-detail.png", wait=1600, action=open_session_drawer)
     shot(desk, "/actions", "actions.png", wait=2000)
-    shot(desk, "/actions", "action-detail.png", wait=1600, action=open_action_detail)
-    shot(desk, "/runs", "runs.png", wait=2000, action=open_run_detail)
+    shot(desk, "/runs", "runs.png", wait=2000)
     shot(desk, "/operator", "operator.png", wait=2200, action=open_operator_dialog)
-    shot(desk, "/logs", "logs.png", wait=2000)
-    shot(desk, "/settings/params", "settings.png", wait=2000)
-    shot(desk, "/settings/kb", "kb.png", wait=2000)
-    shot(desk, "/settings/tools", "tools.png", wait=2000)
-    shot(desk, "/settings/data", "data.png", wait=2000)
     shot(desk, "/reminders", "reminders.png", wait=2000)
     shot(desk, "/persona", "persona.png", wait=2400)
+    shot(desk, "/settings/kb", "kb.png", wait=2000)
     shot(desk, "/", "visitor-chat.png", wait=2000, action=ask_agent)
     desk.close()
 
     mob = browser.new_page(viewport={"width": 414, "height": 896}, device_scale_factor=2)
     inject_token(mob)
-    shot(mob, "/dashboard", "dashboard-mobile.png", wait=3000)
-    shot(mob, "/sessions", "sessions-mobile.png", wait=2200)
     shot(mob, "/", "visitor-mobile.png", wait=2000, action=ask_agent)
     mob.close()
 
