@@ -41,6 +41,14 @@
 - **中英双语**：侧栏切换 `中 / EN`，界面框架全量翻译；业务数据保持原语言
 - **渠道**：QQ（NapCat + OneBot v11 + NoneBot2 网关）、Web；企业微信/公众号适配骨架
 
+### 镜像仓库
+
+同一套代码同步到五个公开仓库（任选其一获取，内容一致）：
+
+- GitHub：[badhope/zhike](https://github.com/badhope/zhike) · [X33834/zhike](https://github.com/X33834/zhike) · [Morningstar202604/zhike](https://github.com/Morningstar202604/zhike)
+- Gitee：[badhope/zhike](https://gitee.com/badhope/zhike)
+- GitCode：[badhope/zhike](https://gitcode.com/badhope/zhike)
+
 ### 快速开始
 
 ```bash
@@ -92,6 +100,12 @@ QQ 接入见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md)，Docker / 反代 / 免费部�
 | 访客对话 | 手机端 |
 |---|---|
 | ![访客对话](docs/screenshots/visitor-chat.png) | ![手机端](docs/screenshots/visitor-mobile.png) |
+
+**English UI**（侧栏 `中 / EN` 切换）:
+
+| Dashboard (EN) | Conversations (EN) |
+|---|---|
+| ![Dashboard EN](docs/screenshots/en-dashboard.png) | ![Conversations EN](docs/screenshots/en-sessions.png) |
 
 截图基于 `scripts/seed_demo.py` 生成的独立演示库，由 `scripts/take_screenshots.py` 实拍。
 
@@ -156,6 +170,14 @@ MIT。NapCat 为自定义非商用许可的非官方协议端，商用前请自�
 - **Bilingual UI**: switch `中 / EN` in the sidebar; all interface chrome is translated, business data stays as-is
 - **Channels**: QQ (NapCat + OneBot v11 + NoneBot2 gateway) and Web; adapter skeleton for WeCom / official accounts
 
+### Mirrors
+
+The same code is published to five public repositories (pick any):
+
+- GitHub: [badhope/zhike](https://github.com/badhope/zhike) · [X33834/zhike](https://github.com/X33834/zhike) · [Morningstar202604/zhike](https://github.com/Morningstar202604/zhike)
+- Gitee: [badhope/zhike](https://gitee.com/badhope/zhike)
+- GitCode: [badhope/zhike](https://gitcode.com/badhope/zhike)
+
 ### Quick start
 
 ```bash
@@ -207,6 +229,12 @@ Full list in [.env.example](.env.example).
 | Visitor chat | Mobile |
 |---|---|
 | ![Visitor chat](docs/screenshots/visitor-chat.png) | ![Mobile](docs/screenshots/visitor-mobile.png) |
+
+**English UI** (switch `中 / EN` in the sidebar):
+
+| Dashboard (EN) | Conversations (EN) |
+|---|---|
+| ![Dashboard EN](docs/screenshots/en-dashboard.png) | ![Conversations EN](docs/screenshots/en-sessions.png) |
 
 Screenshots are captured against a demo database from `scripts/seed_demo.py` using `scripts/take_screenshots.py`.
 

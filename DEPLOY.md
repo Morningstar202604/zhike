@@ -54,6 +54,8 @@ USER_VISION_MODEL=glm-4v-flash
 ```bash
 # 向量语义检索（BGE 中文小模型，CPU 可跑；1G 内存小机别装，用默认字面检索）
 pip install -r requirements-embedding.txt
+# 模型需先在本机缓存（或把 USER_EMB_MODEL 指向已下载的目录）。
+# 默认不联网下载：HF 默认重试会让首次检索阻塞 80 秒以上，需要下载时临时设 USER_EMB_ALLOW_DOWNLOAD=1。
 ```
 
 环境变量：`USER_VISION_MODEL`（看图，如 `glm-4v-flash`；留空自动沿用主模型）、`USER_IMAGE_MODEL`（生图，默认 `agnes-image-2.1-flash`）；检索开关在管理配置 `retrieval.embedding`（auto/off）。

@@ -105,10 +105,31 @@ def _get_encoder():
     if _EMB_STATE["model"] is None:
         try:
             from sentence_transformers import SentenceTransformer
+        except Exception as e:
+            _EMB_STATE["failed"] = True
+            logger.info("embedding backend unavailable: %s", str(e)[:80])
+            return None
+        try:
             if os.path.isdir(BGE_MODEL):
                 # 本地目录直载必须离线：否则无外网时 HF Hub HEAD 指数退避重试可阻塞分钟级
                 os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            _EMB_STATE["model"] = SentenceTransformer(BGE_MODEL)
+                _EMB_STATE["model"] = SentenceTransformer(BGE_MODEL)
+            else:
+                # Hub 模型 id：默认只读本地缓存。缓存缺失时**不**联网下载：
+                # HF 默认 10s x 5 次重试会让第一次检索阻塞 80 秒以上，整个服务像挂死
+                # （实测 85.6s）。确实要下载时显式设 USER_EMB_ALLOW_DOWNLOAD=1，
+                # 且把 HF 的超时压到秒级。
+                allow_download = os.environ.get("USER_EMB_ALLOW_DOWNLOAD", "").lower() in (
+                    "1", "true", "yes", "on")
+                if not allow_download:
+                    _EMB_STATE["failed"] = True
+                    logger.info(
+                        "embedding model %s not in local cache; set USER_EMB_ALLOW_DOWNLOAD=1 to fetch it",
+                        BGE_MODEL)
+                    return None
+                os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "5")
+                os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "15")
+                _EMB_STATE["model"] = SentenceTransformer(BGE_MODEL)
         except Exception as e:
             _EMB_STATE["failed"] = True
             logger.info("embedding backend unavailable: %s", str(e)[:80])

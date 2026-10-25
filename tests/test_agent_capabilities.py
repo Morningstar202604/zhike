@@ -306,3 +306,22 @@ def test_delete_message_endpoint(client):
     reset_web_session_auth(client)
     r = client.delete(f"/api/sessions/{sid}/messages/{mid}")
     assert r.status_code == 401
+
+
+def test_encoder_does_not_block_on_hub_when_cache_missing(monkeypatch):
+    """修复前：Hub 模型 id 在缓存缺失时会联网重试 5 次，首次检索阻塞 85 秒。"""
+    import sentence_transformers
+
+    class _Stub:
+        def __init__(self, name, **kw):
+            raise AssertionError("默认不允许联网下载，构造函数不该被调用")
+
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", _Stub)
+    monkeypatch.setattr(retrieval, "BGE_MODEL", "BAAI/does-not-exist-locally")
+    monkeypatch.delenv("USER_EMB_ALLOW_DOWNLOAD", raising=False)
+    retrieval._EMB_STATE.update({"model": None, "failed": False})
+    try:
+        assert retrieval._get_encoder() is None
+        assert retrieval._EMB_STATE["failed"] is True
+    finally:
+        retrieval._EMB_STATE.update({"model": None, "failed": False})
