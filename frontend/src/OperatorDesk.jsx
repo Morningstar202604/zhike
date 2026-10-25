@@ -56,7 +56,7 @@ function CannedBar({ onPick }) {
   )
 }
 
-/** 内部备注面板（Chatwoot 对标）：只给协作团队看，访客永远看不到 */
+/** 内部备注面板（Chatwoot 对标）：只给协作团队看，用户永远看不到 */
 function NotesPanel({ sid }) {
   const [notes, setNotes] = useState([])
   const [text, setText] = useState('')
@@ -83,7 +83,7 @@ function NotesPanel({ sid }) {
 
   return (
     <div className="notes-panel">
-      <div className="notes-title"><StickyNote size={13} /> 内部备注（访客不可见）</div>
+      <div className="notes-title"><StickyNote size={13} /> 内部备注（用户不可见）</div>
       <div className="notes-list">
         {notes.length === 0 && <div className="notes-empty">暂无备注。</div>}
         {notes.map((n) => (
@@ -166,7 +166,7 @@ export default function OperatorDesk() {
   const { state: connState } = useWs(wsUrl, (p) => {
     if (p.type === 'new_pending' || p.type === 'session_updated') queues.refetch()
     if (p.type === 'visitor_message' && p.session_id === activeRef.current) {
-      // 接管期间访客新消息：直接进当前对话，不刷新整页
+      // 接管期间用户新消息：直接进当前对话，不刷新整页
       setDialog((prev) => [...prev, {
         role: 'visitor', content: String(p.content ?? ''), ts: new Date().toISOString(),
       }])

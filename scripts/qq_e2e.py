@@ -226,7 +226,10 @@ async def main() -> int:
     checks = [
         ("私聊 KB 问答", _is_reply(actions[0], "private") and "退货" in _msg_text(actions[0])),
         ("群聊 @+图片→请用文字描述", _is_reply(actions[1], "group") and "文字" in _msg_text(actions[1])),
-        ("私聊转人工→说明无人工客服", _is_reply(actions[2], "private") and "没有人工客服" in _msg_text(actions[2])),
+        ("私聊转人工→说明只有机器人",
+         _is_reply(actions[2], "private")
+         and "机器人" in _msg_text(actions[2])
+         and ("真人" in _msg_text(actions[2]) or "人工客服" in _msg_text(actions[2]))),
     ]
     print()
     ok = True

@@ -4,7 +4,7 @@ import {
   RefreshCw,
   Package,
   Undo2,
-  ScrollText,
+  Bell,
   User,
   Headset,
   MessageCircle,
@@ -31,7 +31,7 @@ import './pages.css'
 const SCENES = [
   { icon: <Package size={16} />, bg: 'var(--brand-soft)', color: 'var(--brand)', title: '查订单物流', text: '我的订单 ORD12345678 什么时候发货？' },
   { icon: <Undo2 size={16} />, bg: 'var(--ok-soft)', color: '#1a8f52', title: '申请退款', text: '我想申请退款，怎么操作？' },
-  { icon: <ScrollText size={16} />, bg: 'var(--warn-soft)', color: '#b5731b', title: '查退改政策', text: '旅游团退改政策是怎么规定的？' },
+  { icon: <Bell size={16} />, bg: 'var(--warn-soft)', color: '#b5731b', title: '设个提醒', text: '10分钟后提醒我关火' },
   { icon: <User size={16} />, bg: 'var(--operator-soft)', color: '#c2358f', title: '问模型', text: '你是机器人吗？' },
 ]
 
@@ -605,7 +605,7 @@ export default function VisitorChat() {
               </div>
               <h2>你好，我是知客，你的私人秘书</h2>
               <p>
-                日程、资料、待办、查东西，都可以交给我；需要真人接手时，我会替你叫人。
+                日程、资料、待办、查东西，都可以交给我；我是机器人，没有真人客服，答不上来会直说。
                 也可以上传截图，或从下面选一个场景开始。
               </p>
               <div className="welcome-cards">

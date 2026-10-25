@@ -35,8 +35,8 @@ export function Avatar({ kind = 'agent', size = 34 }) {
       color: '#F7F5F0',
       label: 'Agent',
     },
-    visitor: { icon: <UserRound size={size * 0.5} />, bg: 'var(--visitor-soft)', color: 'var(--brand)', label: '访客' },
-    operator: { icon: <CircleCheck size={size * 0.5} />, bg: 'var(--operator-soft)', color: '#c2358f', label: '真人' },
+    visitor: { icon: <UserRound size={size * 0.5} />, bg: 'var(--visitor-soft)', color: 'var(--brand)', label: '用户' },
+    operator: { icon: <CircleCheck size={size * 0.5} />, bg: 'var(--operator-soft)', color: '#c2358f', label: '管理员' },
   }
   const m = map[kind] || map.agent
   return (

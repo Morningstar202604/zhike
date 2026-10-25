@@ -329,7 +329,7 @@ export default function BotPersona() {
     <div className={`bp-app ${mobile ? 'bp-mobile' : ''}`}>
       <div className="bp-head">
         <div>
-          <h1 className="bp-title">机器人角色</h1>
+          <h1 className="bp-title">秘书人设</h1>
           <p className="bp-sub">人设 · 提示词 · 生成参数 · 改完即时试问</p>
         </div>
         <div className="bp-head-actions">
@@ -543,7 +543,7 @@ function TryPanel() {
         <button className="btn ghost sm" onClick={resetSession} title="丢弃临时会话，下次试问将全新开始">新会话</button>
       </div>
       <p className="bp-hint" style={{ marginTop: 0 }}>
-        用访客视角实测当前人设与参数：先点「保存配置」再试问，所见即访客所得。
+        用用户视角实测当前人设与参数：先点「保存配置」再试问，所见即用户所得。
       </p>
       <div className="bp-try-log" ref={boxRef}>
         {result && (

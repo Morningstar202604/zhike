@@ -171,7 +171,7 @@ def split_reply(text: str, max_chunk: int = 90, max_parts: int = 3) -> list[str]
 
     - 短回复（<= max_chunk）原样返回单条；
     - 按换行/句末标点切句后贪婪合并到 max_chunk；
-    - 超过 max_parts 时剩余内容并入最后一条（绝不丢内容，超长兜底交给 reply_segments）。
+    - 超过 max_parts 时剩余全部并入最后一条，绝不丢内容（QQ 侧还有 4500 字硬切兜底）。
     """
     text = (text or "").strip()
     if not text:
@@ -180,25 +180,32 @@ def split_reply(text: str, max_chunk: int = 90, max_parts: int = 3) -> list[str]
         return [text]
     sentences = [s.strip() for s in re.split(r"(?<=[。！？!?…])\s*", text) if s.strip()]
     if len(sentences) <= 1:
-        # 没有句读：按长度硬切
-        return [text[i:i + max_chunk] for i in range(0, len(text), max_chunk)][:max_parts] or [text]
+        # 没有句读：前 max_parts-1 条按长度硬切，剩余全部塞进最后一条
+        head = [text[i:i + max_chunk] for i in range(0, len(text), max_chunk)]
+        if len(head) <= max_parts:
+            return head
+        fixed = head[:max_parts - 1]
+        fixed.append(text[(max_parts - 1) * max_chunk:])
+        return fixed
     chunks: list[str] = []
     buf = ""
-    for s in sentences:
+    consumed = 0
+    for idx, s in enumerate(sentences):
         if buf and len(buf) + len(s) + 1 > max_chunk:
             chunks.append(buf)
             buf = s
-            if len(chunks) >= max_parts:
+            consumed = idx + 1   # buf 已接管第 idx 句，剩余从下一句开始
+            if len(chunks) >= max_parts - 1:
+                # 留一条给剩余内容，避免最后一条被丢
                 break
         else:
             buf = f"{buf} {s}" if buf else s
-    remaining = ""
-    if len(chunks) >= max_parts:
-        # 已到条数上限：剩余句子全部并入最后一条，绝不丢内容
-        joined = " ".join(sentences)
-        remaining = joined[sum(len(c) for c in chunks):].strip()
-        if chunks and remaining:
-            chunks[-1] = (chunks[-1] + " " + remaining).strip()
+            consumed = idx + 1
+    if len(chunks) >= max_parts - 1:
+        rest = " ".join(sentences[consumed:]).strip()
+        tail = f"{buf} {rest}".strip() if buf and rest else (buf or rest)
+        if tail:
+            chunks.append(tail)
         return chunks[:max_parts]
     if buf:
         chunks.append(buf)

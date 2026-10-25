@@ -519,3 +519,48 @@ def test_metrics_normalizes_path_ids():
     b = metrics.normalize_path("/api/sessions/0123456789abcdef0123456789abcdef/messages")
     assert a == b == "/api/sessions/{id}/messages"
     assert metrics.normalize_path("/healthz") == "/healthz"
+
+
+# ============================================================
+# 12. 群白名单必须 fail-closed（此前开启但名单为空 = 全放行）
+# ============================================================
+
+def _ingest_group(client, gid: str):
+    return client.post("/v1/ingest", json={
+        "channel_type": "qq_group", "channel_user_id": "u-allow", "group_id": gid,
+        "text": "你好",
+    })
+
+
+def test_group_allowlist_empty_denies_everything(client, monkeypatch):
+    """勾了「白名单已开启」却没填群号：必须谁都不答，而不是对全部群放行。"""
+    from core import config as config_mod
+
+    orig = config_mod.get_config
+
+    def patched():
+        cfg = orig()
+        cfg["channels"] = {"allowlist_enabled": True, "group_allowlist": []}
+        return cfg
+
+    monkeypatch.setattr(config_mod, "get_config", patched)
+    r = _ingest_group(client, "123456")
+    assert r.status_code == 200, r.text
+    assert r.json()["reply"]["mode"] == "not_allowed", r.text
+
+
+def test_group_allowlist_permits_listed_group(client, monkeypatch):
+    """反向用例：名单里的群必须照常回答（防止 fail-closed 修成"全都不答"）。"""
+    from core import config as config_mod
+
+    orig = config_mod.get_config
+
+    def patched():
+        cfg = orig()
+        cfg["channels"] = {"allowlist_enabled": True, "group_allowlist": ["654321"]}
+        return cfg
+
+    monkeypatch.setattr(config_mod, "get_config", patched)
+    r = _ingest_group(client, "654321")
+    assert r.status_code == 200, r.text
+    assert r.json()["reply"]["mode"] != "not_allowed", r.text

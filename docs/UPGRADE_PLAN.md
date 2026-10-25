@@ -1,6 +1,7 @@
 # 升级方案与架构决策（UPGRADE PLAN）
 
-> 项目：知客 Zhike · 在线客服 Agent（对接 QQ 群 / 微信）
+> 项目：知客 Zhike · 私人秘书 Agent（对接 QQ 群 / 微信）
+> 历史：早期定位为在线客服（v1 血统），v2 起转为个人秘书；文中出现的「客服」为历史命名与旧仓背景
 > 旧仓：gitcode.com/badhope/online-cs-agent（MIT，2026-09-22 起，27 个测试通过）
 > 新仓：zhike（本仓库，MIT）
 > 日期：2026-09-28

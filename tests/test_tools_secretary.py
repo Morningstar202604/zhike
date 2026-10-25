@@ -341,3 +341,92 @@ def test_detect_tool_keeps_full_time_expression():
 def test_detect_tool_routes_group_history():
     name, _ = tools.detect_tool("群里最近在聊什么")
     assert name == "qq_group_history"
+
+
+# ------------------------------------------------------------
+# 空结果不能升级：问「我有什么待办」不该开出一张工单
+# ------------------------------------------------------------
+
+def test_empty_list_reminders_does_not_escalate():
+    """没有任何待办是正常答案，不是知识缺口。"""
+    from core import pipeline
+
+    ctx = ToolContext(visitor_id="v-empty-rem")
+    args = {"text": "", "when": ""}
+    res = tools.tool_list_reminders(ctx=ctx)
+    assert res["status"] == "empty"
+    assert res["found"] is False
+    _ = args
+
+    async def run():
+        return await pipeline._rule_react(
+            "列一下我的待办",
+            {"hits": [], "tools": {"list_reminders": lambda: res}, "used": {}, "tool_ctx": ctx},
+            {"escalation": {"confidence_threshold": 0.6}},
+        )
+
+    reply = asyncio.run(run())
+    assert reply.escalate is False, "空待办不能触发升级工单"
+    assert reply.tool_used == "list_reminders"
+
+
+def test_empty_result_contract_is_not_a_miss():
+    """empty 与 miss 是两种语义：只有 miss 才代表"没查到"。"""
+    empty = tools.empty_result("list_reminders", "你现在没有待提醒的事。")
+    miss = tools.miss_result("lookup_policy", "资料里没有相关内容。")
+    assert empty["status"] == "empty" and empty["found"] is False
+    assert "status" not in miss
+
+
+def test_real_miss_still_escalates():
+    """防止上面那条把真正的「查不到」也一起放过了。"""
+    from core import pipeline
+
+    res = tools.miss_result("lookup_policy", "资料里没有相关内容。")
+
+    async def run():
+        return await pipeline._rule_react(
+            "帮我查一下根本不存在的神秘服务",
+            {"hits": [], "tools": {"lookup_policy": lambda: res}, "used": {}, "tool_ctx": EMPTY},
+            {"escalation": {"confidence_threshold": 0.6}},
+        )
+
+    reply = asyncio.run(run())
+    assert reply.escalate is True
+    assert reply.escalate_reason == "knowledge_miss"
+
+
+def test_direct_tool_empty_list_does_not_escalate():
+    """直连工具路径（_direct_tool）同样不能把空待办当知识缺口。
+
+    这条路径独立于 _rule_react：模型有 Key 时「列一下我的待办」走这里，
+    修复前会开出一张待接管工单（实测 ticket 已生成）。
+    """
+    from core import pipeline
+
+    ctx = {
+        "modules_on": {"tools": True},
+        "tools": {"list_reminders": lambda: tools.empty_result(
+            "list_reminders", "你现在没有待提醒的事。")},
+        "tool_ctx": ToolContext(visitor_id="v-direct-empty"),
+        "used": {},
+    }
+    reply = asyncio.run(pipeline._direct_tool("列一下我的待办", ctx, {"llm": {}}))
+    assert reply is not None
+    assert reply.escalate is False
+    assert reply.tool_used == "list_reminders"
+
+
+def test_rule_react_empty_list_does_not_escalate():
+    """规则路径同样如此（无 Key 部署走这里）。"""
+    from core import pipeline
+
+    ctx = {
+        "hits": [],
+        "tools": {"list_reminders": lambda: tools.empty_result(
+            "list_reminders", "你现在没有待提醒的事。")},
+        "tool_ctx": ToolContext(visitor_id="v-rule-empty"),
+        "used": {},
+    }
+    reply = asyncio.run(pipeline._rule_react("列一下我的待办", ctx, {}))
+    assert reply.escalate is False

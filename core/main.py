@@ -244,7 +244,7 @@ def create_app() -> FastAPI:
     # 本地开发需要时显式 CS_AGENT_DOCS=1，生产默认关闭。
     docs_on = os.environ.get("CS_AGENT_DOCS", "").strip().lower() in ("1", "true", "yes", "on")
     app = FastAPI(
-        title="Zhike CS Agent Core",
+        title="Zhike Secretary Core",
         lifespan=lifespan,
         docs_url="/docs" if docs_on else None,
         redoc_url="/redoc" if docs_on else None,
@@ -545,11 +545,13 @@ def create_app() -> FastAPI:
         if not limiter.allow(identity):
             raise HTTPException(429, "请求过于频繁，请稍后再试")
         chat_key = body.group_id or body.channel_user_id
-        # 渠道准入（chatgpt-on-wechat 群白名单对标）：开启后白名单外的群一律静默不答
+        # 渠道准入（chatgpt-on-wechat 群白名单对标）：开启后白名单外的群一律静默不答。
+        # fail-closed：开启但名单为空 = 谁都不答（旧实现 allow 为空时全放行，
+        # 界面上写着"白名单已开启"实际却对任何群都应答，是最容易踩的安全假象）。
         ch_cfg = config.get_config().get("channels", {})
         if body.group_id and ch_cfg.get("allowlist_enabled"):
             allow = [str(g).strip() for g in (ch_cfg.get("group_allowlist") or []) if str(g).strip()]
-            if allow and str(body.group_id) not in allow:
+            if str(body.group_id) not in allow:
                 ev.info(f"group {body.group_id} not in allowlist, dropped")
                 return {
                     "session_id": "", "message_id": None, "ticket_id": None,
@@ -1767,12 +1769,20 @@ def create_app() -> FastAPI:
 
         未接入网关时返回空列表——不假装有渠道。
         """
-        try:
-            from gateway.adapters.bus import registry as gw_registry
-
-            return {"adapters": gw_registry.describe()}
-        except Exception:
+        # core 与 gateway 是两个进程：适配器注册表在网关侧，core 里查它永远是空的。
+        # 真实能力来自网关心跳上报的 capabilities；网关没上报就返回空列表，不假装有渠道。
+        info = dict(app.state.gateway_channels).get("onebot_v11") or {}
+        caps = list((info.get("detail") or {}).get("capabilities") or [])
+        if not caps:
             return {"adapters": []}
+        all_caps = ["group.admin", "group.member_list", "msg.delete", "msg.history",
+                    "send.file", "send.image", "send.text"]
+        return {"adapters": [{
+            "name": "onebot_v11",
+            "capabilities": sorted(caps),
+            "supports": {c: c in caps for c in all_caps},
+            "status": info.get("status", "offline"),
+        }]}
 
     # ============================================================
     # Agent 多步任务（ReAct）

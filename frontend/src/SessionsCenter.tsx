@@ -29,7 +29,7 @@ const STATUS_TONE: Record<string, string> = {
   closed: 'muted',
 }
 
-/** 渠道前缀在「渠道」列已经展示，这里只留可辨识的访客标识（如群号/QQ 号）。 */
+/** 渠道前缀在「渠道」列已经展示，这里只留可辨识的用户标识（如群号/QQ 号）。 */
 function visitorLabel(vid?: string | null): string {
   if (!vid) return '-'
   const body = vid.includes(':') ? vid.slice(vid.indexOf(':') + 1) : vid
@@ -111,7 +111,7 @@ export default function SessionsCenter() {
             <div className="tb-search">
               <Search size={13} />
               <input
-                placeholder="搜访客 / 会话 / 消息内容"
+                placeholder="搜用户 / 会话 / 消息内容"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -153,7 +153,7 @@ export default function SessionsCenter() {
               <tr>
                 <th>开始时间</th>
                 <th>渠道</th>
-                <th>访客</th>
+                <th>用户</th>
                 <th>状态</th>
                 <th>消息</th>
                 <th>首响</th>
@@ -224,7 +224,7 @@ export default function SessionsCenter() {
                   <div className="msg-body">
                     <div className="bubble">
                       <span className="text-[10px] text-muted mr-2">
-                        {m.role === 'visitor' ? '访客' : m.role === 'operator' ? '真人' : 'Agent'}
+                        {m.role === 'visitor' ? '用户' : m.role === 'operator' ? '管理员' : '秘书'}
                       </span>
                       {m.role === 'visitor' ? m.content : <Markdown text={m.content} />}
                     </div>

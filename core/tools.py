@@ -41,6 +41,16 @@ def miss_result(tool: str, note: str, **extra: Any) -> dict:
     return {"tool": tool, "connected": True, "found": False, "note": note, **extra}
 
 
+def empty_result(tool: str, note: str, **extra: Any) -> dict:
+    """正常但为空的结果（「没有待办」「还没记过你」）。
+
+    必须与 miss_result 分开：这类答案是事实本身，不是知识库缺资料，
+    管线不能因此开升级工单——否则用户每问一次空列表就多一张票。
+    """
+    return {"tool": tool, "connected": True, "found": False, "status": "empty",
+            "note": note, **extra}
+
+
 def off_result(tool: str, note: str, **extra: Any) -> dict:
     return {"tool": tool, "connected": False, "found": False, "note": note, **extra}
 
@@ -149,11 +159,11 @@ def tool_recall_memory(ctx: ToolContext, key: str = "", **_kw) -> dict:
         return need_ctx("recall_memory", "访客身份")
     mem = store.get_memory(ctx.visitor_id) or {}
     if not mem:
-        return miss_result("recall_memory", "我这儿还没有关于你的记录。")
+        return empty_result("recall_memory", "我这儿还没有关于你的记录。")
     if key:
         val = mem.get(key)
         if val is None:
-            return miss_result("recall_memory", f"没有「{key}」这条记录。", keys=list(mem)[:20])
+            return empty_result("recall_memory", f"没有「{key}」这条记录。", keys=list(mem)[:20])
         return ok_result("recall_memory", f"{key}：{val}", key=key, value=val)
     brief = "；".join(f"{k}：{str(v)[:80]}" for k, v in list(mem.items())[:12])
     return ok_result("recall_memory", brief, keys=list(mem))
@@ -240,7 +250,7 @@ def tool_list_reminders(ctx: ToolContext, **_kw) -> dict:
         return need_ctx("list_reminders", "访客身份")
     rows = store.reminder_list(ctx.visitor_id)
     if not rows:
-        return miss_result("list_reminders", "你现在没有待提醒的事。")
+        return empty_result("list_reminders", "你现在没有待提醒的事。")
     lines = []
     for r in rows[:10]:
         try:
@@ -260,9 +270,9 @@ def tool_cancel_reminder(ctx: ToolContext, reminder_id: str, **_kw) -> dict:
         return need_ctx("cancel_reminder", "提醒编号")
     rec = store.reminder_get(rid)
     if not rec or rec["visitor_id"] != ctx.visitor_id:
-        return miss_result("cancel_reminder", f"找不到 #{rid} 这条提醒。")
+        return empty_result("cancel_reminder", f"找不到 #{rid} 这条提醒。")
     if not store.reminder_cancel(rid):
-        return miss_result("cancel_reminder", f"#{rid} 已经发过或已取消。")
+        return empty_result("cancel_reminder", f"#{rid} 已经发过或已取消。")
     return ok_result("cancel_reminder", f"已取消 #{rid}。")
 
 
@@ -469,14 +479,14 @@ def tool_search_emote(ctx: ToolContext, keyword: str = "", **_kw) -> dict:
 
     index_path = pathlib.Path(os.environ.get("GATEWAY_EMOTE_DIR", "C:/Users/YOU/napcat/emotes")) / "index.json"
     if not index_path.is_file():
-        return off_result("search_emote", "还没有收藏表情包。")
+        return empty_result("search_emote", "还没有收藏表情包。")
     try:
         data = json.loads(index_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return miss_result("search_emote", "表情包索引读不出来。")
+        return empty_result("search_emote", "表情包索引读不出来。")
     items = data.get("items") or data.get("emotes") or []
     if not items:
-        return miss_result("search_emote", "表情库是空的。")
+        return empty_result("search_emote", "表情库是空的。")
     kw = (keyword or "").strip()
     hits = [i for i in items if kw and kw in str(i.get("summary") or i.get("name") or "")]
     if not hits:
@@ -509,7 +519,7 @@ async def tool_qq_group_history(ctx: ToolContext, group_id: str = "", count: str
         return miss_result("qq_group_history", f"读群记录失败：{type(e).__name__}")
     msgs = (data.get("data") or {}).get("messages") or []
     if not msgs:
-        return miss_result("qq_group_history", "这个群最近没有消息。", group_id=gid)
+        return empty_result("qq_group_history", "这个群最近没有消息。", group_id=gid)
     lines = []
     for m in msgs[-n:]:
         sender = (m.get("sender") or {}).get("nickname") or (m.get("sender") or {}).get("user_id") or "?"

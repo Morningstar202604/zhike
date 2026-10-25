@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**知客 · 把每一次咨询，交到该在的人手上**
+**知客 · 你的私人秘书，随时在线**
 
 QQ 群/私聊 · Web 对话 · 协作台 · RAG 检索 · 工具调用 · 提醒待办 · 注入护栏
 
@@ -10,7 +10,7 @@ QQ 群/私聊 · Web 对话 · 协作台 · RAG 检索 · 工具调用 · 提醒
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-534%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-551%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-80%25%20core-blue)
 
 </div>
@@ -39,10 +39,32 @@ QQ 群/私聊 · Web 对话 · 协作台 · RAG 检索 · 工具调用 · 提醒
 | 订单查询 | `ORDER_QUERY_URL`（支持 `{order_id}` 占位）、`ORDER_QUERY_TOKEN` | 返回"未接入"，**不伪造物流信息** |
 | 退款申请 | `REFUND_API_URL`、`REFUND_API_TOKEN` | 同上 |
 | 电脑操作 | `EXECUTOR_POLICY_PATH` + `policy.json` 的 `allow_roots` | 电脑类动作返回 503，对话不受影响 |
+| 提醒/待办 | 无（内置，SQLite 落库） | 说「10 分钟后提醒我」即可；`REMINDER_TICK_SECONDS=30` 控制扫描间隔 |
+| 人工接管 | `USER_HANDOFF_ENABLED` | 默认关：本产品是纯机器人，说「转人工」会如实告知没有真人；置 1 且有人在协作台接管时才停机器人 |
 | Agent 自主度 | `AGENT_TIER`（0-3）、`ALLOW_TIER3`、`ALLOWED_ACTIONS_T3` | 默认 T1：只读 + 白名单内可逆写 |
 | 破坏性动作 | `ACTION_L2_ENABLED=false` | 踢人/退群/删文件等一律拒绝 |
 
 **演进路线见 [docs/PLAN-AGENT-EVOLUTION.md](docs/PLAN-AGENT-EVOLUTION.md)**：从「聊天秘书」到「控 QQ 账号 + 控电脑」的分级权限 Agent（T0 只读 → T3 自主，对齐 opencode 这类本地编程 Agent 的自主度），含 16 条已复现缺陷的修法、五个阶段的任务与验收标准。
+
+## QQ 渠道策略（逐条）
+
+| 策略 | 实现 | 默认值 / 开关 |
+|---|---|---|
+| 只答 @ 自己的消息 | 网关 `to_me()` 规则；私聊不限 | 固定 |
+| 群白名单 | `channels.allowlist_enabled` + `group_allowlist` | 默认关；**开启后名单为空 = 谁都不答（fail-closed）** |
+| 群内节流 | `GroupThrottle` 随机化最小间隔 + 每小时上限 | `GATEWAY_GROUP_MIN_GAP=10` / `GATEWAY_GROUP_HOURLY_CAP=120`，超限丢弃并打 WARNING |
+| 拟人延迟 | 按字数换算打字时间 + 抖动，群聊再多一层犹豫 | `GATEWAY_TYPING_CPS=14` / `GATEWAY_DELAY_CAP=22` |
+| 长回复分段 | 按句切分连发 1~3 条，内容零丢失 | `GATEWAY_SPLIT_CHARS=90` / `GATEWAY_SPLIT_MAX=3` |
+| 表情 | 73 个小黄脸名 + 群友表情包收藏（mface/梗图） | `GATEWAY_EMOTE_DIR` |
+| 群氛围 | 最近 12 条群聊（10 分钟内）注入上下文 | 固定 |
+| 群名 | `get_group_info` 带缓存，失败不阻塞 | 固定 |
+| 角色卡 | 按 `qq_group:<群号>` / `qq_private:<QQ>` 绑定人设 | 管理中心「角色卡」 |
+| 指令 | `/帮助` `/状态` `/重置`（网关本地处理，不进管线） | 固定 |
+| 去重 | message_id LRU 2000 条，防重连重放 | 固定 |
+| 限流 | 每身份 60s / 20 条（核心层） | `RATE_LIMIT_WINDOW` / `RATE_LIMIT_MAX` |
+| 权限 | `ADMIN_TOKEN` + `CHANNEL_TOKEN` 双令牌 | 生产必填 |
+
+消息失败不容错吞：发送失败会重试一次，仍失败写 WARNING；核心不可达时网关回一句可读提示。
 
 ## 架构
 
@@ -88,7 +110,7 @@ Web 对话 + 协作台 ────/api + /ws───────────�
 
 | 项 | 结果 |
 |---|---|
-| 后端测试 | 534 passed（含 15 条第三轮回归 + 秘书工具层 32 条） |
+| 后端测试 | 551 passed（含 15 条第三轮回归 + 秘书工具层 47 条） |
 | 覆盖率 | core 行 80% / 分支 79%（第三轮实测 4224 行） |
 | 变异测试 | 15 个关键变异全部被杀死（抽样） |
 | 在线体检 | `scripts/e2e_check.py` 18/18；`scripts/action_e2e.py` 13/13；`scripts/qq_e2e.py` 3/3（假协议端） |

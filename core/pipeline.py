@@ -256,19 +256,21 @@ async def _direct_tool(query: str, ctx: dict, cfg: dict) -> AgentReply | None:
     if not note:
         return None
     missed = res.get("found") is False or res.get("connected") is False
-    need = res.get("status") == "need_context"
+    # need_context（追问参数）与 empty（没待办/没记录）都是正常回合，不升级。
+    # 这里曾只判 need_context，导致「列一下我的待办」在空列表时开出一张工单。
+    benign = res.get("status") in ("need_context", "empty")
     reply = AgentReply(
         text=note,
         confidence=0.4 if missed else 0.95,
         tool_used=name,
         tool_result=res,
-        escalate=missed and not need,
-        escalate_reason="knowledge_miss" if (missed and not need) else "",
+        escalate=missed and not benign,
+        escalate_reason="knowledge_miss" if (missed and not benign) else "",
         ctx_used=ctx["used"],
         mode="rule_react",
     )
     # 让回复保留人设腔调：把工具结果交给模型润色（失败就用原文）
-    if cfg.get("llm", {}).get("has_key") and not missed and not need:
+    if cfg.get("llm", {}).get("has_key") and not missed and not benign:
         try:
             styled = dict(ctx)
             styled["read_block"] = (
@@ -351,16 +353,17 @@ async def _rule_react(query: str, ctx: dict, cfg: dict) -> AgentReply:
         note = result.get("note") or json.dumps(result, ensure_ascii=False)
         # 工具明确说"没找到"或"未接入"时必须标记升级——
         # 否则对客承诺与系统行为不一致，或让用户误以为查到了真数据。
-        missed = result.get("found") is False or result.get("connected") is False
-        # need_context（缺参数）不算失败，追问用户即可
-        need = result.get("status") == "need_context"
+        # status=empty（没待办/没记录）是正常答案，不是知识缺口，不能开升级工单。
+        missed = (result.get("found") is False or result.get("connected") is False)
+        # need_context（缺参数）追问用户；empty（本来就空）据实回答；两者都不升级
+        benign = result.get("status") in ("need_context", "empty")
         return AgentReply(
             text=note,
             confidence=0.4 if missed else 0.9,
             tool_used=tool_name,
             tool_result=result,
-            escalate=missed and not need,
-            escalate_reason="knowledge_miss" if (missed and not need) else "",
+            escalate=missed and not benign,
+            escalate_reason="knowledge_miss" if (missed and not benign) else "",
             memory_note=ctx["used"].get("memory", {}).get("greeting", ""),
             ctx_used=ctx["used"],
             mode="rule_react",
@@ -412,7 +415,11 @@ async def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
         parsed.answer = (tool_result or {}).get("note") or parsed.answer or "工具已执行。"
         # 工具自己说「没接入 / 没查到」时标记升级：对客话术必须与系统状态一致，
         # 不承诺「已转人工」——本系统没有人工客服，只落一条待补充的工单。
-        tool_missed = (tool_result or {}).get("connected") is False or (tool_result or {}).get("found") is False
+        # status=empty（没待办/没记录）是正常答案，不算缺口。
+        benign = (tool_result or {}).get("status") in ("need_context", "empty")
+        tool_missed = not benign and (
+            (tool_result or {}).get("connected") is False
+            or (tool_result or {}).get("found") is False)
 
     # 输出侧护栏：LLM 回答若泄露系统提示/Key，替换为安全话术并标记升级
     bad_output = guardrail.detect_output(parsed.answer)

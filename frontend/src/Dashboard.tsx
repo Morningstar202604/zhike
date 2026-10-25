@@ -61,13 +61,13 @@ export default function Dashboard() {
 
   const hourOption: EChartsOption | undefined = st ? {
     tooltip: { trigger: 'axis' },
-    legend: { data: ['访客', 'Agent', '真人'], textStyle: { color: 'rgba(128,128,145,.9)', fontSize: 11 }, top: 0 },
+    legend: { data: ['用户', '秘书', '管理员'], textStyle: { color: 'rgba(128,128,145,.9)', fontSize: 11 }, top: 0 },
     grid: { left: 36, right: 12, top: 30, bottom: 26 },
     xAxis: { type: 'category', data: st.messages_by_hour.map((m) => m.bucket), ...AXIS, axisLabel: { ...AXIS.axisLabel, formatter: (v: string) => v.slice(5).replace('T', ' ') } },
     yAxis: { type: 'value', ...AXIS, splitLine: { lineStyle: { color: 'rgba(128,128,145,.15)' } } },
     series: [
-      { name: '访客', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.visitor), itemStyle: { color: PALETTE[0] } },
-      { name: 'Agent', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.agent), itemStyle: { color: PALETTE[1] } },
+      { name: '用户', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.visitor), itemStyle: { color: PALETTE[0] } },
+      { name: '秘书', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.agent), itemStyle: { color: PALETTE[1] } },
       { name: '真人', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.operator), itemStyle: { color: PALETTE[2] } },
     ],
   } : undefined
@@ -260,7 +260,7 @@ export default function Dashboard() {
               QQ 渠道需要先启动 NapCat 与网关。
             </p>
             <div className="flex gap-2">
-              <Link to="/" className="btn sm">打开访客对话</Link>
+              <Link to="/" className="btn sm">打开对话页</Link>
               <Link to="/settings/params" className="btn secondary sm">配置模型</Link>
             </div>
           </div>
@@ -311,7 +311,7 @@ export default function Dashboard() {
                   <CheckCircle2 size={17} />
                 </div>
                 <div className="text-xs text-muted" style={{ lineHeight: 1.8 }}>
-                  还没有访客评价<br />回答下方的「有用 / 没用」会汇总到这里
+                  还没有用户评价<br />回答下方的「有用 / 没用」会汇总到这里
                 </div>
               </div>
             )}

@@ -37,6 +37,7 @@ export interface AgentConfig {
     confidence_threshold: number
     max_message_len: number
     react_steps: number
+    handoff?: boolean
   }
   channels?: {
     allowlist_enabled: boolean

@@ -162,7 +162,6 @@ _collector_matcher = on_message(priority=1, block=False)
 _AMBIENT: dict[str, collections.deque] = {}
 _AMBIENT_MAX = 12
 _GROUP_NAMES: dict[str, str] = {}
-_SELF_ID: str = ""
 
 
 def _ambient_push(group: str, line: str) -> None:
@@ -227,8 +226,6 @@ async def _collect(event: MessageEvent):
         text = event.get_plaintext() or ""
         if str(event.user_id) == str(event.self_id):
             return  # 机器人自己的回显不入氛围
-        global _SELF_ID
-        _SELF_ID = str(event.self_id)
         if group and (text.strip() or "CQ:image" in str(event.message)):
             _ambient_push(group, {"nick": nick[:12], "text": text[:60],
                                   "has_img": "CQ:image" in str(event.message), "ts": time.time()})
@@ -435,7 +432,11 @@ async def _heartbeat_loop():
                     json={
                         "gateway": "onebot_v11",
                         "status": "online",
-                        "detail": {"adapter": "nonebot2+onebot_v11"},
+                        "detail": {
+                            "adapter": "nonebot2+onebot_v11",
+                            "self_id": _pick_bot().self_id if _pick_bot() else "",
+                            "capabilities": sorted(adapter.capabilities()),
+                        },
                     },
                     headers=_channel_headers(),
                 )
@@ -595,7 +596,7 @@ async def handle(event: MessageEvent):
             })
         except Exception as e:  # 核心不可达时给用户明确反馈，而不是沉默
             logger.warning("ingest failed: %s: %s", type(e).__name__, str(e)[:120])
-            reply_text = "客服系统开小差了，请稍后再试～"
+            reply_text = "我这会儿连不上后台，稍后再试～"
             await bus.publish(EV_ACTION_DONE, {
                 "action": "ingest", "duration_ms": int((time.time() - started) * 1000),
                 "ok": False, "error": f"{type(e).__name__}",

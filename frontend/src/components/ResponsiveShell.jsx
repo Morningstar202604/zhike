@@ -26,7 +26,7 @@ export const NAV_GROUPS = [
   {
     label: '智能体',
     items: [
-      { to: '/persona', label: '机器人角色', icon: <Bot size={16} /> },
+      { to: '/persona', label: '秘书人设', icon: <Bot size={16} /> },
       { to: '/annotations', label: '标注回复', icon: <Stamp size={16} /> },
       { to: '/settings/kb', label: '知识库', icon: <BookOpen size={16} />, match: (p) => p.startsWith('/settings/kb') },
       { to: '/runs', label: '任务运行', icon: <ListChecks size={16} /> },

@@ -297,7 +297,7 @@ function ParamsPanel({ cfg, upd }: { cfg: AgentConfig; upd: ReturnType<typeof us
           </label>
           <label className="f-row" style={{ padding: 0 }}>
             <input type="checkbox" checked={cfg.memory.visit_greeting} onChange={(e) => set('memory', 'visit_greeting', e.target.checked)} />
-            <span className="text-xs">老访客问候</span>
+            <span className="text-xs">老用户问候</span>
           </label>
         </div>
         <Row label={`相关记忆条数 · ${cfg.memory.retrieval_top_k}`}>
@@ -340,6 +340,11 @@ function ParamsPanel({ cfg, upd }: { cfg: AgentConfig; upd: ReturnType<typeof us
         <Row label={`ReAct 步数 · ${cfg.escalation.react_steps}`}>
           <input type="range" min="1" max="8" value={cfg.escalation.react_steps} onChange={(e) => set('escalation', 'react_steps', parseInt(e.target.value, 10))} />
         </Row>
+        <div className="f-row">
+          <span className="f-lb" title="关：纯机器人，对客说「转人工」时如实告知没有真人；开：会话进入待接管队列，需有人在协作台值守">真人接管</span>
+          <input type="checkbox" checked={!!cfg.escalation.handoff}
+            onChange={(e) => set('escalation', 'handoff', e.target.checked)} />
+        </div>
       </Grp>
     </div>
   )
@@ -624,7 +629,7 @@ function KbPanel() {
       {/* 试召回：按当前生效配置跑一次检索，调库调参的试错工具 */}
       <div className="kb-search" style={{ marginBottom: 10 }}>
         <input
-          placeholder="试召回：输入访客可能的问法，看命中条目与分数…"
+          placeholder="试召回：输入用户可能的问法，看命中条目与分数…"
           value={recallQuery}
           onChange={(e) => setRecallQuery(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && recallQuery.trim()) kbTest.mutate(recallQuery.trim()) }}
@@ -897,12 +902,12 @@ function MemPanel() {
   // hook 数量变化，React 直接抛 #310 并整页白屏（已复现）。
   const pg = usePagination(mem)
   if (isLoading) return <Spinner full label="加载记忆…" />
-  if (!mem.length) return <EmptyState icon={<Brain size={22} />} title="暂无长期记忆" desc="访客产生偏好或多次咨询后会自动沉淀在这里。" />
+  if (!mem.length) return <EmptyState icon={<Brain size={22} />} title="暂无长期记忆" desc="用户产生偏好或多次对话后会自动沉淀在这里。" />
   return (
     <>
       <div className="tbl-wrap">
         <table className="dt">
-          <thead><tr><th>访客</th><th>Key</th><th>Value</th><th>更新</th></tr></thead>
+          <thead><tr><th>用户</th><th>Key</th><th>Value</th><th>更新</th></tr></thead>
           <tbody>
             {pg.pageItems.map((m: MemoryEntry, i: number) => (
               <tr key={`${m.visitor_id}-${m.key}-${i}`}>
@@ -932,7 +937,7 @@ function InjPanel() {
     <>
       <div className="tbl-wrap">
         <table className="dt">
-          <thead><tr><th>#</th><th>访客</th><th>原始输入</th><th>命中</th><th>动作</th></tr></thead>
+          <thead><tr><th>#</th><th>用户</th><th>原始输入</th><th>命中</th><th>动作</th></tr></thead>
           <tbody>
             {pg.pageItems.map((m: InjectionLogEntry) => (
               <tr key={m.id}>

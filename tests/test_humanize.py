@@ -105,3 +105,33 @@ def test_strip_markdown_preserves_faces_and_lists():
     from gateway.humanize import render
     out = render("他真是**个老登** [滑稽]")
     assert "星" not in out and "*" not in out and "[CQ:face,id=178]" in out
+
+
+def test_split_reply_never_drops_content():
+    """分段绝不能丢字：QQ 长回答被截断是"机器人答到一半没了"的直接原因。
+
+    旧实现用 len(chunk) 求和去切原文，缓冲区之间的空格没有计入，
+    600 字无标点文本会丢 330 字（已复现）。这里逐个字符对齐。
+    """
+    from gateway.humanize import split_reply
+
+    cases = [
+        "无标点" * 200,
+        "第一句话。" * 40,
+        "短句。" + "中句，带逗号；还有分号！" * 30,
+        "一行\n两行\n三行\n" * 40,
+    ]
+    for text in cases:
+        parts = split_reply(text, max_chunk=90, max_parts=3)
+        assert parts, text[:10]
+        assert len(parts) <= 3
+        # 只允许空白差异（拼接时补的空格），不许丢实义字符
+        assert "".join(parts).replace(" ", "").replace("\n", "") == \
+               text.replace(" ", "").replace("\n", ""), text[:20]
+
+
+def test_split_reply_short_and_empty():
+    from gateway.humanize import split_reply
+
+    assert split_reply("", 90, 3) == []
+    assert split_reply("短回答", 90, 3) == ["短回答"]

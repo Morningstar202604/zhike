@@ -1,7 +1,7 @@
 """MCP (Model Context Protocol) 工具暴露层。
 
 业界事实标准（Anthropic/OpenAI/Google 全支持，2026-07 mcp v2.0 稳定）。
-把知客内置的三个客服工具（query_order / initiate_refund / lookup_policy）暴露为 MCP tool，
+把知客内置的三个业务工具（query_order / initiate_refund / lookup_policy）暴露为 MCP tool，
 任何 MCP 客户端（Claude Desktop / Cursor / 其他 Agent 运行时）都能远程调用，不再锁死在本进程内。
 
 启动方式（可选，不随 core 一起起）：
@@ -50,7 +50,7 @@ def _build_mcp():
 
     @mcp.tool()
     def lookup_policy(topic: str) -> str:
-        """按主题查客服政策（退货/发货/隐私等）。"""
+        """按主题查业务政策（退货/发货/隐私等）。"""
         fn = tools_mod.active_tools(config.get_config()).get("lookup_policy")
         if not fn:
             return "政策查询工具未启用。"

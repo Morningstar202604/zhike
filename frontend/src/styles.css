@@ -305,7 +305,7 @@ body {
 .badge { flex-shrink: 0; white-space: nowrap; }
 
 /* ============================================================
-   Codex 式导航分组 + 机器人角色页（BotPersona）
+   Codex 式导航分组 + 秘书人设页（BotPersona）
    ============================================================ */
 
 /* ---- 侧栏分组：小字组名 + 紧凑条目 ---- */
@@ -340,7 +340,7 @@ body {
 }
 .si-dot { display: none; }
 
-/* ---- 机器人角色页 ---- */
+/* ---- 秘书人设页 ---- */
 .bp-app { max-width: 1080px; padding: 22px 26px 40px; }
 .bp-mobile { padding: 16px 14px 32px; }
 .bp-head {
