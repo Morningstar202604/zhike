@@ -11,6 +11,7 @@ import { Spinner, ErrorBanner } from './components/Spinner'
 import TokenGate from './components/TokenGate'
 import { ACTION_LABEL, label } from './lib/labels'
 import './pages2.css'
+import { t } from './lib/t'
 
 const STATUS_LABEL: Record<string, string> = {
   running: '运行中',
@@ -78,7 +79,7 @@ function StepCard({ step }: { step: { id: number; step_no: number; thought: stri
         <span className={`badge ${STEP_TONE[step.status] || 'muted'}`}>{STEP_LABEL[step.status] || step.status}</span>
         {step.action
           ? <span className="run-step-action">{label(ACTION_LABEL, step.action)} <code>{step.action}</code></span>
-          : <span className="run-step-action muted">直接回答</span>}
+          : <span className="run-step-action muted">{t('直接回答')}</span>}
         <span className="run-step-ms"><Clock size={11} /> {step.duration_ms}ms</span>
       </div>
       {step.thought && <div className="run-step-thought">{step.thought}</div>}
@@ -138,9 +139,9 @@ export default function AgentRuns() {
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto w-full space-y-4 pb-24 md:pb-10">
       <PageHead
-        title="任务运行"
-        sub="让 Agent 用多步工具调用完成一个目标 · 每步的思考与观察都可回放"
-        right={<button className="btn ghost sm" onClick={() => runs.refetch()} title="立即刷新"><RefreshCw size={13} /></button>}
+        title={t('任务运行')}
+        sub={t('让 Agent 用多步工具调用完成一个目标 · 每步的思考与观察都可回放')}
+        right={<button className="btn ghost sm" onClick={() => runs.refetch()} title={t('立即刷新')}><RefreshCw size={13} /></button>}
       />
 
       <div className="bg-panel border border-line-2 rounded-xl p-4 space-y-2">
@@ -150,7 +151,7 @@ export default function AgentRuns() {
         <div className="flex flex-col md:flex-row gap-2">
           <input
             className="flex-1"
-            placeholder="例如：看一下 C:/work 目录里有什么，把结构整理成一段说明"
+            placeholder={t('例如：看一下 C:/work 目录里有什么，把结构整理成一段说明')}
             value={goal}
             onChange={(e) => setGoal(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
@@ -166,21 +167,21 @@ export default function AgentRuns() {
         {start.error && <ErrorBanner message={(start.error as Error).message} onRetry={() => start.reset()} />}
       </div>
 
-      {runs.isLoading && <Spinner full label="加载任务…" />}
+      {runs.isLoading && <Spinner full label={t('加载任务…')} />}
       {runs.error && !isAuthError(runs.error) && (
         <ErrorBanner message={(runs.error as Error).message} onRetry={() => runs.refetch()} />
       )}
 
       {!runs.isLoading && entries.length === 0 && (
-        <EmptyState icon={<ListChecks size={22} />} title="还没有任务记录"
-          desc="在上面输入一个目标，Agent 会自己规划步骤并调用工具。" />
+        <EmptyState icon={<ListChecks size={22} />} title={t('还没有任务记录')}
+          desc={t('在上面输入一个目标，Agent 会自己规划步骤并调用工具。')} />
       )}
 
       {entries.length > 0 && (
         <div className="tbl-wrap">
           <table className="dt">
             <thead>
-              <tr><th>开始</th><th>目标</th><th>触发者</th><th>状态</th><th>档位</th><th>耗时</th><th></th></tr>
+              <tr><th>{t('开始')}</th><th>{t('目标')}</th><th>{t('触发者')}</th><th>{t('状态')}</th><th>{t('档位')}</th><th>{t('耗时')}</th><th></th></tr>
             </thead>
             <tbody>
               {entries.map((r: AgentRun) => (
@@ -212,13 +213,13 @@ export default function AgentRuns() {
         <div className="drawer-mask" onClick={() => setSelected(null)}>
           <div className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawer-head">
-              <h3>任务详情</h3>
-              <button className="btn ghost sm" onClick={() => setSelected(null)} aria-label="关闭">
+              <h3>{t('任务详情')}</h3>
+              <button className="btn ghost sm" onClick={() => setSelected(null)} aria-label={t('关闭')}>
                 <XCircle size={14} />
               </button>
             </div>
             <div className="drawer-body space-y-3">
-              {detail.isLoading && <Spinner label="加载任务…" />}
+              {detail.isLoading && <Spinner label={t('加载任务…')} />}
               {detail.error && <ErrorBanner message={(detail.error as Error).message} onRetry={() => detail.refetch()} />}
 
               {run && (
@@ -256,9 +257,9 @@ export default function AgentRuns() {
                   </div>
 
                   {steps.length === 0 && running && (
-                    <div className="run-waiting"><Loader2 size={14} className="spin" /> Agent 正在规划第一步…</div>
+                    <div className="run-waiting"><Loader2 size={14} className="spin" /> {t('Agent 正在规划第一步…')}</div>
                   )}
-                  {steps.length === 0 && !running && <div className="empty">该任务没有记录步骤</div>}
+                  {steps.length === 0 && !running && <div className="empty">{t('该任务没有记录步骤')}</div>}
                   {steps.map((s) => <StepCard key={s.id} step={s} />)}
                 </>
               )}

@@ -11,6 +11,7 @@ import TokenGate from './components/TokenGate'
 import { useFeedback } from './components/Feedback'
 import { ACTION_LABEL, ACTION_STATUS, RISK_LABEL, label } from './lib/labels'
 import './pages2.css'
+import { t } from './lib/t'
 
 const STATUS_LABEL: Record<string, string> = {
   created: '已创建',
@@ -84,15 +85,15 @@ export default function ActionsCenter() {
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto w-full space-y-4 pb-24 md:pb-10">
       <PageHead
-        title="动作审计"
-        sub="Agent 与人工触发的每一次动作：谁、在什么权限下、做了什么、结果如何"
+        title={t('动作审计')}
+        sub={t('Agent 与人工触发的每一次动作：谁、在什么权限下、做了什么、结果如何')}
         right={
           <>
             {FILTERS.map((f) => (
               <button key={f.key} onClick={() => setStatus(f.key)}
                 className={`mod-toggle ${status === f.key ? 'on' : ''}`}>{f.label}</button>
             ))}
-            <button className="btn ghost sm" onClick={refreshAll} title="立即刷新"><RefreshCw size={13} /></button>
+            <button className="btn ghost sm" onClick={refreshAll} title={t('立即刷新')}><RefreshCw size={13} /></button>
           </>
         }
       />
@@ -101,7 +102,7 @@ export default function ActionsCenter() {
         <div className="bg-panel border border-line-2 rounded-xl p-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
           <div className="flex items-center gap-2">
             <ShieldAlert size={15} className="text-brand" />
-            <span className="font-semibold">权限档位</span>
+            <span className="font-semibold">{t('权限档位')}</span>
             <span className={`badge ${cat.agent_tier >= 2 ? 'warn' : 'info'}`}>{cat.tier_label}</span>
           </div>
           <span className="badge muted">只读 {cat.risks.L0}</span>
@@ -123,7 +124,7 @@ export default function ActionsCenter() {
         </div>
       )}
 
-      {catalog.isLoading && <Spinner full label="加载动作目录…" />}
+      {catalog.isLoading && <Spinner full label={t('加载动作目录…')} />}
       {catalog.error && !isAuthError(catalog.error) && (
         <ErrorBanner message={(catalog.error as Error).message} onRetry={() => catalog.refetch()} />
       )}
@@ -165,14 +166,14 @@ export default function ActionsCenter() {
         </div>
       )}
 
-      {logs.isLoading && <Spinner full label="加载动作日志…" />}
+      {logs.isLoading && <Spinner full label={t('加载动作日志…')} />}
       {logs.error && !isAuthError(logs.error) && (
         <ErrorBanner message={(logs.error as Error).message} onRetry={() => logs.refetch()} />
       )}
 
       {!logs.isLoading && entries.length === 0 && (
-        <EmptyState icon={<Zap size={22} />} title="暂无动作记录"
-          desc="Agent 调用工具、管理员执行动作都会实时出现在这里。" />
+        <EmptyState icon={<Zap size={22} />} title={t('暂无动作记录')}
+          desc={t('Agent 调用工具、管理员执行动作都会实时出现在这里。')} />
       )}
 
       {entries.length > 0 && (
@@ -180,8 +181,8 @@ export default function ActionsCenter() {
           <table className="dt">
             <thead>
               <tr>
-                <th>时间</th><th>动作</th><th>风险</th><th>触发者</th><th>档位</th>
-                <th>参数</th><th>状态</th><th>耗时</th><th></th>
+                <th>{t('时间')}</th><th>{t('动作')}</th><th>{t('风险')}</th><th>{t('触发者')}</th><th>{t('档位')}</th>
+                <th>{t('参数')}</th><th>{t('状态')}</th><th>{t('耗时')}</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -198,7 +199,7 @@ export default function ActionsCenter() {
                   <td className="raw" title={paramsPreview(e.params)}>{paramsPreview(e.params)}</td>
                   <td><span className={`badge ${STATUS_TONE[e.status] || 'muted'}`}>{STATUS_LABEL[e.status] || e.status}</span></td>
                   <td className="muted">{e.duration_ms != null ? `${e.duration_ms}ms` : '-'}</td>
-                  <td><button className="btn ghost sm" onClick={(ev) => { ev.stopPropagation(); setDetail(e) }}>详情</button></td>
+                  <td><button className="btn ghost sm" onClick={(ev) => { ev.stopPropagation(); setDetail(e) }}>{t('详情')}</button></td>
                 </tr>
               ))}
             </tbody>
@@ -210,27 +211,27 @@ export default function ActionsCenter() {
         <div className="drawer-mask" onClick={() => setDetail(null)}>
           <div className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawer-head">
-              <h3>动作详情</h3>
-              <button className="btn ghost sm" aria-label="关闭" title="关闭" onClick={() => setDetail(null)}><XCircle size={14} /></button>
+              <h3>{t('动作详情')}</h3>
+              <button className="btn ghost sm" aria-label={t('关闭')} title={t('关闭')} onClick={() => setDetail(null)}><XCircle size={14} /></button>
             </div>
             <div className="drawer-body space-y-3 text-xs">
               <div>
-                <span className="text-muted">动作：</span>{label(ACTION_LABEL, detail.action)}
+                <span className="text-muted">{t('动作：')}</span>{label(ACTION_LABEL, detail.action)}
                 <code className="muted" style={{ marginLeft: 6 }}>{detail.action}</code>
               </div>
-              <div><span className="text-muted">状态：</span>
+              <div><span className="text-muted">{t('状态：')}</span>
                 <span className={`badge ${STATUS_TONE[detail.status] || 'muted'}`}>{STATUS_LABEL[detail.status] || detail.status}</span>
               </div>
-              <div><span className="text-muted">触发者：</span>{detail.principal}（有效档位 {detail.effective_tier ?? '-'}）</div>
-              <div><span className="text-muted">时间：</span>{fmtTime(detail.created_at)}
+              <div><span className="text-muted">{t('触发者：')}</span>{detail.principal}（有效档位 {detail.effective_tier ?? '-'}）</div>
+              <div><span className="text-muted">{t('时间：')}</span>{fmtTime(detail.created_at)}
                 {detail.executed_at && ` → ${fmtTime(detail.executed_at)}`}</div>
-              <div><span className="text-muted">参数（已打码）：</span>
+              <div><span className="text-muted">{t('参数（已打码）：')}</span>
                 <pre style={{ whiteSpace: 'pre-wrap', margin: '4px 0', fontSize: 11 }}>
                   {JSON.stringify(detail.params, null, 2)}
                 </pre>
               </div>
               {detail.result != null && (
-                <div><span className="text-muted">结果：</span>
+                <div><span className="text-muted">{t('结果：')}</span>
                   <pre style={{ whiteSpace: 'pre-wrap', margin: '4px 0', fontSize: 11 }}>
                     {JSON.stringify(detail.result, null, 2)}
                   </pre>
@@ -240,7 +241,7 @@ export default function ActionsCenter() {
                 <div className="hint err">{detail.error}</div>
               )}
               {detail.approval_id && (
-                <div><span className="text-muted">关联审批：</span><code>{detail.approval_id}</code></div>
+                <div><span className="text-muted">{t('关联审批：')}</span><code>{detail.approval_id}</code></div>
               )}
             </div>
           </div>

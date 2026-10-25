@@ -16,6 +16,7 @@ import { CHANNEL_LABEL, ESCALATE_REASON, TOOL_LABEL, label } from './lib/labels'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import EChart from './components/EChart'
 import './pages2.css'
+import { t } from './lib/t'
 
 // 图表配色跟随品牌：墨绿主色 / 朱砂 / 竹青 / 赭石 / 灰蓝，避免默认的 indigo 紫
 const PALETTE = ['#0E5C55', '#17786C', '#C2452D', '#B98A4B', '#5E7C88', '#7FA99B', '#946B5C']
@@ -61,14 +62,14 @@ export default function Dashboard() {
 
   const hourOption: EChartsOption | undefined = st ? {
     tooltip: { trigger: 'axis' },
-    legend: { data: ['用户', '秘书', '管理员'], textStyle: { color: 'rgba(128,128,145,.9)', fontSize: 11 }, top: 0 },
+    legend: { data: [t('用户'), t('秘书'), t('管理员')], textStyle: { color: 'rgba(128,128,145,.9)', fontSize: 11 }, top: 0 },
     grid: { left: 36, right: 12, top: 30, bottom: 26 },
     xAxis: { type: 'category', data: st.messages_by_hour.map((m) => m.bucket), ...AXIS, axisLabel: { ...AXIS.axisLabel, formatter: (v: string) => v.slice(5).replace('T', ' ') } },
     yAxis: { type: 'value', ...AXIS, splitLine: { lineStyle: { color: 'rgba(128,128,145,.15)' } } },
     series: [
-      { name: '用户', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.visitor), itemStyle: { color: PALETTE[0] } },
-      { name: '秘书', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.agent), itemStyle: { color: PALETTE[1] } },
-      { name: '真人', type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.operator), itemStyle: { color: PALETTE[2] } },
+      { name: t('用户'), type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.visitor), itemStyle: { color: PALETTE[0] } },
+      { name: t('秘书'), type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.agent), itemStyle: { color: PALETTE[1] } },
+      { name: t('真人'), type: 'bar', stack: 'm', data: st.messages_by_hour.map((m) => m.operator), itemStyle: { color: PALETTE[2] } },
     ],
   } : undefined
 
@@ -78,7 +79,7 @@ export default function Dashboard() {
     xAxis: { type: 'category', data: st.sessions_by_day.map((s) => s.day.slice(5)), ...AXIS },
     yAxis: { type: 'value', minInterval: 1, ...AXIS, splitLine: { lineStyle: { color: 'rgba(128,128,145,.15)' } } },
     series: [{
-      name: '新会话', type: 'line', smooth: true, areaStyle: { opacity: 0.18 },
+      name: t('新会话'), type: 'line', smooth: true, areaStyle: { opacity: 0.18 },
       data: st.sessions_by_day.map((s) => s.count), itemStyle: { color: PALETTE[4] },
     }],
   } : undefined
@@ -93,11 +94,11 @@ export default function Dashboard() {
       { type: 'value', ...AXIS, axisLabel: { formatter: '{value}%' }, splitLine: { show: false } },
     ],
     series: [
-      { name: '会话', type: 'bar', barMaxWidth: 14, data: report.data.daily.map((d) => d.sessions), itemStyle: { color: PALETTE[0] } },
-      { name: '机器人回复', type: 'bar', barMaxWidth: 14, data: report.data.daily.map((d) => d.agent_replies), itemStyle: { color: PALETTE[4] } },
-      { name: '升级', type: 'bar', barMaxWidth: 14, data: report.data.daily.map((d) => d.escalations), itemStyle: { color: PALETTE[3] } },
+      { name: t('会话'), type: 'bar', barMaxWidth: 14, data: report.data.daily.map((d) => d.sessions), itemStyle: { color: PALETTE[0] } },
+      { name: t('机器人回复'), type: 'bar', barMaxWidth: 14, data: report.data.daily.map((d) => d.agent_replies), itemStyle: { color: PALETTE[4] } },
+      { name: t('升级'), type: 'bar', barMaxWidth: 14, data: report.data.daily.map((d) => d.escalations), itemStyle: { color: PALETTE[3] } },
       {
-        name: 'KB命中率', type: 'line', smooth: true, yAxisIndex: 1,
+        name: t('KB命中率'), type: 'line', smooth: true, yAxisIndex: 1,
         data: report.data.daily.map((d) => (d.agent_replies ? Math.round((d.kb_hits / d.agent_replies) * 100) : 0)),
         itemStyle: { color: PALETTE[1] },
       },
@@ -124,8 +125,8 @@ export default function Dashboard() {
     series: [{
       type: 'pie', radius: ['42%', '68%'], center: ['50%', '44%'],
       data: [
-        { name: '有帮助', value: st.feedback.helpful, itemStyle: { color: PALETTE[1] } },
-        { name: '没帮助', value: st.feedback.not_helpful, itemStyle: { color: PALETTE[3] } },
+        { name: t('有帮助'), value: st.feedback.helpful, itemStyle: { color: PALETTE[1] } },
+        { name: t('没帮助'), value: st.feedback.not_helpful, itemStyle: { color: PALETTE[3] } },
       ],
       label: { color: 'rgba(128,128,145,.9)', fontSize: 11, formatter: '{b} {c}' },
     }],
@@ -151,14 +152,14 @@ export default function Dashboard() {
     xAxis: { type: 'value', minInterval: 1, ...AXIS, splitLine: { lineStyle: { color: 'rgba(128,128,145,.15)' } } },
     yAxis: { type: 'category', data: st.tool_usage.map((t) => label(TOOL_LABEL, t.tool)).reverse(), ...AXIS },
     series: [{
-      name: '调用次数', type: 'bar',
+      name: t('调用次数'), type: 'bar',
       data: st.tool_usage.map((t) => t.count).reverse(), itemStyle: { color: PALETTE[5], borderRadius: [0, 6, 6, 0] },
     }],
   } : undefined
 
   const emptyOpt = {
     title: {
-      text: '暂无数据', subtext: '产生对话后这里会自动统计',
+      text: t('暂无数据'), subtext: t('产生对话后这里会自动统计'),
       left: 'center', top: 'middle',
       textStyle: { color: 'rgba(128,128,145,.65)', fontSize: 13, fontWeight: 400 },
       subtextStyle: { color: 'rgba(128,128,145,.45)', fontSize: 11 },
@@ -169,9 +170,9 @@ export default function Dashboard() {
     tooltip: { trigger: 'axis' },
     grid: { left: 80, right: 24, top: 10, bottom: 26 },
     xAxis: { type: 'value', minInterval: 1, ...AXIS, splitLine: { lineStyle: { color: 'rgba(128,128,145,.15)' } } },
-    yAxis: { type: 'category', data: ['消息', 'KB回答', '工具调用', '升级', '拦截'], ...AXIS },
+    yAxis: { type: 'category', data: [t('消息'), t('KB回答'), t('工具调用'), t('升级'), t('拦截')], ...AXIS },
     series: [{
-      name: '近 24 小时', type: 'bar', barWidth: 14,
+      name: t('近 24 小时'), type: 'bar', barWidth: 14,
       itemStyle: { color: PALETTE[4], borderRadius: [0, 6, 6, 0] },
       data: [st.funnel.messages, st.funnel.kb_answered, st.funnel.tool_calls, st.funnel.escalations, st.funnel.guardrail_blocked],
     }],
@@ -180,14 +181,14 @@ export default function Dashboard() {
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto w-full space-y-4 pb-24 md:pb-10">
       <PageHead
-        title="运行总览"
-        sub="会话、渠道与工作流的实时状态 · 30 秒自动刷新"
+        title={t('运行总览')}
+        sub={t('会话、渠道与工作流的实时状态 · 30 秒自动刷新')}
         right={
           <>
-            <Link to="/logs" className="btn ghost sm"><ScrollText size={13} /> 日志</Link>
-            <Link to="/sessions" className="btn ghost sm"><MessagesSquare size={13} /> 会话</Link>
+            <Link to="/logs" className="btn ghost sm"><ScrollText size={13} /> {t('日志')}</Link>
+            <Link to="/sessions" className="btn ghost sm"><MessagesSquare size={13} /> {t('会话')}</Link>
             {adminToken && (
-              <span className="badge ok"><Lock size={11} /> 令牌已登录</span>
+              <span className="badge ok"><Lock size={11} /> {t('令牌已登录')}</span>
             )}
             {cfg && (
               <div className="flex items-center gap-1 bg-panel border border-line-2 rounded-full p-1">
@@ -198,7 +199,7 @@ export default function Dashboard() {
                     onClick={() => setEngine(m)}
                     className={`px-3 py-1 rounded-full text-xs font-medium transition ${cfg.engine.mode === m ? 'bg-brand text-white shadow' : 'text-ink-2 hover:bg-panel-2'}`}
                   >
-                    {m === 'auto' ? '自动' : m === 'llm' ? 'LLM' : '规则'}
+                    {m === 'auto' ? t('自动') : m === 'llm' ? 'LLM' : t('规则')}
                   </button>
                 ))}
               </div>
@@ -210,37 +211,41 @@ export default function Dashboard() {
       <div className="bg-panel border border-line-2 rounded-xl p-4 flex flex-wrap items-center gap-x-6 gap-y-2">
         <div className="flex items-center gap-2">
           <Bot size={16} className="text-brand" />
-          <span className="font-semibold text-sm">Agent 引擎</span>
+          <span className="font-semibold text-sm">{t('Agent 引擎')}</span>
           <span className={`badge ${h?.mode === 'llm_react' ? 'ok' : 'info'}`}>
-            {h ? (h.mode === 'llm_react' ? `LLM · ${h.model}` : '规则 + 检索') : '…'}
+            {h ? (h.mode === 'llm_react' ? `LLM · ${h.model}` : t('规则 + 检索')) : '…'}
           </span>
         </div>
-        <HealthChip ok={!!h?.llm_ready} on={h?.llm_ready ? 'LLM Key 已配置' : '未配 LLM Key（自动降级）'} />
-        <HealthChip ok={true} on={`知识库 ${h?.kb_entries ?? '…'} 条`} />
-        <HealthChip ok={true} on={`工具 ${h?.tool_count ?? '…'} 个`} />
-        <HealthChip ok={true} on={`护栏规则 ${h?.injection_rules ?? '…'} 条`} />
-        <Link to="/settings/params" className="text-xs text-brand hover:underline ml-auto">进入管理中心 →</Link>
+        <HealthChip ok={!!h?.llm_ready} on={h?.llm_ready ? t('LLM Key 已配置') : t('未配 LLM Key（自动降级）')} />
+        <HealthChip ok={true} on={`${t('知识库')} ${h?.kb_entries ?? '…'}`} />
+        <HealthChip ok={true} on={`${t('工具')} ${h?.tool_count ?? '…'}`} />
+        <HealthChip ok={true} on={`${t('护栏规则')} ${h?.injection_rules ?? '…'}`} />
+        <Link to="/settings/params" className="text-xs text-brand hover:underline ml-auto">{t('进入管理中心 →')}</Link>
       </div>
 
       {ov && ov.pending > 0 && (
         <Link to="/operator" className="block bg-warn-soft border border-warn rounded-xl p-4 flex items-center gap-3 hover:opacity-90 transition">
           <AlertTriangle size={18} className="text-warn" />
-          <span className="text-sm font-medium">有 {ov.pending} 个会话等待接续</span>
-          <span className="btn sm ml-auto"><Headset size={13} /> 前往协作台</span>
+          <span className="text-sm font-medium">{t('有')} {ov.pending} {t('个会话等待接续')}</span>
+          <span className="btn sm ml-auto"><Headset size={13} /> {t('前往协作台')}</span>
         </Link>
       )}
 
-      {overview.isLoading || !ov ? (
-        <Spinner full label="加载总览…" />
-      ) : overview.error ? null : (
+      {overview.isLoading ? (
+        <Spinner full label={t('加载总览…')} />
+      ) : overview.error ? (
+        <ErrorBanner message={(overview.error as Error).message} onRetry={() => overview.refetch()} />
+      ) : !ov ? (
+        <EmptyState icon={<Inbox size={22} />} title={t('暂无数据')} desc={t('还没有会话记录，接入渠道后这里会出现统计。')} />
+      ) : (
         <div className="stat-grid">
-          <StatCard icon={<Inbox size={18} />} value={ov.sessions} label="总会话" tone="brand" />
-          <StatCard icon={<MessageSquare size={18} />} value={ov.messages} label="消息量" tone="ok" />
-          <StatCard icon={<FileText size={18} />} value={ov.tickets} label="工单" tone="warn" />
-          <StatCard icon={<Users size={18} />} value={ov.pending} label="待接管" tone="danger" />
-          <StatCard icon={<BookOpen size={18} />} value={ov.kb_count} label="知识库" tone="brand" />
-          <StatCard icon={<ShieldAlert size={18} />} value={ov.injection} label="注入拦截" tone="danger" />
-          <StatCard icon={<CheckCircle2 size={18} />} value={`${(ov.feedback.help_rate * 100).toFixed(0)}%`} label="好评率" tone="ok" />
+          <StatCard icon={<Inbox size={18} />} value={ov.sessions} label={t('总会话')} tone="brand" />
+          <StatCard icon={<MessageSquare size={18} />} value={ov.messages} label={t('消息量')} tone="ok" />
+          <StatCard icon={<FileText size={18} />} value={ov.tickets} label={t('工单')} tone="warn" />
+          <StatCard icon={<Users size={18} />} value={ov.pending} label={t('待接管')} tone="danger" />
+          <StatCard icon={<BookOpen size={18} />} value={ov.kb_count} label={t('知识库')} tone="brand" />
+          <StatCard icon={<ShieldAlert size={18} />} value={ov.injection} label={t('注入拦截')} tone="danger" />
+          <StatCard icon={<CheckCircle2 size={18} />} value={`${(ov.feedback.help_rate * 100).toFixed(0)}%`} label={t('好评率')} tone="ok" />
         </div>
       )}
 
@@ -254,17 +259,17 @@ export default function Dashboard() {
             <div className="w-12 h-12 rounded-xl grid place-items-center mb-4" style={{ background: 'var(--brand-soft)', color: 'var(--brand)' }}>
               <MessageSquare size={22} />
             </div>
-            <h3 className="text-base font-semibold mb-1">还没有对话数据</h3>
+            <h3 className="text-base font-semibold mb-1">{t('还没有对话数据')}</h3>
             <p className="text-xs text-muted mb-4" style={{ maxWidth: 380, lineHeight: 1.8 }}>
               发一条测试消息，图表就会实时亮起来。<br />
               QQ 渠道需要先启动 NapCat 与网关。
             </p>
             <div className="flex gap-2">
-              <Link to="/" className="btn sm">打开对话页</Link>
-              <Link to="/settings/params" className="btn secondary sm">配置模型</Link>
+              <Link to="/" className="btn sm">{t('打开对话页')}</Link>
+              <Link to="/settings/params" className="btn secondary sm">{t('配置模型')}</Link>
             </div>
           </div>
-          <ChartCard title="渠道连接" icon={<Radio size={15} />}>
+          <ChartCard title={t('渠道连接')} icon={<Radio size={15} />}>
             {chs && chs.length > 0 ? (
               <div className="flex flex-col justify-center gap-4 px-2" style={{ height: 240 }}>
                 {chs.map((c) => (
@@ -276,7 +281,7 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : (
-              <div className="h-[240px] grid place-items-center text-xs text-muted">加载中…</div>
+              <div className="h-[240px] grid place-items-center text-xs text-muted">{t('加载中…')}</div>
             )}
           </ChartCard>
         </div>
@@ -284,25 +289,25 @@ export default function Dashboard() {
 
       {st && !isEmpty && (
         <div className="grid gap-4 md:grid-cols-2">
-          <ChartCard title="近 24 小时消息量" icon={<MessageSquare size={15} />}>
+          <ChartCard title={t('近 24 小时消息量')} icon={<MessageSquare size={15} />}>
             <EChart option={hourOption ?? emptyOpt} height={250} />
           </ChartCard>
-          <ChartCard title="近 7 天新会话" icon={<Activity size={15} />}>
+          <ChartCard title={t('近 7 天新会话')} icon={<Activity size={15} />}>
             <EChart option={dayOption ?? emptyOpt} height={250} />
           </ChartCard>
-          <ChartCard title="经营报表 · 近 7 天（会话/回复/升级 + KB 命中率）" icon={<BarChart3 size={15} />}>
+          <ChartCard title={t('经营报表 · 近 7 天（会话/回复/升级 + KB 命中率）')} icon={<BarChart3 size={15} />}>
             <EChart option={reportOption ?? emptyOpt} height={250} />
           </ChartCard>
-          <ChartCard title="渠道分布" icon={<Bot size={15} />}>
+          <ChartCard title={t('渠道分布')} icon={<Bot size={15} />}>
             <EChart option={channelOption ?? emptyOpt} height={250} />
           </ChartCard>
-          <ChartCard title="升级原因" icon={<Headset size={15} />}>
+          <ChartCard title={t('升级原因')} icon={<Headset size={15} />}>
             <EChart option={escalateOption ?? emptyOpt} height={250} />
           </ChartCard>
-          <ChartCard title="工具调用排行" icon={<Zap size={15} />}>
+          <ChartCard title={t('工具调用排行')} icon={<Zap size={15} />}>
             <EChart option={toolOption ?? emptyOpt} height={250} />
           </ChartCard>
-          <ChartCard title="反馈构成" icon={<CheckCircle2 size={15} />}>
+          <ChartCard title={t('反馈构成')} icon={<CheckCircle2 size={15} />}>
             {feedbackOption ? (
               <EChart option={feedbackOption} height={250} />
             ) : (
@@ -316,7 +321,7 @@ export default function Dashboard() {
               </div>
             )}
           </ChartCard>
-          <ChartCard title="渠道连接" icon={<Radio size={15} />}>
+          <ChartCard title={t('渠道连接')} icon={<Radio size={15} />}>
             {chs && chs.length > 0 ? (
               <div className="h-[250px] flex flex-col justify-center gap-4 px-2">
                 {chs.map((c) => (
@@ -326,13 +331,13 @@ export default function Dashboard() {
                     <span className="text-xs text-muted">{channelText(c)}</span>
                   </div>
                 ))}
-                <p className="text-[11px] text-muted">QQ 网关离线？启动 NapCat(:3001) 与 gateway/bot.py，每 30 秒自动心跳上报。</p>
+                <p className="text-[11px] text-muted">{t('QQ 网关离线？启动 NapCat(:3001) 与 gateway/bot.py，每 30 秒自动心跳上报。')}</p>
               </div>
             ) : (
               <EChart option={emptyOpt} height={250} />
             )}
           </ChartCard>
-          <ChartCard title="工作流漏斗（近 24 小时）" icon={<Activity size={15} />}>
+          <ChartCard title={t('工作流漏斗（近 24 小时）')} icon={<Activity size={15} />}>
             <EChart option={funnelOption ?? emptyOpt} height={250} />
           </ChartCard>
         </div>

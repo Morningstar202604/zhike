@@ -54,7 +54,7 @@ class MockChannelAdapter:
         return SendResult(ok=True, message_id=f"mock-{len(self.sent)}")
 
     # ---- 4. 平台特有动作 ----
-    def execute(self, action: str, params: dict) -> dict:
+    async def execute(self, action: str, params: dict) -> dict:
         if action == "echo":
             return {"echo": params}
         raise NotImplementedError(f"mock 渠道不支持动作：{action}")

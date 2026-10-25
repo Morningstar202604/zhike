@@ -11,6 +11,7 @@ import TokenGate from './components/TokenGate'
 import { useFeedback } from './components/Feedback'
 import type { AgentConfig } from './types/api'
 import './pages2.css'
+import { t } from './lib/t'
 
 /* ============ 角色预设：一键应用人设与推荐温度 ============ */
 const PRESETS: {
@@ -170,13 +171,13 @@ function ProviderPanel({ draft, patch }: { draft: AgentConfig; patch: (fn: (d: A
   return (
     <section className="bp-sec">
       <div className="bp-sec-head">
-        <h2>LLM 提供商</h2>
-        <span>备援链随行待命：主模型挂了自动切下一个；同站点未填 Key 自动沿用主 Key，异站需填自己的 Key</span>
+        <h2>{t('LLM 提供商')}</h2>
+        <span>{t('备援链随行待命：主模型挂了自动切下一个；同站点未填 Key 自动沿用主 Key，异站需填自己的 Key')}</span>
       </div>
       <div className="bp-roles">
         {providers.map((p) => (
           <div key={p.name} className={`bp-role ${isCurrent(p) ? 'bp-role-on' : ''}`}>
-            <div className="bp-role-main" onClick={() => apply(p)} title="切换到此提供商">
+            <div className="bp-role-main" onClick={() => apply(p)} title={t('切换到此提供商')}>
               <b>{p.name}{isCurrent(p) && '（当前）'}</b>
               <span>{p.base_url}</span>
               <input
@@ -189,7 +190,7 @@ function ProviderPanel({ draft, patch }: { draft: AgentConfig; patch: (fn: (d: A
               />
             </div>
             {!isCurrent(p) && (
-              <button className="btn secondary sm ac-del" title="删除档案"
+              <button className="btn secondary sm ac-del" title={t('删除档案')}
                 onClick={() => remove(p.name)}>
                 <Trash2 size={13} />
               </button>
@@ -258,7 +259,7 @@ function RoleLibrary({ draft, onApply }: { draft: AgentConfig; onApply: (r: Role
   return (
     <section className="bp-sec">
       <div className="bp-sec-head">
-        <h2>我的角色库</h2>
+        <h2>{t('我的角色库')}</h2>
         <span>{roles.length} 个 · 保存在本浏览器，可导出迁移</span>
         <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => setExpanded((o) => !o)}>
           {expanded ? '收起' : '展开'}
@@ -270,7 +271,7 @@ function RoleLibrary({ draft, onApply }: { draft: AgentConfig; onApply: (r: Role
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="给当前人设起个名字，如：日程管家"
+              placeholder={t('给当前人设起个名字，如：日程管家')}
               maxLength={40}
             />
             <button className="btn sm" onClick={saveCurrent} disabled={!draft.context.persona.trim()}>
@@ -281,20 +282,20 @@ function RoleLibrary({ draft, onApply }: { draft: AgentConfig; onApply: (r: Role
               <input type="file" accept="application/json" style={{ display: 'none' }}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) importJson(f); e.currentTarget.value = '' }} />
             </label>
-            <button className="btn secondary sm" onClick={exportJson} disabled={!roles.length}>导出</button>
+            <button className="btn secondary sm" onClick={exportJson} disabled={!roles.length}>{t('导出')}</button>
           </div>
           {roles.length === 0 ? (
-            <div className="bp-hint">还没有保存的角色。调好提示词后起个名字存下来，随时一键切换。</div>
+            <div className="bp-hint">{t('还没有保存的角色。调好提示词后起个名字存下来，随时一键切换。')}</div>
           ) : (
             <div className="bp-roles">
               {roles.map((r) => (
                 <div key={r.name} className="bp-role">
-                  <div className="bp-role-main" onClick={() => onApply(r)} title="应用此人设">
+                  <div className="bp-role-main" onClick={() => onApply(r)} title={t('应用此人设')}>
                     <b>{r.name}</b>
                     <span>{r.persona.slice(0, 46)}{r.persona.length > 46 ? '…' : ''}</span>
                     <em>temp {r.temperature} · {r.savedAt.slice(0, 10)}</em>
                   </div>
-                  <button className="btn secondary sm ac-del" title="删除"
+                  <button className="btn secondary sm ac-del" title={t('删除')}
                     onClick={() => persist(roles.filter((x) => x.name !== r.name))}>
                     <Trash2 size={13} />
                   </button>
@@ -354,7 +355,7 @@ export default function BotPersona() {
     return PRESETS.find((p) => p.persona === draft.context.persona) ?? null
   }, [draft])
 
-  if (isLoading || (cfg && !draft)) return <Spinner full label="加载机器人配置…" />
+  if (isLoading || (cfg && !draft)) return <Spinner full label={t('加载机器人配置…')} />
   if (error && isAuthError(error)) return <TokenGate error={error} onAuthed={() => refetch()} />
   if (error) return <div className="p-8 text-sm text-[#c93034]">加载失败：{(error as Error).message}</div>
   if (!draft) return <TokenGate onAuthed={() => refetch()} />
@@ -363,11 +364,11 @@ export default function BotPersona() {
     <div className={`bp-app ${mobile ? 'bp-mobile' : ''}`}>
       <div className="bp-head">
         <div>
-          <h1 className="bp-title">秘书人设</h1>
-          <p className="bp-sub">人设 · 提示词 · 生成参数 · 改完即时试问</p>
+          <h1 className="bp-title">{t('秘书人设')}</h1>
+          <p className="bp-sub">{t('人设 · 提示词 · 生成参数 · 改完即时试问')}</p>
         </div>
         <div className="bp-head-actions">
-          {dirty && <span className="bp-dirty">未保存</span>}
+          {dirty && <span className="bp-dirty">{t('未保存')}</span>}
           <button className="btn secondary" onClick={reset} disabled={!dirty || upd.isPending}>
             <RotateCcw size={14} /> 重置
           </button>
@@ -381,8 +382,8 @@ export default function BotPersona() {
       {/* 角色预设 */}
       <section className="bp-sec">
         <div className="bp-sec-head">
-          <h2>角色预设</h2>
-          <span>点击即应用到下方提示词，可再手动微调</span>
+          <h2>{t('角色预设')}</h2>
+          <span>{t('点击即应用到下方提示词，可再手动微调')}</span>
         </div>
         <div className="bp-presets">
           {PRESETS.map((p) => {
@@ -421,7 +422,7 @@ export default function BotPersona() {
       {/* 提示词编辑器 */}
       <section className="bp-sec">
         <div className="bp-sec-head">
-          <h2>系统提示词（人设）</h2>
+          <h2>{t('系统提示词（人设）')}</h2>
           <span>{draft.context.persona.length} 字 · 每轮对话都会注入</span>
         </div>
         <textarea
@@ -429,7 +430,7 @@ export default function BotPersona() {
           rows={8}
           value={draft.context.persona}
           onChange={(e) => patch((d) => { d.context.persona = e.target.value })}
-          placeholder="你是…（身份、语气、行为边界、知识库依据要求）"
+          placeholder={t('你是…（身份、语气、行为边界、知识库依据要求）')}
         />
         <div className="bp-hint">
           建议包含：身份与语气 · 回答依据（知识库/工具） · 不确定时的处理 · 禁止事项。
@@ -443,8 +444,8 @@ export default function BotPersona() {
       {/* 渠道准入（chatgpt-on-wechat 群白名单对标） */}
       <section className="bp-sec">
         <div className="bp-sec-head">
-          <h2>渠道准入</h2>
-          <span>群白名单：开启后，白名单以外的群消息一律静默不答（私聊不受限）</span>
+          <h2>{t('渠道准入')}</h2>
+          <span>{t('群白名单：开启后，白名单以外的群消息一律静默不答（私聊不受限）')}</span>
         </div>
         <div className="mod-row" style={{ marginBottom: 10 }}>
           <button
@@ -475,7 +476,7 @@ export default function BotPersona() {
       <div className="bp-cols">
         {/* 引擎与参数 */}
         <section className="bp-sec">
-          <div className="bp-sec-head"><h2>引擎模式</h2></div>
+          <div className="bp-sec-head"><h2>{t('引擎模式')}</h2></div>
           <div className="mod-row">
             {(['auto', 'llm', 'rule'] as const).map((m) => (
               <button
@@ -494,14 +495,14 @@ export default function BotPersona() {
             {draft.engine.mode === 'rule' && '完全用规则 ReAct 引擎，不调用大模型。'}
           </p>
 
-          <div className="bp-sec-head" style={{ marginTop: 18 }}><h2>生成参数</h2></div>
-          <Slider label="创造性 · temperature" value={draft.llm.temperature} min={0} max={2} step={0.05}
+          <div className="bp-sec-head" style={{ marginTop: 18 }}><h2>{t('生成参数')}</h2></div>
+          <Slider label={t('创造性 · temperature')} value={draft.llm.temperature} min={0} max={2} step={0.05}
             onChange={(v) => patch((d) => { d.llm.temperature = v })} />
-          <Slider label="核采样 · top_p" value={draft.llm.top_p} min={0} max={1} step={0.05}
+          <Slider label={t('核采样 · top_p')} value={draft.llm.top_p} min={0} max={1} step={0.05}
             onChange={(v) => patch((d) => { d.llm.top_p = v })} />
-          <Slider label="回复上限 · max_tokens" value={draft.llm.max_tokens} min={128} max={4096} step={64}
+          <Slider label={t('回复上限 · max_tokens')} value={draft.llm.max_tokens} min={128} max={4096} step={64}
             onChange={(v) => patch((d) => { d.llm.max_tokens = v })} />
-          <Slider label="ReAct 步数" value={draft.escalation.react_steps} min={1} max={8} step={1}
+          <Slider label={t('ReAct 步数')} value={draft.escalation.react_steps} min={1} max={8} step={1}
             onChange={(v) => patch((d) => { d.escalation.react_steps = v })} />
         </section>
 
@@ -573,8 +574,8 @@ function TryPanel() {
   return (
     <section className="bp-sec bp-try">
       <div className="bp-sec-head">
-        <h2><FlaskConical size={14} className="bp-flask" /> 即时试问</h2>
-        <button className="btn ghost sm" onClick={resetSession} title="丢弃临时会话，下次试问将全新开始">新会话</button>
+        <h2><FlaskConical size={14} className="bp-flask" /> {t('即时试问')}</h2>
+        <button className="btn ghost sm" onClick={resetSession} title={t('丢弃临时会话，下次试问将全新开始')}>{t('新会话')}</button>
       </div>
       <p className="bp-hint" style={{ marginTop: 0 }}>
         用用户视角实测当前人设与参数：先点「保存配置」再试问，所见即用户所得。
@@ -596,8 +597,8 @@ function TryPanel() {
             </div>
           </div>
         )}
-        {!result && !busy && <div className="bp-try-empty">还没有试问记录。</div>}
-        {busy && <div className="bp-try-empty"><Loader2 size={14} className="animate-spin inline-block" /> 正在生成…</div>}
+        {!result && !busy && <div className="bp-try-empty">{t('还没有试问记录。')}</div>}
+        {busy && <div className="bp-try-empty"><Loader2 size={14} className="animate-spin inline-block" /> {t('正在生成…')}</div>}
         {err && <div className="bp-try-err">{err}</div>}
       </div>
       <div className="bp-try-input">
@@ -605,7 +606,7 @@ function TryPanel() {
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }}
-          placeholder="如：退货政策是什么 / 帮我推荐一款…"
+          placeholder={t('如：退货政策是什么 / 帮我推荐一款…')}
           disabled={busy}
         />
         <button className="btn sm" onClick={ask} disabled={busy || !question.trim()}>

@@ -7,6 +7,7 @@ import { Spinner } from './components/Spinner'
 import TokenGate from './components/TokenGate'
 import { useFeedback } from './components/Feedback'
 import { PageHead, EmptyState } from './ui'
+import { t } from './lib/t'
 
 interface Annotation {
   id: number
@@ -69,7 +70,7 @@ export default function AnnotationCenter() {
     invalidate()
   }
 
-  if (list.isLoading) return <Spinner full label="加载标注…" />
+  if (list.isLoading) return <Spinner full label={t('加载标注…')} />
   if (list.error && isAuthError(list.error)) return <TokenGate error={list.error} onAuthed={() => list.refetch()} />
 
   const items = list.data?.annotations ?? []
@@ -77,29 +78,29 @@ export default function AnnotationCenter() {
   return (
     <div className={`bp-app ${mobile ? 'bp-mobile' : ''}`}>
       <PageHead
-        title="标注回复"
-        sub="常见问答标成标准答案，命中直接回复（零延迟、不走模型）· 对标 Dify Annotations"
+        title={t('标注回复')}
+        sub={t('常见问答标成标准答案，命中直接回复（零延迟、不走模型）· 对标 Dify Annotations')}
         right={null}
       />
 
       <section className="bp-sec">
         <div className="bp-sec-head">
-          <h2><Plus size={14} /> 新建标注</h2>
-          <span>问法支持长短变体（归一化 + 包含匹配），命中自动计数</span>
+          <h2><Plus size={14} /> {t('新建标注')}</h2>
+          <span>{t('问法支持长短变体（归一化 + 包含匹配），命中自动计数')}</span>
         </div>
         <div className="ac-form">
           <input
             className="ac-input"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="用户会怎么问？如：退货政策是什么"
+            placeholder={t('用户会怎么问？如：退货政策是什么')}
             maxLength={500}
           />
           <textarea
             className="ac-input ac-answer"
             value={a}
             onChange={(e) => setA(e.target.value)}
-            placeholder="标准答案（将原文回复给用户）"
+            placeholder={t('标准答案（将原文回复给用户）')}
             rows={3}
             maxLength={4000}
           />
@@ -111,14 +112,14 @@ export default function AnnotationCenter() {
 
       <section className="bp-sec">
         <div className="bp-sec-head">
-          <h2><MessageSquareQuote size={14} /> 标注列表</h2>
+          <h2><MessageSquareQuote size={14} /> {t('标注列表')}</h2>
           <span>{items.length} 条</span>
         </div>
         {items.length === 0 ? (
           <EmptyState
             icon={<Stamp size={22} />}
-            title="还没有标注"
-            desc="把最常被问到的 3-5 个问题标成标准答案，秘书答得又快又准。"
+            title={t('还没有标注')}
+            desc={t('把最常被问到的 3-5 个问题标成标准答案，秘书答得又快又准。')}
           />
         ) : (
           <div className="ac-list">
@@ -132,8 +133,8 @@ export default function AnnotationCenter() {
                       <textarea className="ac-input" rows={3} value={editDraft.answer}
                         onChange={(e) => setEditDraft({ ...editDraft, answer: e.target.value })} />
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button className="btn sm" onClick={() => saveEdit(row.id)}>保存</button>
-                        <button className="btn secondary sm" onClick={() => setEditing(null)}>取消</button>
+                        <button className="btn sm" onClick={() => saveEdit(row.id)}>{t('保存')}</button>
+                        <button className="btn secondary sm" onClick={() => setEditing(null)}>{t('取消')}</button>
                       </div>
                     </div>
                   ) : (

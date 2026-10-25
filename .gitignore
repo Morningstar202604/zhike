@@ -31,3 +31,9 @@ coverage.xml
 # 执行器覆盖前备份
 *.zksave
 *.zktmp
+
+# ZCode 插件运行态
+.v2c/
+
+# 临时文件
+.tmp/

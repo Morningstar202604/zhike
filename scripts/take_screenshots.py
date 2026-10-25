@@ -95,6 +95,8 @@ with sync_playwright() as p:
     shot(desk, "/settings/kb", "kb.png", wait=2000)
     shot(desk, "/settings/tools", "tools.png", wait=2000)
     shot(desk, "/settings/data", "data.png", wait=2000)
+    shot(desk, "/reminders", "reminders.png", wait=2000)
+    shot(desk, "/persona", "persona.png", wait=2400)
     shot(desk, "/", "visitor-chat.png", wait=2000, action=ask_agent)
     desk.close()
 

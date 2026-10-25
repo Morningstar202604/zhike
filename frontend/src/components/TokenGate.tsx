@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Lock, LogOut, Copy, Check, RefreshCw, KeyRound } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 import { isAuthError } from '../lib/queries'
+import { t } from '../lib/t'
 
 /**
  * 管理门禁。
@@ -97,7 +98,7 @@ export function TokenGate({ error, onAuthed }: { error?: unknown; onAuthed?: () 
     <div className="max-w-[440px] mx-auto my-16 bg-panel border border-line-2 rounded-xl p-6 space-y-3">
       <div className="flex items-center gap-2">
         <Lock size={16} className="text-warn" />
-        <span className="font-semibold text-sm">需要访问令牌</span>
+        <span className="font-semibold text-sm">{t('需要访问令牌')}</span>
       </div>
       <p className="text-xs text-muted" style={{ lineHeight: 1.7 }}>{hint}</p>
 
@@ -105,7 +106,7 @@ export function TokenGate({ error, onAuthed }: { error?: unknown; onAuthed?: () 
         <div className="text-[11px] text-muted border border-line-2 rounded-lg p-2" style={{ lineHeight: 1.6 }}>
           <div>未能自动登录：{autoReason}</div>
           <div style={{ marginTop: 4 }}>
-            远程访问时，请在<b>服务器本机</b>打开控制台，进入「管理中心 → 访问令牌」复制后粘贴到这里。
+            远程访问时，请在<b>{t('服务器本机')}</b>打开控制台，进入「管理中心 → 访问令牌」复制后粘贴到这里。
           </div>
         </div>
       )}
@@ -114,7 +115,7 @@ export function TokenGate({ error, onAuthed }: { error?: unknown; onAuthed?: () 
         <input
           type="text"
           className="flex-1"
-          placeholder="粘贴访问令牌"
+          placeholder={t('粘贴访问令牌')}
           value={input}
           autoFocus
           onChange={(e) => setInput(e.target.value)}
@@ -131,13 +132,13 @@ export function TokenGate({ error, onAuthed }: { error?: unknown; onAuthed?: () 
 
       {adminToken && (
         <div className="space-y-2">
-          <div className="text-[11px] text-muted">当前令牌（点击复制）</div>
+          <div className="text-[11px] text-muted">{t('当前令牌（点击复制）')}</div>
           <button
             className="w-full text-left text-[11px] font-mono border border-line-2 rounded-lg p-2 break-all"
             onClick={copySaved}
-            title="点击复制"
+            title={t('点击复制')}
           >
-            {copied ? <span className="text-ok"><Check size={12} /> 已复制</span> : <><Copy size={12} /> {adminToken}</>}
+            {copied ? <span className="text-ok"><Check size={12} /> {t('已复制')}</span> : <><Copy size={12} /> {adminToken}</>}
           </button>
           <button
             className="btn ghost sm"

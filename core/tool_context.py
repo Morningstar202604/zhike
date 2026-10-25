@@ -27,6 +27,10 @@ class ToolContext:
     image_b64: str = ""
     # 会话内最近若干条消息（role/content），工具可据此回答「我刚说了什么」
     history: tuple[dict, ...] = ()
+    # 触发者主体（格式同 actions.authz.parse_principal：qq:123 / admin / operator:x）。
+    # 写类工具（改文件、发消息、生图）必须靠它做权限判定与审计——
+    # 工具层原来完全绕过动作层的档位/审批，等于给提示注入留了一个后门。
+    principal: str = ""
 
     @property
     def chat_key(self) -> str:

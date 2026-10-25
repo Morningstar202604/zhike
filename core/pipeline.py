@@ -550,6 +550,10 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
         message_text=query,
         image_b64=message.image_b64 or "",
         history=tuple(history or ()),
+        # 工具层的权限主体：QQ 渠道按触发者 QQ 号，其余按访客身份。
+        # 只有管理员/授权 QQ（AUTHORIZED_QQ）能触达读写主机文件、以机器人身份发消息。
+        principal=(f"qq:{message.channel_user_id}" if message.channel_type in ("qq", "onebot")
+                   else f"visitor:{visitor_key or 'anonymous'}"),
     )
     # 反思修正：把"最近高频毛病"作为自我修正提醒注入上下文（带缓存，60s 内不重复查库）
     try:

@@ -52,9 +52,18 @@ async def _deliver_qq(rec: dict, text: str) -> tuple[bool, str]:
 
 
 async def _deliver_web(rec: dict, text: str) -> tuple[bool, str]:
-    """网页渠道：落一条 agent 消息 + 尝试 WS 广播（无人接听不算失败）。"""
-    sid = (rec.get("chat_key") or "").split(":", 1)[-1]
+    """网页渠道：落一条 agent 消息 + 尝试 WS 广播（无人接听不算失败）。
+
+    chat_key 的形态是 `webchat:<visitor_id>`，不能直接当 session_id 用——
+    之前这样查永远查不到（会话已不存在），网页提醒必定重试 5 次后失败。
+    先按 visitor_id 取最近一个活跃会话。
+    """
+    raw = rec.get("chat_key") or ""
+    sid = raw.split(":", 1)[-1] if ":" in raw else raw
     session = store.get_session(sid) if sid else None
+    if not session:
+        visitor = (rec.get("visitor_id") or sid or "").strip()
+        session = store.latest_active_session(visitor) if visitor else None
     if not session:
         return False, "会话已不存在"
     store.add_message(session["id"], "agent", text)
@@ -159,13 +168,24 @@ async def deliver(rec: dict) -> bool:
 
 
 async def tick() -> int:
-    """扫一次到期提醒，返回成功投递数。"""
+    """扫一次到期提醒，返回成功投递数。
+
+    先原子认领（pending → sending）再投递：多 worker 下同一行只有一个赢家，
+    避免同一条提醒被推送多次。
+    """
     now = datetime.now(timezone.utc).isoformat()
     rows = store.reminder_due(now)
     sent = 0
     for rec in rows:
-        if await deliver(rec):
-            sent += 1
+        rid = int(rec["id"])
+        if not store.reminder_claim(rid):
+            continue
+        try:
+            if await deliver(rec):
+                sent += 1
+        except BaseException:
+            store.reminder_release(rid)
+            raise
     return sent
 
 

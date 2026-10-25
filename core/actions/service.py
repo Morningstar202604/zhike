@@ -45,6 +45,16 @@ def _nonce_hash(nonce: str) -> str:
     return hashlib.sha256(nonce.encode("utf-8")).hexdigest()
 
 
+def _params_digest(params: dict) -> str:
+    """原始参数的规范化摘要（含长度），用于审批一致性校验。
+
+    不能拿打码后的 safe_params 比对：敏感值会被整体替换成 ***，
+    超长内容与数组尾部被截断，两段不同参数会得到同一个「安全」视图。
+    """
+    raw = json.dumps(params, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def _is_computer_action(name: str) -> bool:
     return name.startswith(("fs.", "shell.", "proc."))
 
@@ -111,9 +121,11 @@ async def execute(
             raise ActionError("argv 必须是非空字符串数组，不接受整条命令行", 400)
 
     # ---- 2. 幂等：同一 key 直接返回首次结果，不重复执行 ----
+    # 只有终态才允许回放：pending_approval / approved / created 都还没真正执行过，
+    # 直接返回旧记录会让「带幂等键的 L2 动作」永远不落地（已复现）。
     if idempotency_key:
         prev = store.action_log_by_idempotency(idempotency_key)
-        if prev:
+        if prev and prev["status"] in ("executed", "failed", "denied"):
             return {
                 "status": prev["status"],
                 "result": prev.get("result"),
@@ -128,10 +140,16 @@ async def execute(
     decision = authz.decide(spec, principal)
     log_id = uuid.uuid4().hex
     safe_params = redact.mask_value(cleaned)
+    # 审批二次调用复用原审计行：否则同一 idempotency_key 会撞 UNIQUE 约束（500），
+    # 而且「批准→执行」会断成两条互不关联的审计记录。
+    log_key = None if approval_id else idempotency_key
+    # 审批一致性必须比对原始参数：safe_params 已打码+截断+截断数组，
+    # 令牌类值全变 ***、512 字符后的差异被吃掉，等于「批准写 A 可以执行写 B」。
+    params_digest = _params_digest(cleaned)
 
     if not decision.allowed:
         store.action_log_create(log_id, action, spec.risk, safe_params, principal.label,
-                                decision.effective_tier, session_id, idempotency_key)
+                                decision.effective_tier, session_id, log_key)
         store.action_log_update(log_id, status="denied", error=decision.reason)
         store.append_audit(principal.label, "action.denied", {
             "action": action, "reason": decision.reason, "risk": spec.risk,
@@ -141,7 +159,7 @@ async def execute(
 
     # ---- 4. 审计先于执行 ----
     store.action_log_create(log_id, action, spec.risk, safe_params, principal.label,
-                            decision.effective_tier, session_id, idempotency_key)
+                            decision.effective_tier, session_id, log_key)
 
     # ---- 5. 审批闸门 ----
     if decision.needs_approval and not approval_id:
@@ -150,7 +168,8 @@ async def execute(
         expires = (datetime.now(timezone.utc) + timedelta(seconds=APPROVAL_TTL_S)).isoformat()
         summary = redact.summarize_for_approval(action, cleaned, spec.summary)
         store.approval_create(ap_id, log_id, action, summary, {
-            "params": safe_params, "risk": spec.risk, "risk_label": RISK_LABEL[spec.risk],
+            "params": safe_params, "params_digest": params_digest,
+            "risk": spec.risk, "risk_label": RISK_LABEL[spec.risk],
             "principal": principal.label, "session_id": session_id,
             "dropped_params": dropped,
         }, _nonce_hash(nonce), expires)
@@ -207,8 +226,12 @@ async def execute(
                 {"approval_id": approval_id},
             )
 
-        approved_params = detail.get("params") or {}
-        if approved_params != safe_params:
+        approved_digest = detail.get("params_digest") or ""
+        if approved_digest:
+            params_match = approved_digest == params_digest
+        else:  # 兼容升级前创建的审批（只有打码视图）
+            params_match = (detail.get("params") or {}) == safe_params
+        if not params_match:
             store.action_log_update(log_id, status="denied", error="审批与参数不匹配")
             raise ActionError("审批参数与本次调用不一致，已拒绝", 403, {"approval_id": approval_id})
 

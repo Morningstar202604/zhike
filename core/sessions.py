@@ -57,7 +57,12 @@ def resolve_session(channel: str, visitor_id: str) -> str:
         store.replace_channel_session(channel, sid)
         return sid
 
-    # 有映射但已过期/已关闭：覆盖换新会话（claim 在这里必然失败，不能复用）
+    # 有映射但已过期/已关闭：先把旧会话收尾，再覆盖换新会话。
+    # 不收尾会让旧会话永久停在 ongoing：session_count 虚增、回访欢迎语误触发、
+    # 控制台堆积僵尸会话（已复现）。
+    old_sid = (row or {}).get("session_id") if row else None
+    if old_sid:
+        store.close_session(old_sid)
     if store.replace_channel_session(channel, sid):
         return sid
     # 并发覆盖输家：别人先写了新映射，复用它并清理自己的空会话

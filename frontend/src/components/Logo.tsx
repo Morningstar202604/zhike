@@ -19,9 +19,11 @@ interface LogoProps {
   withText?: boolean
   /** 副标题 */
   subtitle?: string
+  /** 品牌名（英文界面显示 Zhike） */
+  name?: string
 }
 
-export const Logo = memo(function Logo({ size = 32, onDark = false, withText = false, subtitle }: LogoProps) {
+export const Logo = memo(function Logo({ size = 32, onDark = false, withText = false, subtitle, name = '知客' }: LogoProps) {
   const id = `zk-seal-${onDark ? 'd' : 'l'}`
   const face = onDark ? '#F2EFE9' : '#0E5C55'
   const glyph = onDark ? '#0E5C55' : '#F7F5F0'
@@ -81,10 +83,11 @@ export const Logo = memo(function Logo({ size = 32, onDark = false, withText = f
               fontSize: size * 0.46,
               fontWeight: 600,
               letterSpacing: '0.04em',
+              whiteSpace: 'nowrap',
               color: onDark ? '#E9E6DF' : 'var(--ink)',
             }}
           >
-            知客
+            {name}
           </span>
           {subtitle && (
             <span

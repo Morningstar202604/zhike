@@ -206,7 +206,7 @@ def test_retrieve_fallback_without_embedding_backend(monkeypatch, tmp_path):
 def test_encoder_sets_offline_for_local_model_dir(monkeypatch, tmp_path):
     """本地目录模型必须离线加载：否则无外网时 HF Hub HEAD 指数退避会阻塞分钟级（e2e 曾因此超时）。"""
     import os
-    import sentence_transformers
+    sentence_transformers = pytest.importorskip("sentence_transformers")
 
     calls = {}
 

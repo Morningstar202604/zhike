@@ -831,6 +831,18 @@ def session_count(visitor_id: str) -> int:
     return row["c"] if row else 0
 
 
+def latest_active_session(visitor_id: str) -> dict | None:
+    """取该访客最近一个未关闭会话（网页提醒投递用）。"""
+    if not visitor_id:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM sessions WHERE visitor_id = ? AND status != 'closed' "
+            "ORDER BY started_at DESC LIMIT 1", (visitor_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def add_feedback(session_id: str, message_id: int, rating: str, comment: str = "") -> None:
     with get_conn() as conn:
         conn.execute(
@@ -2064,13 +2076,39 @@ def reminder_list(visitor_id: str = "", status: str = "pending", limit: int = 50
 
 
 def reminder_due(now: str, limit: int = 20) -> list[dict]:
-    """取出到期且仍待发的提醒。"""
+    """取出到期且仍待发的提醒。
+
+    due_at 用 ISO 字符串落库，直接字符串比较会把不同时区偏移的时刻排错序：
+    `2026-10-25T09:00:00+08:00` 串面大于 `2026-10-25T01:30:00+00:00`，
+    实际前者（01:00Z）已经过期 30 分钟。统一交给 julianday 做真实时刻比较。
+    """
     with get_conn() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT * FROM reminders WHERE status = 'pending' AND due_at <= ? "
-            "ORDER BY due_at LIMIT ?", (now, limit)).fetchall()
+            "SELECT * FROM reminders WHERE status = 'pending' "
+            "AND julianday(due_at) <= julianday(?) "
+            "ORDER BY julianday(due_at) LIMIT ?", (now, limit)).fetchall()
     return [dict(r) for r in rows]
+
+
+def reminder_claim(rid: int) -> bool:
+    """原子认领一条到期提醒：pending → sending。
+
+    多 worker / 双实例同时 tick 时，只有抢到的那一个会投递；
+    之前只 SELECT 不认领，同一提醒会被重复推送。
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE reminders SET status = 'sending' WHERE id = ? AND status = 'pending'",
+            (rid,),
+        )
+    return cur.rowcount > 0
+
+
+def reminder_release(rid: int) -> None:
+    """投递失败/进程中断后把 sending 放回 pending，等待下次重试。"""
+    with get_conn() as conn:
+        conn.execute("UPDATE reminders SET status = 'pending' WHERE id = ? AND status = 'sending'", (rid,))
 
 
 def reminder_reschedule(rid: int, next_due: str) -> None:

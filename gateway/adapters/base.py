@@ -90,8 +90,12 @@ class ChannelAdapter(Protocol):
         """把回复发回来源。"""
         ...
 
-    def execute(self, action: str, params: dict) -> dict:
-        """执行平台特有动作（同步描述；异步实现请包装）。"""
+    async def execute(self, action: str, params: dict) -> dict:
+        """执行平台特有动作。
+
+        异步契约：协议端客户端（NoneBot bot.call_api）绑定在网关主事件循环上，
+        同步方法里 new_event_loop() 去跑会抛「attached to a different loop」。
+        """
         ...
 
     def verify(self, headers: dict) -> bool:

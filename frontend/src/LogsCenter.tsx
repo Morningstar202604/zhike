@@ -4,6 +4,7 @@ import { useAdminLogs } from './lib/queries'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import { EmptyState, PageHead } from './ui'
 import './pages2.css'
+import { t } from './lib/t'
 
 const LEVELS = [
   { key: '', label: '全部' },
@@ -39,8 +40,8 @@ export default function LogsCenter() {
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto w-full space-y-4 pb-24 md:pb-10">
       <PageHead
-        title="日志中心"
-        sub="Agent 每一步的运行事件 · 3 秒自动刷新 · 保留最近 1000 条"
+        title={t('日志中心')}
+        sub={t('Agent 每一步的运行事件 · 3 秒自动刷新 · 保留最近 1000 条')}
         right={
           <>
             {LEVELS.map((l) => (
@@ -52,21 +53,21 @@ export default function LogsCenter() {
                 {l.label}
               </button>
             ))}
-            <button className="btn ghost sm" onClick={() => logs.refetch()} title="立即刷新">
+            <button className="btn ghost sm" onClick={() => logs.refetch()} title={t('立即刷新')}>
               <RefreshCw size={13} />
             </button>
           </>
         }
       />
 
-      {logs.isLoading && <Spinner full label="加载日志…" />}
+      {logs.isLoading && <Spinner full label={t('加载日志…')} />}
       {logs.error && <ErrorBanner message={(logs.error as Error).message} onRetry={() => logs.refetch()} />}
 
       {entries.length === 0 && !logs.isLoading && (
         <EmptyState
           icon={<ScrollText size={22} />}
-          title="暂无匹配日志"
-          desc="用户发消息、护栏拦截、工具调用、升级都会实时出现在这里。"
+          title={t('暂无匹配日志')}
+          desc={t('用户发消息、护栏拦截、工具调用、升级都会实时出现在这里。')}
         />
       )}
 

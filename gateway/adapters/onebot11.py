@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 
 from gateway.adapters.base import (
@@ -109,19 +108,16 @@ class OneBot11Adapter:
 
     # ---------- 动作 ----------
 
-    def execute(self, action: str, params: dict) -> dict:
-        """动作执行。同步签名，内部用已绑定 bot 的异步 call_api。
+    async def execute(self, action: str, params: dict) -> dict:
+        """动作执行（异步）：直接用已绑定 bot 的 call_api。
 
-        注意：真正的动作调用在 core 侧走 gateway 的 /internal/action 端点，
-        这里提供同步包装是为本地调用与单测方便。
+        之前是同步方法里新建事件循环去跑绑定主循环的 bot.call_api，任何真实调用
+        都会 RuntimeError: attached to a different loop，loop.close() 还会破坏
+        协议端连接。异步签名与 ChannelAdapter 其余方法保持一致。
         """
         if self._bot is None:
             raise RuntimeError("协议端未连接")
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(self._bot.call_api(action, **(params or {})))
-        finally:
-            loop.close()
+        return await self._bot.call_api(action, **(params or {}))
 
     # ---------- 校验 ----------
 

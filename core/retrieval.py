@@ -343,9 +343,9 @@ def retrieve_scored(query: str, top_k: int, min_overlap: float, use_embedding: b
                         continue
                     out.append((norm, eid_map[eid]))
                 return out
-        finally:
-            # 连接由线程本地缓存持有，不在这里关闭
-            pass
+        except Exception as e:  # FTS/vec 故障（库锁、索引损坏、编码器异常）→ 退回 bigram
+            logger.warning("retrieval index unavailable, falling back to bigram: %s: %s",
+                           type(e).__name__, str(e)[:120])
 
     # ---- 兜底：纯 bigram（FTS5/vec 都不可用时） ----
     q_big = bigrams(query)

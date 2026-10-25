@@ -12,6 +12,7 @@ import { Avatar, MsgMeta, ThoughtBlock } from './ui'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import './pages.css'
 import './pages2.css'
+import { t } from './lib/t'
 
 /** 快捷回复（Chatwoot canned responses 对标）：常用话术一键插入，本地可编辑 */
 const CANNED_KEY = 'zhike-canned'
@@ -32,11 +33,11 @@ function CannedBar({ onPick }) {
       {!editing ? (
         <>
           {items.map((t, i) => (
-            <button key={i} className="canned-chip" title="点击插入到输入框" onClick={() => onPick(t)}>
+            <button key={i} className="canned-chip" title={t('点击插入到输入框')} onClick={() => onPick(t)}>
               {t.length > 18 ? t.slice(0, 18) + '…' : t}
             </button>
           ))}
-          <button className="canned-edit" onClick={() => setEditing(true)}>编辑</button>
+          <button className="canned-edit" onClick={() => setEditing(true)}>{t('编辑')}</button>
         </>
       ) : (
         <div className="canned-editing">
@@ -47,8 +48,8 @@ function CannedBar({ onPick }) {
             </div>
           ))}
           <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn secondary sm" onClick={() => setItems([...items, ''])}>+ 加一条</button>
-            <button className="btn sm" onClick={() => { save(items.filter((t) => t.trim())); setEditing(false) }}>完成</button>
+            <button className="btn secondary sm" onClick={() => setItems([...items, ''])}>{t('+ 加一条')}</button>
+            <button className="btn sm" onClick={() => { save(items.filter((t) => t.trim())); setEditing(false) }}>{t('完成')}</button>
           </div>
         </div>
       )}
@@ -83,9 +84,9 @@ function NotesPanel({ sid }) {
 
   return (
     <div className="notes-panel">
-      <div className="notes-title"><StickyNote size={13} /> 内部备注（用户不可见）</div>
+      <div className="notes-title"><StickyNote size={13} /> {t('内部备注（用户不可见）')}</div>
       <div className="notes-list">
-        {notes.length === 0 && <div className="notes-empty">暂无备注。</div>}
+        {notes.length === 0 && <div className="notes-empty">{t('暂无备注。')}</div>}
         {notes.map((n) => (
           <div key={n.id} className="notes-item">
             <div className="notes-text">{n.content}</div>
@@ -99,10 +100,10 @@ function NotesPanel({ sid }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-          placeholder="记点内部信息：用户情绪、承诺事项、跟进计划…"
+          placeholder={t('记点内部信息：用户情绪、承诺事项、跟进计划…')}
           maxLength={2000}
         />
-        <button className="btn secondary sm" onClick={add} disabled={busy || !text.trim()}>记下</button>
+        <button className="btn secondary sm" onClick={add} disabled={busy || !text.trim()}>{t('记下')}</button>
       </div>
     </div>
   )
@@ -159,7 +160,7 @@ export default function OperatorDesk() {
   // WS 实时接收新会话 / 状态变更（useWs 自动重连）
   // token 走 Sec-WebSocket-Protocol 子协议（避免 query string 进 access log / 浏览器历史）
   const adminToken = useAppStore((s) => s.adminToken)
-  const wsUrl = '/ws/operator'
+  const wsUrl = adminToken ? '/ws/operator' : null
   const wsSubs = adminToken ? ['zhike-admin', adminToken] : undefined
   const activeRef = useRef(null)
   activeRef.current = active
@@ -171,7 +172,7 @@ export default function OperatorDesk() {
         role: 'visitor', content: String(p.content ?? ''), ts: new Date().toISOString(),
       }])
     }
-  }, true, wsSubs)
+  }, !!adminToken, wsSubs)
 
   useEffect(() => { ensureOpId() }, [])
   useEffect(() => {
@@ -203,12 +204,18 @@ export default function OperatorDesk() {
   const doReply = async () => {
     const c = reply.trim()
     if (!c || !active) return
+    const tempId = `op-${Date.now()}`
     onReplyChange('')
-    setDialog((prev) => [...prev, { role: 'operator', content: c, ts: new Date().toISOString() }])
+    setDialog((prev) => [...prev, {
+      role: 'operator', content: c, ts: new Date().toISOString(), tempId,
+    }])
     try {
       await http.post(`/api/operator/reply/${active}`, { content: c })
     } catch (e) {
-      setError(e.message)
+      // 失败必须撤回乐观气泡并把内容回填输入框，否则坐席以为已经发出去了
+      setDialog((prev) => prev.filter((m) => m.tempId !== tempId))
+      onReplyChange(c)
+      setError(`发送失败：${e.message || '请重试'}`)
     }
   }
 
@@ -255,7 +262,7 @@ export default function OperatorDesk() {
         </div>
 
         <div className={`op-list ${isMobile ? 'op-list-mobile' : ''}`}>
-          {queues.isLoading && <Spinner label="加载队列…" />}
+          {queues.isLoading && <Spinner label={t('加载队列…')} />}
           {queues.isError && isAuthError(queues.error) && (
             <TokenGate error={queues.error} onAuthed={() => queues.refetch()} />
           )}
@@ -269,11 +276,11 @@ export default function OperatorDesk() {
             <div key={s.id} className={`op-card ${active === s.id ? 'active' : ''}`} onClick={() => openDialog(s.id)}>
               <div className="op-card-title">
                 <span><User size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} /> 会话 #{String(s.id).slice(0, 8)}</span>
-                <span className="badge warn">待接管</span>
+                <span className="badge warn">{t('待接管')}</span>
               </div>
               <div className="op-card-meta">原因：{label(ESCALATE_REASON, s.escalate_reason, '-')}</div>
               <div className="op-actions">
-                <button className="btn sm" onClick={(e) => { e.stopPropagation(); take(s.id) }}>接管并对话</button>
+                <button className="btn sm" onClick={(e) => { e.stopPropagation(); take(s.id) }}>{t('接管并对话')}</button>
               </div>
             </div>
           ))}
@@ -299,11 +306,11 @@ export default function OperatorDesk() {
                   <X size={13} /> 返回队列
                 </button>
               )}
-              <button className="btn ghost sm" onClick={() => openDialog(active)}><RefreshCw size={13} /> 刷新</button>
+              <button className="btn ghost sm" onClick={() => openDialog(active)}><RefreshCw size={13} /> {t('刷新')}</button>
               <button className="btn ghost sm" onClick={() => setNotesOpen((o) => !o)}>
                 <StickyNote size={13} /> 备注
               </button>
-              <button className="btn secondary sm" onClick={() => closeSess(active)}><X size={13} /> 关闭</button>
+              <button className="btn secondary sm" onClick={() => closeSess(active)}><X size={13} /> {t('关闭')}</button>
             </div>
           )}
         </div>
@@ -313,7 +320,7 @@ export default function OperatorDesk() {
         {active && notesOpen && <NotesPanel sid={active} />}
 
         <div className={`op-dialog ${isMobile ? 'op-dialog-mobile' : ''}`} ref={bodyRef}>
-          {!active && <div className="empty" style={{ margin: 'auto' }}>从队列接管一个会话后，这里会实时展示对话。</div>}
+          {!active && <div className="empty" style={{ margin: 'auto' }}>{t('从队列接管一个会话后，这里会实时展示对话。')}</div>}
           {dialog.map((m, i) =>
             m.role === 'system' ? (
               <div key={i} className="msg-row system"><div className="system-line">{m.content}</div></div>
@@ -331,7 +338,7 @@ export default function OperatorDesk() {
                     <button
                       className="btn secondary sm"
                       style={{ marginTop: 4 }}
-                      title="把这条回复沉淀为知识库条目，下次同样问题自动回答"
+                      title={t('把这条回复沉淀为知识库条目，下次同样问题自动回答')}
                       onClick={() => {
                         const text = (m.content || '').trim()
                         if (!text) return
@@ -355,11 +362,11 @@ export default function OperatorDesk() {
             <textarea
               rows={1}
               value={reply}
-              placeholder="以真人身份回复…"
+              placeholder={t('以真人身份回复…')}
               onChange={(e) => onReplyChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doReply() } }}
             />
-            <button className="btn" onClick={doReply} disabled={!reply.trim()}>回复</button>
+            <button className="btn" onClick={doReply} disabled={!reply.trim()}>{t('回复')}</button>
           </div>
         )}
       </section>

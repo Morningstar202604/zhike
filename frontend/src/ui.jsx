@@ -1,4 +1,5 @@
 import React from 'react'
+import i18n from './i18n'
 import {
   Paperclip,
   ImagePlus,
@@ -15,6 +16,7 @@ import {
   Brain,
   ChevronRight,
 } from 'lucide-react'
+import { t } from './lib/t'
 
 export function Avatar({ kind = 'agent', size = 34 }) {
   const map = {
@@ -67,7 +69,9 @@ const TOOL_LABEL = {
   injection_guard: '安全护栏',
 }
 export function toolLabel(name) {
-  return TOOL_LABEL[name] || name
+  // 统一走 i18n：英文界面下按中文原文查表，缺翻译时回退中文
+  const zh = TOOL_LABEL[name] || name
+  return i18n.t(zh)
 }
 
 const MODE_LABEL = {
@@ -110,7 +114,7 @@ export function FeedbackRow({ onFeedback, feedback, show }) {
   if (!show) return null
   return (
     <div className="feedback-row">
-      <span className="feedback-label">这条回答有用吗？</span>
+      <span className="feedback-label">{t('这条回答有用吗？')}</span>
       <button className={`fb-btn ${feedback === 'helpful' ? 'on' : ''}`} onClick={() => onFeedback('helpful')}>
         <ThumbsUp size={13} />
         {feedback === 'helpful' ? '已标记有用' : '有用'}
@@ -187,7 +191,7 @@ export function Composer({
             aria-pressed={webSearchEnabled}
           >
             <Globe size={13} />
-            <span>联网搜索</span>
+            <span>{t('联网搜索')}</span>
           </button>
         )}
         {/* 未配置搜索服务：保留入口但禁用，并在 tooltip 里说清怎么开——直接隐藏会让用户
@@ -195,15 +199,15 @@ export function Composer({
         {!onToggleWebSearch && webSearchHint && (
           <button type="button" className="tool-toggle" disabled title={webSearchHint}>
             <Globe size={13} />
-            <span>联网搜索</span>
+            <span>{t('联网搜索')}</span>
           </button>
         )}
-        {webSearch && <span className="badge info" style={{ fontSize: 10 }}>已开启</span>}
+        {webSearch && <span className="badge info" style={{ fontSize: 10 }}>{t('已开启')}</span>}
         {image && (
           <div className="composer-img">
             <img src={image} alt="预览" />
             {onRemoveImage && (
-              <button title="移除图片" onClick={onRemoveImage}>
+              <button title={t('移除图片')} onClick={onRemoveImage}>
                 <X size={11} />
               </button>
             )}
@@ -230,31 +234,31 @@ export function Composer({
           maxLength={maxLength}
           rows={1}
           disabled={disabled}
-          aria-label="消息输入框"
+          aria-label={t('消息输入框')}
         />
         <span className="composer-count">
           {value.length}/{maxLength}
         </span>
         {loading && onStop ? (
-          <button className="send-btn stop" onClick={onStop} title="停止生成">
+          <button className="send-btn stop" onClick={onStop} title={t('停止生成')}>
             <Square size={13} />
-            <span>停止</span>
+            <span>{t('停止')}</span>
           </button>
         ) : (
           <button
             className="send-btn"
             onClick={() => onSend()}
             disabled={loading || !hasContent || disabled}
-            title="发送（Enter），换行用 Shift+Enter"
+            title={t('发送（Enter），换行用 Shift+Enter')}
           >
             <Send size={15} />
-            <span>发送</span>
+            <span>{t('发送')}</span>
           </button>
         )}
       </div>
       <div className="composer-hint">
-        <kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>Esc</kbd> 清空
-        {onToggleWebSearch && webSearchEnabled && <span style={{ marginLeft: 8, color: 'var(--brand)' }}>· 联网搜索已开</span>}
+        <kbd>Enter</kbd> {t('发送 ·')} <kbd>Shift</kbd>+<kbd>Enter</kbd> {t('换行 ·')} <kbd>Esc</kbd> 清空
+        {onToggleWebSearch && webSearchEnabled && <span style={{ marginLeft: 8, color: 'var(--brand)' }}>{t('· 联网搜索已开')}</span>}
       </div>
     </div>
   )

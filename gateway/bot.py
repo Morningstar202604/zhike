@@ -164,9 +164,16 @@ _AMBIENT_MAX = 12
 _GROUP_NAMES: dict[str, str] = {}
 
 
+_AMBIENT_MAX_GROUPS = max(64, int(os.environ.get("GATEWAY_AMBIENT_MAX_GROUPS", "200")))
+
+
 def _ambient_push(group: str, line: str) -> None:
     buf = _AMBIENT.setdefault(group, collections.deque(maxlen=_AMBIENT_MAX))
     buf.append(line)
+    # 群数量无上限时 dict 会随运行时间无限增长（每个群一条 deque）。
+    # 超过上限丢最早插入的群：氛围只是锦上添花，丢历史无副作用。
+    while len(_AMBIENT) > _AMBIENT_MAX_GROUPS:
+        _AMBIENT.pop(next(iter(_AMBIENT)), None)
 
 
 def _ambient_snapshot(group: str) -> list[str]:
@@ -198,10 +205,16 @@ async def _download_emote(url: str, group: str, summary: str) -> None:
         _EMOTE_DL_TIMES.pop(0)
     if len(_EMOTE_DL_TIMES) >= int(_env_f("GATEWAY_EMOTE_HOURLY", 30)):
         return
+    from core import url_guard
+
+    try:
+        safe = url_guard.check_url(url)
+    except Exception:
+        return
     try:
         async with _EMOTE_DL_SEM:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                resp = await client.get(url)
+            async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+                resp = await client.get(safe)
                 if resp.status_code != 200 or len(resp.content) > 800 * 1024:
                     return
                 _EMOTE_DL_TIMES.append(time.time())
@@ -321,9 +334,18 @@ def _dedup(message_id: str | None) -> bool:
     return True
 
 
+_PER_CHAT_LOCKS_MAX = max(64, int(os.environ.get("GATEWAY_CHAT_LOCKS_MAX", "500")))
+
+
 def _chat_lock(key: str) -> asyncio.Lock:
     lock = _PER_CHAT_LOCKS.get(key)
     if lock is None:
+        # 空闲锁可以安全丢弃重建：有任务持有的锁 locked() 为 True，不会被回收。
+        while len(_PER_CHAT_LOCKS) >= _PER_CHAT_LOCKS_MAX:
+            victim = next((k for k, l in _PER_CHAT_LOCKS.items() if not l.locked()), None)
+            if victim is None:
+                break
+            _PER_CHAT_LOCKS.pop(victim, None)
         lock = asyncio.Lock()
         _PER_CHAT_LOCKS[key] = lock
     return lock
@@ -407,12 +429,29 @@ _register_action_endpoint()
 
 
 async def _fetch_image_b64(url: str) -> str:
-    """拉取 QQ 图片转 base64（8MB 上限）；任何失败静默降级为纯文本，不阻塞回复主链路。"""
+    """拉取 QQ 图片转 base64（8MB 上限）；任何失败静默降级为纯文本，不阻塞回复主链路。
+
+    SSRF 防护：QQ 图片 URL 来自群成员，不能直接替他们请求内网/云元数据地址。
+    url_guard 校验 + 关闭跨域重定向 + 流式读取硬上限（不先整包进内存）。
+    """
+    from core import url_guard
+
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        return base64.b64encode(resp.content[: 8 * 1024 * 1024]).decode()
+        safe = url_guard.check_url(url)
+    except Exception:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            async with client.stream("GET", safe) as resp:
+                resp.raise_for_status()
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > 8 * 1024 * 1024:
+                        break
+                    chunks.append(chunk)
+        return base64.b64encode(b"".join(chunks)[: 8 * 1024 * 1024]).decode()
     except Exception:  # aqg: top-level boundary
         return ""
 
@@ -586,10 +625,13 @@ async def handle(event: MessageEvent):
 
     started = time.time()
     reply: dict | None = None
-    # 同一会话串行 + 全局并发上限：群里刷屏时既不乱序也不打爆核心
-    async with _sem, _chat_lock(f"{msg.channel}:{msg.chat_id}"):
+    # 同一会话串行 + 全局并发上限：群里刷屏时既不乱序也不打爆核心。
+    # 全局信号量只罩住「回源 ingest」这一段：拟人延迟最长 20 多秒，
+    # 若连发送阶段一起罩住，8 个并发槽会被 sleep 耗尽，其他会话全部排队（已复现）。
+    async with _chat_lock(f"{msg.channel}:{msg.chat_id}"):
         try:
-            reply = await _post_ingest(payload)
+            async with _sem:
+                reply = await _post_ingest(payload)
             reply_text = (reply or {}).get("text") or ""
             await bus.publish(EV_ACTION_DONE, {
                 "action": "ingest", "duration_ms": int((time.time() - started) * 1000), "ok": True,

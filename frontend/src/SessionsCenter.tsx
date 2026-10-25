@@ -11,6 +11,7 @@ import { PAGE_SIZE, pageCount } from './lib/paging'
 import Markdown from './components/Markdown'
 import './pages.css'
 import './pages2.css'
+import { t } from './lib/t'
 
 const FILTERS = [
   { key: '', label: '全部' },
@@ -112,8 +113,8 @@ export default function SessionsCenter() {
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto w-full space-y-4 pb-24 md:pb-10">
       <PageHead
-        title="会话中心"
-        sub={`${appliedQuery ? `搜索「${appliedQuery}」· ` : '全部会话（含渠道来源）· '}10 秒自动刷新 · 共 ${sessions.data?.total ?? '…'} 条`}
+        title={t('会话中心')}
+        sub={t(appliedQuery ? '会话搜索副标题' : '会话列表副标题', { query: appliedQuery, total: sessions.data?.total ?? '…' })}
         right={
           <>
             {FILTERS.map((f) => (
@@ -122,35 +123,35 @@ export default function SessionsCenter() {
                 onClick={() => { setStatus(f.key); setPage(0) }}
                 className={`mod-toggle ${status === f.key ? 'on' : ''}`}
               >
-                {f.label}
+                {t(f.label)}
               </button>
             ))}
             <div className="tb-search">
               <Search size={13} />
               <input
-                placeholder="搜用户 / 会话 / 消息内容"
+                placeholder={t('搜用户 / 会话 / 消息内容')}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') { setAppliedQuery(query.trim()); setPage(0) }
                   if (e.key === 'Escape') { setQuery(''); setAppliedQuery(''); setPage(0) }
                 }}
-                aria-label="搜索会话"
+                aria-label={t('搜索会话')}
               />
               {appliedQuery && (
-                <button className="tb-search-clear" title="清除搜索" onClick={() => { setQuery(''); setAppliedQuery(''); setPage(0) }}>
+                <button className="tb-search-clear" title={t('清除搜索')} onClick={() => { setQuery(''); setAppliedQuery(''); setPage(0) }}>
                   <X size={11} />
                 </button>
               )}
             </div>
-            <button className="btn ghost sm" onClick={() => sessions.refetch()} title="立即刷新">
+            <button className="btn ghost sm" onClick={() => sessions.refetch()} title={t('立即刷新')}>
               <RefreshCw size={13} />
             </button>
           </>
         }
       />
 
-      {sessions.isLoading && <Spinner full label="加载会话…" />}
+      {sessions.isLoading && <Spinner full label={t('加载会话…')} />}
       {sessions.error && isAuthError(sessions.error) && (
         <TokenGate error={sessions.error} onAuthed={() => sessions.refetch()} />
       )}
@@ -159,7 +160,7 @@ export default function SessionsCenter() {
       )}
 
       {!sessions.isLoading && items.length === 0 && (
-        <EmptyState icon={<Inbox size={22} />} title="没有匹配的会话" desc="换一个筛选条件，或去对话页/群里产生一条新会话。" />
+        <EmptyState icon={<Inbox size={22} />} title={t('没有匹配的会话')} desc={t('换一个筛选条件，或去对话页/群里产生一条新会话。')} />
       )}
 
       {items.length > 0 && (
@@ -168,13 +169,13 @@ export default function SessionsCenter() {
           <table className="dt">
             <thead>
               <tr>
-                <th>开始时间</th>
-                <th>渠道</th>
-                <th>用户</th>
-                <th>状态</th>
-                <th>消息</th>
-                <th>首响</th>
-                <th>升级原因</th>
+                <th>{t('开始时间')}</th>
+                <th>{t('渠道')}</th>
+                <th>{t('用户')}</th>
+                <th>{t('状态')}</th>
+                <th>{t('消息')}</th>
+                <th>{t('首响')}</th>
+                <th>{t('升级原因')}</th>
                 <th></th>
               </tr>
             </thead>
@@ -201,7 +202,7 @@ export default function SessionsCenter() {
                       className="btn ghost sm"
                       onClick={(e) => { e.stopPropagation(); open(s) }}
                     >
-                      查看
+                      {t('查看')}
                     </button>
                   </td>
                 </tr>
@@ -210,9 +211,9 @@ export default function SessionsCenter() {
           </table>
         </div>
         <div className="pager">
-          <span>共 {total} 条 · 第 {page + 1} / {maxPage + 1} 页</span>
-          <button className="btn ghost sm" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>上一页</button>
-          <button className="btn ghost sm" disabled={page >= maxPage} onClick={() => setPage((p) => Math.min(maxPage, p + 1))}>下一页</button>
+          <span>{t('分页状态', { total, page: page + 1, pages: maxPage + 1 })}</span>
+          <button className="btn ghost sm" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t('上一页')}</button>
+          <button className="btn ghost sm" disabled={page >= maxPage} onClick={() => setPage((p) => Math.min(maxPage, p + 1))}>{t('下一页')}</button>
         </div>
         </>
       )}
@@ -223,22 +224,22 @@ export default function SessionsCenter() {
             <div className="drawer-head">
               <h3 title={active.id}>会话 #{active.id.slice(0, 8)} · {label(CHANNEL_LABEL, active.channel)}</h3>
               <div className="flex gap-2">
-                <button className="btn ghost sm" onClick={exportSession} title="导出为 Markdown">
+                <button className="btn ghost sm" onClick={exportSession} title={t('导出为 Markdown')}>
                   <Download size={13} /> 导出
                 </button>
-                <Link to="/operator" className="btn ghost sm"><Headset size={13} /> 协作台</Link>
+                <Link to="/operator" className="btn ghost sm"><Headset size={13} /> {t('协作台')}</Link>
                 {active.status !== 'closed' && (
                   <button className="btn secondary sm" onClick={doClose} disabled={close.isPending}>
                     <X size={13} /> {close.isPending ? '关闭中…' : '关闭会话'}
                   </button>
                 )}
-                <button className="btn ghost sm" aria-label="关闭" title="关闭" onClick={() => setActive(null)}><X size={14} /></button>
+                <button className="btn ghost sm" aria-label={t('关闭')} title={t('关闭')} onClick={() => setActive(null)}><X size={14} /></button>
               </div>
             </div>
             <div className="drawer-body space-y-3 max-h-[60vh] overflow-auto">
               {close.error && <ErrorBanner message={(close.error as Error).message} onRetry={() => sessions.refetch()} />}
-              {loadingDialog && <Spinner label="加载对话…" />}
-              {!loadingDialog && dialog.length === 0 && <div className="empty">该会话暂无消息</div>}
+              {loadingDialog && <Spinner label={t('加载对话…')} />}
+              {!loadingDialog && dialog.length === 0 && <div className="empty">{t('该会话暂无消息')}</div>}
               {dialog.map((m, i) => (
                 <div key={m.id ?? m.ts ?? i} className={`msg-row ${m.role === 'visitor' ? 'visitor' : m.role === 'operator' ? 'operator' : 'agent'}`}>
                   <div className="msg-body">

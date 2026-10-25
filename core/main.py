@@ -754,10 +754,21 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "name 与 persona 必填")
         if len(persona) > 8000:
             raise HTTPException(400, "persona 过长（上限 8000 字）")
+        # 编辑已有卡时必须带上 id：只按 name upsert 会导致「改名 = 新建一张卡」，
+        # 旧卡与其群绑定留在原 id 上，用户看到的是两张卡（已复现）。
+        cid = card.get("id")
+        if cid is not None:
+            try:
+                cid = int(cid)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "id 必须是整数")
+            if not store.card_get(cid):
+                raise HTTPException(404, "角色卡不存在")
         saved = store.card_save(name, persona,
                                 greeting=card.get("greeting"),
                                 temperature=card.get("temperature"),
-                                tags=card.get("tags") or [])
+                                tags=card.get("tags") or [],
+                                cid=cid)
         return {"card": saved}
 
     @app.delete("/api/cards/{cid}", dependencies=[Depends(require_admin)])
@@ -1123,7 +1134,10 @@ def create_app() -> FastAPI:
         # （CS_AGENT_TRUSTED_PROXY=1 且带 X-Forwarded-For 回环），否则一律拒绝。
         trusted = {"127.0.0.1", "::1", "localhost", "testclient"}
         if host not in trusted:
-            fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+            # 取最右一跳：反代通常把真实来源追加在末尾，客户端自带的
+            # `X-Forwarded-For: 127.0.0.1` 在最左，取第一跳等于让攻击者自证本机。
+            chain = [p.strip() for p in (request.headers.get("x-forwarded-for") or "").split(",") if p.strip()]
+            fwd = chain[-1] if chain else ""
             if not (os.environ.get("CS_AGENT_TRUSTED_PROXY", "").lower() in ("1", "true", "yes", "on")
                     and fwd in {"127.0.0.1", "::1"}):
                 raise HTTPException(403, "仅限本机访问")

@@ -7,8 +7,10 @@ import {
   LayoutDashboard, MessagesSquare, ScrollText, ShieldAlert, ListChecks,
   Bot, BookOpen, Stamp, Moon, Sun, Search, Command, Bell,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import Logo from './Logo'
+import { LANGS, setLang } from '../i18n'
 
 /** 分组导航（Codex 式）：组名小字居上，条目紧凑排布。
  *  match 可选：自定义激活判定（默认 startsWith，end 表示全等）。 */
@@ -58,10 +60,11 @@ function useTheme() {
 
 /** Ctrl/Cmd + K 命令面板（Codex 对标）：键盘直达任意页面 */
 function CommandPalette({ close }) {
+  const { t } = useTranslation()
   const nav = useNavigate()
   const [kw, setKw] = useState('')
   const items = NAV_GROUPS.flatMap((g) => g.items.map((n) => ({ ...n, group: g.label })))
-    .filter((n) => !kw || n.label.includes(kw) || n.group.includes(kw))
+    .filter((n) => !kw || t(n.label).includes(kw) || t(n.group).includes(kw))
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') close() }
     window.addEventListener('keydown', onKey)
@@ -73,18 +76,18 @@ function CommandPalette({ close }) {
       <div className="palette">
         <div className="palette-input">
           <Search size={15} />
-          <input autoFocus value={kw} onChange={(e) => setKw(e.target.value)} placeholder="跳转到…" />
+          <input autoFocus value={kw} onChange={(e) => setKw(e.target.value)} placeholder={t('跳转到…')} />
           <kbd>Esc</kbd>
         </div>
         <div className="palette-list">
           {items.map((n) => (
             <button key={n.to + n.label} onClick={() => { nav(n.to); close() }}>
               {n.icon}
-              <span>{n.label}</span>
-              <em>{n.group}</em>
+              <span>{t(n.label)}</span>
+              <em>{t(n.group)}</em>
             </button>
           ))}
-          {!items.length && <div className="palette-empty">没有匹配的页面</div>}
+          {!items.length && <div className="palette-empty">{t('没有匹配的页面')}</div>}
         </div>
       </div>
     </>
@@ -92,29 +95,45 @@ function CommandPalette({ close }) {
 }
 
 function Brand({ onToggleTheme, theme }) {
+  const { t, i18n } = useTranslation()
+  const lang = i18n.language === 'en' ? 'en' : 'zh'
   return (
     <div className="shell-brand">
-      <Logo size={30} onDark withText subtitle="私人秘书" />
-      <button className="theme-toggle" onClick={onToggleTheme} title={theme === 'dark' ? '切换亮色' : '切换暗色'}>
-        {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-      </button>
+      <div className="shell-brand-main">
+        <Logo size={30} onDark withText name={t('知客')} subtitle={t('私人秘书')} />
+      </div>
+      <div className="shell-brand-actions">
+        <select
+          className="lang-toggle"
+          value={lang}
+          onChange={(e) => setLang(e.target.value)}
+          title="Language / 语言"
+          aria-label="Language"
+        >
+          {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+        </select>
+        <button className="theme-toggle" onClick={onToggleTheme} title={theme === 'dark' ? t('切换亮色') : t('切换暗色')}>
+          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
+      </div>
     </div>
   )
 }
 
 function SideNav({ onNav }) {
   const loc = useLocation()
+  const { t } = useTranslation()
   return (
     <nav className="shell-nav">
       {NAV_GROUPS.map((g) => (
         <div className="nav-group" key={g.label}>
-          <div className="nav-group-label">{g.label}</div>
+          <div className="nav-group-label">{t(g.label)}</div>
           {g.items.map((n) => {
             const active = n.match ? n.match(loc.pathname) : n.end ? loc.pathname === n.to : loc.pathname.startsWith(n.to)
             return (
               <Link key={n.to + n.label} to={n.to} onClick={onNav} className={`shell-item ${active ? 'active' : ''}`}>
                 {n.icon}
-                <span>{n.label}</span>
+                <span>{t(n.label)}</span>
               </Link>
             )
           })}

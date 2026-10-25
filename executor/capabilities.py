@@ -173,29 +173,52 @@ def fs_move(policy: Policy, src: str, dst: str) -> dict:
     return {"src": s, "dst": d, "moved": True}
 
 
+def _tree_stats(p: str) -> tuple[int, int]:
+    """统计目录树里的文件数与总字节数（删除前先算，删除后就查不到了）。"""
+    files, size = 0, 0
+    if os.path.isfile(p):
+        try:
+            return 1, os.path.getsize(p)
+        except OSError:
+            return 1, 0
+    for root, _dirs, names in os.walk(p):
+        for n in names:
+            files += 1
+            try:
+                size += os.path.getsize(os.path.join(root, n))
+            except OSError:
+                continue
+    return files, size
+
+
 def fs_delete(policy: Policy, path: str, mode: str = "trash") -> dict:
     """删除。默认进回收站（可恢复），permanent 需要策略显式允许。"""
     p = policy.check_path(path)
     if not os.path.exists(p):
         raise CapabilityError("路径不存在")
+    # 统计必须发生在删除之前：T3 爆炸半径阈值按真实文件数/字节数累计，
+    # 之前 fs_delete 不返回 size，阈值永远读到 0，删一个 10 万文件的目录等于没删。
+    files, size = _tree_stats(p)
+    stats = {"files": files, "size": size}
     if mode == "permanent":
         if os.path.isdir(p):
             shutil.rmtree(p)
         else:
             os.remove(p)
-        return {"path": p, "deleted": "permanent"}
+        return {"path": p, "deleted": "permanent", **stats}
     # 回收站：优先 send2trash，缺失时退化为移动到同目录 .zhtrash
     try:
         from send2trash import send2trash
 
         send2trash(p)
-        return {"path": p, "deleted": "trash", "recoverable": True}
+        return {"path": p, "deleted": "trash", "recoverable": True, **stats}
     except ImportError:
         trash_dir = os.path.join(os.path.dirname(p) or ".", ".zhtrash")
         os.makedirs(trash_dir, exist_ok=True)
         target = os.path.join(trash_dir, f"{int(time.time())}_{os.path.basename(p)}")
         shutil.move(p, target)
-        return {"path": p, "deleted": "moved-to-trash-dir", "trash_path": target, "recoverable": True}
+        return {"path": p, "deleted": "moved-to-trash-dir", "trash_path": target,
+                "recoverable": True, **stats}
 
 
 # ---------------- 命令 ----------------
@@ -269,13 +292,23 @@ def proc_list(policy: Policy, filter_text: str = "") -> dict:
 
 
 def proc_kill(policy: Policy, pid: int, name: str = "") -> dict:
-    policy.check_kill(int(pid), name)
+    # name 由调用方自报不可信：按 pid 反查真实进程名再比对保护名单，
+    # 否则 {"pid": <lsass pid>} 不传 name 就能绕过 protected_names。
+    real_name = ""
+    for entry in proc_list(policy).get("entries", []):
+        if str(entry.get("pid")) == str(pid):
+            real_name = str(entry.get("name") or "")
+            break
+    policy.check_kill(int(pid), real_name or name)
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                           capture_output=True, timeout=20)
+            proc = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                  capture_output=True, timeout=20, text=True, errors="replace")
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "").strip()[:200]
+                raise CapabilityError(f"结束进程失败：{detail or f'taskkill 退出码 {proc.returncode}'}")
         else:
             os.kill(int(pid), 15)
     except (subprocess.SubprocessError, OSError) as e:
         raise CapabilityError(f"结束进程失败：{type(e).__name__}") from e
-    return {"pid": pid, "killed": True}
+    return {"pid": pid, "name": real_name, "killed": True}

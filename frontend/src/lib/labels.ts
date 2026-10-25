@@ -1,9 +1,17 @@
 /**
- * 后端内部枚举 → 中文展示。
+ * 后端内部枚举 → 展示文案。
  *
  * 后端字段是稳定的机器标识（knowledge_miss 等），前端负责翻译。
  * 好处：后端不用为展示改语义，前端也能在缺失时优雅降级。
+ *
+ * 英文化：表里仍然写中文（可读、可 review），取值时统一过 i18n，
+ * 英文资源按中文原文查表；缺翻译时原样回退中文。
  */
+import i18n from '../i18n'
+
+function tr(text: string): string {
+  return i18n.t(text)
+}
 
 export const ESCALATE_REASON: Record<string, string> = {
   knowledge_miss: '知识库未命中',
@@ -121,5 +129,11 @@ export const RISK_LABEL: Record<number, string> = {
 /** 通用查询：未知值原样返回（便于发现后端新增枚举） */
 export function label(map: Record<string, string>, key?: string | null, fallback = '-'): string {
   if (!key) return fallback;
-  return map[key] || key;
+  return tr(map[key] || key);
+}
+
+/** 直接取表里的展示文案并翻译（替代裸 map[key]）。 */
+export function t9(map: Record<string, string>, key?: string | null, fallback = '-'): string {
+  if (!key) return fallback;
+  return tr(map[key] || key);
 }

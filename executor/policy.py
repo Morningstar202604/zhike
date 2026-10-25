@@ -19,6 +19,22 @@ class PolicyError(Exception):
     """策略拒绝。message 会原样回给调用方，不能含敏感路径细节以外的内容。"""
 
 
+def _looks_like_path(arg: str) -> bool:
+    """判断命令参数是否是路径。只拦明确的路径形态，避免误伤普通文本参数。"""
+    if not arg or len(arg) > 4096:
+        return False
+    if arg.startswith("~"):
+        return True
+    if arg in (".", ".."):
+        return True
+    if os.path.isabs(arg):
+        return True
+    # Windows 盘符相对路径（C:foo）与常见相对路径前缀
+    if re.match(r"^[A-Za-z]:[\\/]", arg):
+        return True
+    return arg.startswith(("./", "../", ".\\", "..\\")) or "/" in arg or "\\" in arg
+
+
 DEFAULT_POLICY: dict = {
     "version": 1,
     "fs": {
@@ -251,6 +267,26 @@ class Policy:
             if re.search(pattern, joined, re.IGNORECASE):
                 raise PolicyError("命令命中禁止规则")
 
+        # 参数里的路径必须落在 allow_roots 内：否则 `cat /home/u/.ssh/id_rsa`
+        # 只要 cat 在白名单里就能读任意文件，allow_roots 形同虚设。
+        # 只对形似路径的参数做检查（含分隔符或以 ~ 开头），避免误伤普通字符串；
+        # 相对路径按 cwd 解析，没有 cwd 时按执行器当前目录解析（与真实执行一致）。
+        workdir = ""
+        if cwd:
+            workdir = self.check_path(cwd)
+            if not os.path.isdir(workdir):
+                raise PolicyError("工作目录不存在")
+
+        # grep/findstr 的第 1 个参数是匹配模式而非路径，模式里常带 /（如 a/b）
+        pattern_index = 1 if executable in ("grep", "findstr") else -1
+        for idx, arg in enumerate(argv[1:], start=1):
+            if idx == pattern_index or not _looks_like_path(arg):
+                continue
+            candidate = arg
+            if not os.path.isabs(arg) and not arg.startswith("~"):
+                candidate = os.path.join(workdir or os.getcwd(), arg)
+            self.check_path(candidate)
+
         # 可执行文件必须能从 PATH 解析到；绝对路径必须与 PATH 解析结果一致，
         # 防止把改名后的恶意二进制放进工作目录再以 argv[0] 绝对路径调用。
         import shutil as _shutil
@@ -260,11 +296,6 @@ class Policy:
         if os.path.isabs(argv[0]) and os.path.normcase(os.path.realpath(argv[0])) != os.path.normcase(os.path.realpath(resolved)):
             raise PolicyError("可执行文件路径与 PATH 解析结果不一致")
 
-        workdir = ""
-        if cwd:
-            workdir = self.check_path(cwd)
-            if not os.path.isdir(workdir):
-                raise PolicyError("工作目录不存在")
         return argv, workdir
 
     def command_timeout(self) -> int:

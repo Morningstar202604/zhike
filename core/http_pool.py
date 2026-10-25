@@ -24,7 +24,7 @@ import weakref
 import httpx
 
 # key = (事件循环代号, base_url)：一个循环一套连接池
-_clients: dict[tuple[int, str], httpx.AsyncClient] = {}
+_clients: dict[tuple[int, str, float], httpx.AsyncClient] = {}
 _loop_ids: "weakref.WeakKeyDictionary[object, int]" = weakref.WeakKeyDictionary()
 _loop_seq = itertools.count(1)
 _NO_LOOP = 0
@@ -51,11 +51,12 @@ def _loop_key() -> int:
 
 
 def get_client(base_url: str = "", timeout: float = 30.0) -> httpx.AsyncClient:
-    """按 (事件循环, base_url) 取共享客户端。
+    """按 (事件循环, base_url, timeout) 取共享客户端。
 
-    timeout 只在首次创建时生效；后续请求请用 client.post(..., timeout=...)。
+    timeout 必须进 key：httpx 的 timeout 固定在 client 上，若只按 base_url 复用，
+    先建的健康检查（5s）会把后续 shell.exec（120s）也锁成 5s——长任务全被误杀。
     """
-    key = (_loop_key(), (base_url or "").rstrip("/"))
+    key = (_loop_key(), (base_url or "").rstrip("/"), float(timeout))
     client = _clients.get(key)
     if client is not None and client.is_closed:
         client = None

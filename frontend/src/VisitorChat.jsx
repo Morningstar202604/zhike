@@ -27,6 +27,7 @@ import Markdown from './components/Markdown'
 import { useShell } from './components/ResponsiveShell'
 import { http, useWebSearchStatus } from './lib/queries'
 import './pages.css'
+import { t } from './lib/t'
 const SCENES = [
   { icon: <Package size={16} />, bg: 'var(--brand-soft)', color: 'var(--brand)', title: '查订单物流', text: '我的订单 ORD12345678 什么时候发货？' },
   { icon: <Undo2 size={16} />, bg: 'var(--ok-soft)', color: '#1a8f52', title: '申请退款', text: '我想申请退款，怎么操作？' },
@@ -84,15 +85,15 @@ const MsgRow = memo(function MsgRow({ m, index, last, escalated, loading, onFeed
         {/* 消息操作：复制 / 删除。删除只影响本地视图，不请求后端（与主流对话应用一致） */}
         {!m.deleted && !m.streaming && (
           <div className="msg-actions">
-            <button className="msg-action-btn" onClick={() => onCopy(m.content)} title="复制内容">
+            <button className="msg-action-btn" onClick={() => onCopy(m.content)} title={t('复制内容')}>
               <Copy size={11} /> 复制
             </button>
             {m.role === 'agent' && last && onRegenerate && (
-              <button className="msg-action-btn" onClick={onRegenerate} title="基于上一个问题重新回答">
+              <button className="msg-action-btn" onClick={onRegenerate} title={t('基于上一个问题重新回答')}>
                 <RotateCcw size={11} /> 重新生成
               </button>
             )}
-            <button className="msg-action-btn danger" onClick={() => onDelete(index)} title="从对话中删除这条">
+            <button className="msg-action-btn danger" onClick={() => onDelete(index)} title={t('从对话中删除这条')}>
               <Trash2 size={11} /> 删除
             </button>
           </div>
@@ -115,6 +116,8 @@ export default function VisitorChat() {
   const [messages, setMessages] = useState([])
   const [image, setImage] = useState('')
   const [loading, setLoading] = useState(false)
+  // 会话被关闭后禁止继续发送：之前只插一条系统消息，输入框仍可发，后端直接 409
+  const [closed, setClosed] = useState(false)
   const [escalated, setEscalated] = useState(false)
   const [ticketId, setTicketId] = useState('')
   const [operatorName, setOperatorName] = useState('')
@@ -128,6 +131,12 @@ export default function VisitorChat() {
   const wsStatus = useWebSearchStatus()
   const webAvailable = wsStatus.data?.available === true
   const abortRef = useRef(null)
+  // 同步发送锁：loading 是异步 state，弱网下连点两次回车会同时通过检查，
+  // 结果建出两个会话、发两条消息（已复现）。ref 在事件处理里立即可见。
+  const sendingRef = useRef(false)
+  const streamBubbleRef = useRef(null)
+  // 历史会话请求序号：快速连点两个会话时，先发后到的响应会覆盖当前内容（已复现）
+  const historySeqRef = useRef(0)
   const bodyRef = useRef(null)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
@@ -248,6 +257,7 @@ export default function VisitorChat() {
           { role: 'system', content: `${p.operator || '真人'} 已接手`, ts: new Date().toISOString() },
         ])
       } else if (p.type === 'session_closed') {
+        setClosed(true)
         setMessages((prev) => [
           ...prev,
           { role: 'system', content: '会话已关闭，感谢您的咨询。', ts: new Date().toISOString() },
@@ -263,7 +273,10 @@ export default function VisitorChat() {
   }, [messages, loading])
 
   const openHistory = async (sid, title) => {
+    const reqSeq = ++historySeqRef.current
     setSessionId(sid)
+    setClosed(false)
+    setImage('')
     setEscalated(false)
     setOperatorName('')
     setLastMsg(null)
@@ -271,6 +284,7 @@ export default function VisitorChat() {
     setInjectMsg('')
     try {
       const data = await http.get(`/api/sessions/${sid}/messages`)
+      if (reqSeq !== historySeqRef.current) return
       setMessages(
         (data.messages || []).map((m) => ({
           role: m.role === 'agent' ? 'agent' : m.role === 'operator' ? 'operator' : m.role === 'system' ? 'system' : 'visitor',
@@ -282,8 +296,10 @@ export default function VisitorChat() {
           message_id: m.id,
         })),
       )
-    } catch {
+    } catch (e) {
+      if (reqSeq !== historySeqRef.current) return
       setMessages([])
+      setError((e && e.message) || '历史会话加载失败')
     }
     setSessions((prev) => {
       const next = prev.map((s) => (s.sid === sid ? { ...s, title: title || s.title } : s))
@@ -295,6 +311,9 @@ export default function VisitorChat() {
   const newChat = async () => {
     if (loading) return
     setSessionId('')
+    setClosed(false)
+    setImage('')
+    setTicketId('')
     setMessages([])
     setEscalated(false)
     setOperatorName('')
@@ -335,7 +354,8 @@ export default function VisitorChat() {
   const send = async (text, opts = {}) => {
     const content = (text ?? input).trim()
     if (!content && !image) return
-    if (loading) return
+    if (sendingRef.current || closed) return
+    sendingRef.current = true
     const regenerate = !!opts.regenerate
     setError('')
     setLastMsg(null)
@@ -351,8 +371,15 @@ export default function VisitorChat() {
         { role: 'visitor', content: content || '（附图）', refs: [], ts: new Date().toISOString(), image: img || undefined },
       ])
     }
-    // 流式气泡占位（delta 增量填充，done 事件权威替换）
-    setMessages((prev) => [...prev, { role: 'agent', content: '', refs: [], ts: new Date().toISOString(), streaming: true }])
+    // 流式气泡占位（delta 增量填充，done 事件权威替换）。
+    // 用 tempId 定位而不是「永远替换最后一条」：坐席中途插话时，
+    // slice(0,-1) 会把坐席消息当成占位气泡覆盖掉（已复现）。
+    const bubbleId = `stream-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    streamBubbleRef.current = bubbleId
+    setMessages((prev) => [...prev, {
+      role: 'agent', content: '', refs: [], ts: new Date().toISOString(),
+      streaming: true, tempId: bubbleId,
+    }])
     let streamBuf = ''
     const t0 = performance.now()
     const finalize = (data) => {
@@ -371,12 +398,20 @@ export default function VisitorChat() {
       }
       if (data.mode === 'human') {
         // 已由坐席接管：后端不再生成 AI 回答，也不渲染空气泡
-        setMessages((prev) => prev.slice(0, -1))
+        const bid = streamBubbleRef.current
+        setMessages((prev) => prev.filter((m) => m.tempId !== bid))
         setEscalated(true)
         setLastMsg(null)
         return
       }
-      setMessages((prev) => [...prev.slice(0, -1), msg])
+      const bid = streamBubbleRef.current
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.tempId === bid)
+        if (idx < 0) return [...prev, { ...msg, tempId: undefined }]
+        const next = prev.slice()
+        next[idx] = { ...msg, tempId: undefined }
+        return next
+      })
       setLastMsg(msg)
       if (data.escalate) {
         setEscalated(true)
@@ -435,7 +470,15 @@ export default function VisitorChat() {
               }
             } else if (ev === 'delta') {
               streamBuf += payload.text
-              setMessages((prev) => [...prev.slice(0, -1), { role: 'agent', content: streamBuf, refs: [], ts: new Date().toISOString(), streaming: true }])
+              const bid = streamBubbleRef.current
+              setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.tempId === bid)
+                const row = { role: 'agent', content: streamBuf, refs: [], ts: new Date().toISOString(), streaming: true, tempId: bid }
+                if (idx < 0) return [...prev, row]
+                const next = prev.slice()
+                next[idx] = row
+                return next
+              })
             } else if (ev === 'done') {
               done = true
               finalize(payload)
@@ -454,16 +497,24 @@ export default function VisitorChat() {
         throw new Error('stream unavailable')
       }
     } catch (e) {
+      // 用户主动「停止」不是故障：直接收尾，绝不回退到整段接口重新生成一遍
+      if (e?.name === 'AbortError') {
+        if (streamBuf) finalize({ text: streamBuf, citations: [] })
+        else setMessages((prev) => prev.filter((m) => m.tempId !== streamBubbleRef.current))
+        return
+      }
       // 回退：整段接口（流式不可用时依旧可用）
       try {
         const data = await http.post(`/api/sessions/${sid}/messages`, { content, image: img || null, web_search: webSearch && webAvailable, regenerate })
         finalize(data)
       } catch (e2) {
-        if (!streamBuf) setMessages((prev) => prev.slice(0, -1))
+        if (!streamBuf) setMessages((prev) => prev.filter((m) => m.tempId !== streamBubbleRef.current))
         setError(e2.message || '网络异常，请检查连接后重试')
       }
     } finally {
       abortRef.current = null
+      streamBubbleRef.current = null
+      sendingRef.current = false
       setLoading(false)
     }
   }
@@ -515,7 +566,7 @@ export default function VisitorChat() {
           </button>
         </div>
         <div className="side-section">
-          <div className="side-label">快速场景</div>
+          <div className="side-label">{t('快速场景')}</div>
           <div className="scene-grid">
             {SCENES.map((s, i) => (
               <button key={i} className="scene" onClick={() => send(s.text)} disabled={loading}>
@@ -532,7 +583,7 @@ export default function VisitorChat() {
         </div>
         {sessions.length > 0 && (
           <div className="side-section" style={{ flex: '0 1 auto' }}>
-            <div className="side-label">历史对话</div>
+            <div className="side-label">{t('历史对话')}</div>
             <div className="slist">
               {sessions.map((s) => (
                 <div
@@ -572,7 +623,7 @@ export default function VisitorChat() {
           <div className="sh-left">
             <Avatar kind="agent" size={36} />
             <div>
-              <div className="sh-title">知客 · 私人秘书</div>
+              <div className="sh-title">{t('知客 · 私人秘书')}</div>
               <div className="sh-sub">
                 {sessionId ? `会话 #${sessionId.slice(0, 8)}` : '未开始对话'}
               </div>
@@ -585,9 +636,9 @@ export default function VisitorChat() {
                 已升级{operatorName ? ` · ${operatorName}` : ''}{ticketId}
               </span>
             )}
-            <button className="btn ghost sm" onClick={newChat} title="开始新对话" disabled={loading}>
+            <button className="btn ghost sm" onClick={newChat} title={t('开始新对话')} disabled={loading}>
               <RefreshCw size={14} />
-              <span className="new-chat-label">新对话</span>
+              <span className="new-chat-label">{t('新对话')}</span>
             </button>
           </div>
         </div>
@@ -602,7 +653,7 @@ export default function VisitorChat() {
               <div className="welcome-logo">
                 <Logo size={56} />
               </div>
-              <h2>你好，我是知客，你的私人秘书</h2>
+              <h2>{t('你好，我是知客，你的私人秘书')}</h2>
               <p>
                 日程、资料、待办、查东西，都可以交给我；答不上来我会直说，不糊弄你。
                 也可以上传截图，或从下面选一个场景开始。
@@ -644,7 +695,7 @@ export default function VisitorChat() {
               <Avatar kind="agent" size={30} />
               <div className="bubble typing">
                 <span className="t-dot" /> <span className="t-dot" /> <span className="t-dot" />
-                <span className="t-label">正在整理回复…</span>
+                <span className="t-label">{t('正在整理回复…')}</span>
               </div>
             </div>
           )}
@@ -666,6 +717,8 @@ export default function VisitorChat() {
             onRemoveImage={() => setImage('')}
             image={image}
             loading={loading}
+            disabled={closed}
+            placeholder={closed ? '会话已关闭，点「新对话」继续' : undefined}
             onToggleWebSearch={webAvailable ? () => setWebSearch((v) => !v) : undefined}
             webSearchEnabled={webSearch && webAvailable}
             webSearchHint={wsStatus.data?.hint || undefined}

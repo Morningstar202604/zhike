@@ -45,6 +45,10 @@ def _creds() -> tuple[str, str, str, str]:
 
 _HEDGE_S = max(0.0, float(os.environ.get("USER_LLM_HEDGE_SECONDS", "10") or 0))
 _COOLDOWN_S = max(0.0, float(os.environ.get("USER_LLM_COOLDOWN_SECONDS", "120") or 0))
+# 429 短冷却。.env.example 一直在配 USER_LLM_RATE_LIMIT_COOLDOWN_SECONDS，
+# 但代码从未定义它：429 分支必抛 NameError 打断整条备援链，配置等于失效。
+_RATE_LIMIT_COOLDOWN_S = max(
+    0.0, float(os.environ.get("USER_LLM_RATE_LIMIT_COOLDOWN_SECONDS", "5") or 0))
 _COOLDOWN: dict[tuple[str, str], float] = {}   # (base_url, model) -> wake_at(monotonic)
 
 

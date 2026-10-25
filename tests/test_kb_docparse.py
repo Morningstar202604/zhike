@@ -100,7 +100,7 @@ def test_extract_xlsx_to_markdown():
     """Excel 每个工作表 → 一个 ## 小节，行内单元格用 | 分隔。"""
     import io
 
-    import openpyxl
+    openpyxl = pytest.importorskip("openpyxl")
 
     wb = openpyxl.Workbook()
     ws = wb.active

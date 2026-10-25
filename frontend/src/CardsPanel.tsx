@@ -8,6 +8,7 @@ import { http, isAuthError } from './lib/queries'
 import { useFeedback } from './components/Feedback'
 import { Spinner } from './components/Spinner'
 import TokenGate from './components/TokenGate'
+import { t } from './lib/t'
 
 interface Card {
   id: number
@@ -109,7 +110,7 @@ export default function CardsPanel() {
   }
 
   if (authErr) return <TokenGate onAuthed={() => load()} />
-  if (loading) return <Spinner label="加载角色卡…" />
+  if (loading) return <Spinner label={t('加载角色卡…')} />
   if (err) return <div className="hint err">{err}</div>
 
   return (
@@ -117,16 +118,16 @@ export default function CardsPanel() {
       {/* 卡片列表 */}
       <section className="bp-sec">
         <div className="bp-sec-head">
-          <h2><Bot size={15} className="bp-flask" /> 角色卡库</h2>
-          <span>绑定到群/人后，该会话的人设与温度以卡为准（chat_key 如 qq_group:12345 / qq:67890）</span>
+          <h2><Bot size={15} className="bp-flask" /> {t('角色卡库')}</h2>
+          <span>{t('绑定到群/人后，该会话的人设与温度以卡为准（chat_key 如 qq_group:12345 / qq:67890）')}</span>
         </div>
-        {cards.length === 0 && <div className="bp-hint">还没有角色卡——新建一张，或直接粘贴 SillyTavern V2 卡 JSON 导入。</div>}
+        {cards.length === 0 && <div className="bp-hint">{t('还没有角色卡——新建一张，或直接粘贴 SillyTavern V2 卡 JSON 导入。')}</div>}
         <div className="bp-roles">
           {cards.map((c) => {
             const bound = bindings.filter((b) => b.card_id === c.id).map((b) => b.chat_key)
             return (
               <div key={c.id} className="bp-role">
-                <div className="bp-role-main" onClick={() => setEditing(c)} title="点击编辑">
+                <div className="bp-role-main" onClick={() => setEditing(c)} title={t('点击编辑')}>
                   <b>{c.name}</b>
                   <span>{(c.persona || '').slice(0, 60)}…</span>
                   <em>
@@ -134,7 +135,7 @@ export default function CardsPanel() {
                     {bound.length > 0 && ` · 已绑定: ${bound.join(', ')}`}
                   </em>
                 </div>
-                <button className="btn secondary sm ac-del" title="删除"
+                <button className="btn secondary sm ac-del" title={t('删除')}
                   onClick={() => { if (confirm(`删除角色卡「${c.name}」？`)) remove(c.id) }}>
                   <Trash2 size={13} />
                 </button>
@@ -153,13 +154,13 @@ export default function CardsPanel() {
         <section className="bp-sec">
           <div className="bp-sec-head"><h2>{editing.id ? '编辑卡' : '新建卡'}</h2><span>{editing.name || '未命名'}</span></div>
           <div className="ac-form">
-            <input className="ac-input" placeholder="卡名（如：傲娇管家）"
+            <input className="ac-input" placeholder={t('卡名（如：傲娇管家）')}
               value={editing.name || ''} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-            <textarea className="ac-input ac-answer" rows={8} placeholder="人设全文（覆盖默认人设；可含性格、口癖、称呼、禁区…）"
+            <textarea className="ac-input ac-answer" rows={8} placeholder={t('人设全文（覆盖默认人设；可含性格、口癖、称呼、禁区…）')}
               value={editing.persona || ''} onChange={(e) => setEditing({ ...editing, persona: e.target.value })} />
-            <input className="ac-input" placeholder="开场白（可选，保留）"
+            <input className="ac-input" placeholder={t('开场白（可选，保留）')}
               value={editing.greeting || ''} onChange={(e) => setEditing({ ...editing, greeting: e.target.value })} />
-            <input className="ac-input" placeholder="温度（可选，0~1，如 0.7）" inputMode="decimal"
+            <input className="ac-input" placeholder={t('温度（可选，0~1，如 0.7）')} inputMode="decimal"
               value={editing.temperature ?? ''} onChange={(e) => {
                 const v = e.target.value
                 setEditing({ ...editing, temperature: v === '' ? null : Number(v) })
@@ -168,7 +169,7 @@ export default function CardsPanel() {
               <button className="btn sm" onClick={save} disabled={busy}>
                 {busy ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} 保存
               </button>
-              <button className="btn secondary sm" onClick={() => setEditing(null)}>取消</button>
+              <button className="btn secondary sm" onClick={() => setEditing(null)}>{t('取消')}</button>
             </div>
           </div>
         </section>
@@ -176,7 +177,7 @@ export default function CardsPanel() {
 
       {/* ST V2 导入 */}
       <section className="bp-sec">
-        <div className="bp-sec-head"><h2><Upload size={15} /> 导入 SillyTavern 卡</h2><span>粘贴 chara_card_v2 JSON，自动转换</span></div>
+        <div className="bp-sec-head"><h2><Upload size={15} /> {t('导入 SillyTavern 卡')}</h2><span>{t('粘贴 chara_card_v2 JSON，自动转换')}</span></div>
         <textarea className="ac-input ac-answer" rows={4} placeholder='{"spec":"chara_card_v2","data":{"name":"...","description":"..."}}'
           value={stJson} onChange={(e) => setStJson(e.target.value)} />
         <button className="btn sm" style={{ marginTop: 8 }} onClick={importSt} disabled={!stJson.trim() || busy}>
@@ -186,15 +187,15 @@ export default function CardsPanel() {
 
       {/* 绑定管理 */}
       <section className="bp-sec">
-        <div className="bp-sec-head"><h2><Link2 size={15} /> 会话绑定</h2><span>一个 chat_key 只绑一张卡；留空卡=解绑</span></div>
+        <div className="bp-sec-head"><h2><Link2 size={15} /> {t('会话绑定')}</h2><span>{t('一个 chat_key 只绑一张卡；留空卡=解绑')}</span></div>
         <div className="bp-role-save">
           <input placeholder="chat_key（qq_group:12345 / qq:67890）"
             value={bindKey} onChange={(e) => setBindKey(e.target.value)} />
           <select className="ac-input" style={{ width: 220 }} value={bindCard} onChange={(e) => setBindCard(e.target.value)}>
-            <option value="">（解绑）</option>
+            <option value="">{t('（解绑）')}</option>
             {cards.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-          <button className="btn sm" onClick={bind} disabled={!bindKey.trim() || busy}><Link2 size={13} /> 绑定</button>
+          <button className="btn sm" onClick={bind} disabled={!bindKey.trim() || busy}><Link2 size={13} /> {t('绑定')}</button>
         </div>
         {bindings.length > 0 && (
           <div className="bp-hint" style={{ marginTop: 8 }}>

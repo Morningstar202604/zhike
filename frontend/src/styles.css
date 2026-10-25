@@ -657,3 +657,20 @@ body {
 /* ---- 角色卡管理页 ---- */
 .cards-app { max-width: 900px; padding: 20px 24px 40px; }
 .cards-app select.ac-input { appearance: auto; }
+
+/* ---- 语言切换（中/英） ---- */
+.shell-brand { flex-wrap: wrap; row-gap: 8px; }
+.shell-brand-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.shell-brand-main .shell-brand-name { white-space: nowrap; }
+.shell-brand-actions {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%;
+}
+.lang-toggle {
+  height: 26px; padding: 0 8px; min-width: 44px;
+  border-radius: 8px; border: none;
+  background: var(--side-hover); color: var(--side-ink-strong);
+  font-size: 12px; font-family: var(--font); cursor: pointer;
+}
+.lang-toggle:hover { background: var(--side-active); }
+.shell-brand-actions .theme-toggle { margin-left: auto; margin-right: 0; }

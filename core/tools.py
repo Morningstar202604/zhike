@@ -15,7 +15,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 import os
@@ -553,7 +552,9 @@ async def tool_write_file(path: str, content: str, append: str = "", **_kw) -> d
         return need_ctx("write_file", "要写入的内容")
     do_append = str(append).lower() in ("1", "true", "yes", "on", "追加")
     if do_append:
-        # 执行器只有整文件写；追加 = 读旧内容 + 拼接。读不到文件时按新建处理。
+        # 执行器只有整文件写；追加 = 读旧内容 + 拼接。
+        # 「读失败」必须区分「文件不存在」与「超限/执行器故障」：
+        # 之前一律当作新建，向 1MB 以上的文件追加会把原文件静默截断成新内容。
         try:
             old = await executor_client.invoke("fs.read", {"path": path})
             prev = str(old.get("content") or "")
@@ -562,8 +563,14 @@ async def tool_write_file(path: str, content: str, append: str = "", **_kw) -> d
             body = prev + body
         except executor_client.ExecutorDenied as e:
             return miss_result("write_file", f"没有权限读这个路径：{e}", path=path)
-        except executor_client.ExecutorError:
-            body = body          # 文件不存在 → 直接新建
+        except executor_client.ExecutorOffline:
+            return off_result("write_file", "文件工具没启用（执行器未运行）。")
+        except executor_client.ExecutorError as e:
+            # 只有「路径不存在 / 不是文件」可以按新建处理；超限、超时等
+            # 其它故障必须失败返回，否则会把原文件静默截断成新内容。
+            msg = str(e)
+            if not ("不存在" in msg or "不是文件" in msg):
+                return miss_result("write_file", f"追加前读取失败：{e}", path=path)
     try:
         data = await executor_client.invoke(
             "fs.write", {"path": path, "content": body})
@@ -1085,6 +1092,43 @@ TOOL_META: dict[str, dict] = {
 WRITE_TOOLS = frozenset({"remember", "remind", "cancel_reminder", "qq_send",
                          "send_image", "generate_image"})
 
+# 需要「可信主体」才能用的工具：能读写主机文件、能以机器人身份往任意群发消息。
+# remember/remind 只作用于调用者自己的记忆与提醒，任何渠道用户都可用；
+# 这几个一旦对普通群成员开放，等于把执行器 allow_roots 和整个 QQ 账号交出去
+# （提示注入就能让模型「帮我读一下 C:/... 然后发到群里」）。
+PRIVILEGED_TOOLS = frozenset({
+    "list_files", "read_file", "write_file", "parse_document",
+    "qq_send", "send_image", "generate_image",
+})
+
+
+def _authorize_tool(name: str, ctx: ToolContext) -> dict | None:
+    """权限闸门：返回 None 表示放行，否则返回拒绝结果。
+
+    工具层原来完全不看主体：模型（或注入内容）选中 write_file 就直接落到执行器，
+    既不查 allow_roots 之外的档位，也不落 action_log。这里补上同一套主体判定，
+    并写审计；主体为空（内部直调/单测）时保持原行为，避免破坏工具的本职逻辑。
+    """
+    if name not in PRIVILEGED_TOOLS or not ctx.principal:
+        return None
+    from core.actions import authz
+
+    principal = authz.parse_principal(ctx.principal)
+    if principal.is_trusted_human():
+        return None
+    if principal.kind == authz.PRINCIPAL_QQ and principal.ident in authz.authorized_qq():
+        return None
+    if principal.kind == authz.PRINCIPAL_AGENT and principal.origin and (
+            principal.origin.is_trusted_human()
+            or (principal.origin.kind == authz.PRINCIPAL_QQ
+                and principal.origin.ident in authz.authorized_qq())):
+        return None
+    try:
+        store.append_audit(ctx.principal, "tool.denied", {"tool": name})
+    except Exception:  # 审计写失败不能改变拒绝结论
+        pass
+    return miss_result(name, "这个操作需要管理员权限，当前身份不能执行。")
+
 
 def _builtin_impls() -> dict:
     return dict(_SYNC_IMPLS)
@@ -1092,6 +1136,29 @@ def _builtin_impls() -> dict:
 
 def is_async_tool(name: str) -> bool:
     return name in _ASYNC_IMPLS
+
+
+def _adapt_kwargs(fn, args: dict, ctx: ToolContext) -> dict:
+    """按函数签名挑参数。
+
+    必须识别 **kwargs（VAR_KEYWORD）：`_make_kb_search_tool` 与 `_make_stub_tool`
+    都是 `def run(**kw)`，按名字过滤会让它们永远收到空参数——检索词恒为空、
+    自定义工具拿到 args:{}（已复现）。
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return dict(args)
+    params = sig.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        out = {k: v for k, v in args.items() if k != "ctx"}
+        if "ctx" in params:
+            out["ctx"] = ctx
+        return out
+    kwargs = {k: v for k, v in args.items() if k in params}
+    if "ctx" in params:
+        kwargs["ctx"] = ctx
+    return kwargs
 
 
 async def invoke_with(registry_map: dict | None, name: str, args: dict | None,
@@ -1102,14 +1169,13 @@ async def invoke_with(registry_map: dict | None, name: str, args: dict | None,
     当它包含该工具时以它为准——否则测试替身与用户自定义实现都会被内置表盖掉。
     """
     args = dict(args or {})
+    denied = _authorize_tool(name, ctx)
+    if denied is not None:
+        return denied
     fn = (registry_map or {}).get(name)
     if fn is not None and not is_async_tool(name):
         try:
-            sig = inspect.signature(fn)
-            kwargs = {k: v for k, v in args.items() if k in sig.parameters}
-            if "ctx" in sig.parameters:
-                kwargs["ctx"] = ctx
-            res = fn(**kwargs)
+            res = fn(**_adapt_kwargs(fn, args, ctx))
             if inspect.isawaitable(res):
                 res = await res
             return res
@@ -1121,6 +1187,9 @@ async def invoke_with(registry_map: dict | None, name: str, args: dict | None,
 async def invoke(name: str, args: dict | None, ctx: ToolContext = EMPTY) -> dict:
     """统一调用入口：同步/异步工具都能用。"""
     args = dict(args or {})
+    denied = _authorize_tool(name, ctx)
+    if denied is not None:
+        return denied
     if name in _ASYNC_IMPLS:
         fn = _ASYNC_IMPLS[name]
         try:
@@ -1133,11 +1202,7 @@ async def invoke(name: str, args: dict | None, ctx: ToolContext = EMPTY) -> dict
     if name in _SYNC_IMPLS:
         fn = _SYNC_IMPLS[name]
         try:
-            sig = inspect.signature(fn)
-            kwargs = {k: v for k, v in args.items() if k in sig.parameters}
-            if "ctx" in sig.parameters:
-                kwargs["ctx"] = ctx
-            return fn(**kwargs)
+            return fn(**_adapt_kwargs(fn, args, ctx))
         except TypeError as e:
             return miss_result(name, f"参数不对：{e}")
     return miss_result(name, f"工具「{name}」没有实现。")

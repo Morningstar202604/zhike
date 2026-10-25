@@ -12,6 +12,7 @@ import { Spinner } from './components/Spinner'
 import TokenGate from './components/TokenGate'
 import { EmptyState, PageHead } from './ui'
 import './pages.css'
+import { t } from './lib/t'
 
 interface Reminder {
   id: number
@@ -51,7 +52,7 @@ const REPEAT_LABEL: Record<string, string> = {
 function repeatText(rule?: string): string {
   if (!rule) return ''
   const [kind] = rule.split(':')
-  return REPEAT_LABEL[kind] || ''
+  return t(REPEAT_LABEL[kind] || '')
 }
 
 function fmt(iso: string): string {
@@ -123,31 +124,31 @@ export default function Reminders() {
   }
 
   if (authErr) return <TokenGate onAuthed={() => load()} />
-  if (loading) return <Spinner full label="加载提醒…" />
+  if (loading) return <Spinner full label={t('加载提醒…')} />
 
   return (
     <div className="bp-app">
       <PageHead
-        title="提醒与待办"
-        sub="说一句「10 分钟后提醒我关火」「每天 8 点提醒我吃药」就行，到点我会主动叫你——群里、私聊、网页都算"
+        title={t('提醒与待办')}
+        sub={t('说一句「10 分钟后提醒我关火」「每天 8 点提醒我吃药」就行，到点我会主动叫你——群里、私聊、网页都算')}
         right={
-          <button className="btn secondary sm" onClick={tickNow} title="立即检查一次到期提醒">
-            <RefreshCw size={13} /> 立即检查
+          <button className="btn secondary sm" onClick={tickNow} title={t('立即检查一次到期提醒')}>
+            <RefreshCw size={13} /> {t('立即检查')}
           </button>
         }
       />
 
       <section className="bp-sec">
         <div className="bp-sec-head">
-          <h2><Plus size={14} /> 新建提醒</h2>
-          <span>时间支持「10分钟后 / 1小时后 / 明天9点 / 3天后」</span>
+          <h2><Plus size={14} /> {t('新建提醒')}</h2>
+          <span>{t('时间支持「10分钟后 / 1小时后 / 明天9点 / 3天后」')}</span>
         </div>
         <div className="ac-form">
           <input
             className="ac-input"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="要提醒你什么？如：给客户回电话"
+            placeholder={t('要提醒你什么？如：给客户回电话')}
             maxLength={200}
             onKeyDown={(e) => { if (e.key === 'Enter') create() }}
           />
@@ -158,7 +159,7 @@ export default function Reminders() {
                 className={`btn sm ${when === p.when ? '' : 'secondary'}`}
                 onClick={() => setWhen(p.when)}
               >
-                {p.label}
+                {t(p.label)}
               </button>
             ))}
             <input
@@ -166,38 +167,38 @@ export default function Reminders() {
               style={{ maxWidth: 180 }}
               value={when}
               onChange={(e) => setWhen(e.target.value)}
-              placeholder="或自定义时间"
+              placeholder={t('或自定义时间')}
             />
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span className="text-[11px] text-muted">重复：</span>
+            <span className="text-[11px] text-muted">{t('重复：')}</span>
             {REPEAT_PRESETS.map((p) => (
               <button
                 key={p.when}
                 className={`btn sm ${when === p.when ? '' : 'secondary'}`}
                 onClick={() => setWhen(p.when)}
               >
-                {p.label}
+                {t(p.label)}
               </button>
             ))}
           </div>
           <button className="btn" onClick={create} disabled={busy || !text.trim()}>
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <Bell size={14} />} 设提醒
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Bell size={14} />} {t('设提醒')}
           </button>
         </div>
       </section>
 
       <section className="bp-sec">
         <div className="bp-sec-head">
-          <h2><Clock size={14} /> 待提醒</h2>
-          <span>{rows.length} 条</span>
+          <h2><Clock size={14} /> {t('待提醒')}</h2>
+          <span>{rows.length}</span>
         </div>
         {err && <div className="hint err">{err}</div>}
         {rows.length === 0 ? (
           <EmptyState
             icon={<Bell size={22} />}
-            title="没有待提醒的事"
-            desc="在聊天里直接说「明天 9 点提醒我开会」或「每天 8 点提醒我吃药」，也可以在上面新建。"
+            title={t('没有待提醒的事')}
+            desc={t('在聊天里直接说「明天 9 点提醒我开会」或「每天 8 点提醒我吃药」，也可以在上面新建。')}
           />
         ) : (
           <div className="ac-list">
@@ -208,14 +209,14 @@ export default function Reminders() {
                   <div className="ac-meta">
                     <em>{fmt(r.due_at)}</em>
                     {repeatText(r.repeat_rule) && <em className="text-brand">🔁 {repeatText(r.repeat_rule)}</em>}
-                    <em>{r.channel_type.startsWith('qq') ? 'QQ' : '网页'}</em>
+                    <em>{r.channel_type.startsWith('qq') ? 'QQ' : t('网页')}</em>
                     <em>{r.chat_key}</em>
-                    {r.last_error && <em title={r.last_error}>上次投递失败</em>}
+                    {r.last_error && <em title={r.last_error}>{t('上次投递失败')}</em>}
                   </div>
                 </div>
                 <div className="ac-item-ops">
                   <button className="btn secondary sm" onClick={() => cancel(r.id)}>
-                    <Trash2 size={13} /> 取消
+                    <Trash2 size={13} /> {t('取消')}
                   </button>
                 </div>
               </div>
