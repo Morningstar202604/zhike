@@ -50,13 +50,13 @@ def test_render_plain_text_untouched():
 
 
 def test_send_delay_scales_and_caps():
-    short = send_delay(10, False)
-    long = send_delay(400, False)
+    short = send_delay(10, False, rng=lambda: 0.5)
+    long = send_delay(400, False, rng=lambda: 0.5)
     assert long > short
-    assert send_delay(100000, True) <= 22.0
-    # 群聊比私聊更谨慎
-    assert send_delay(5, True) >= send_delay(5, False)
-    assert send_delay(5, False) >= 0.8
+    assert send_delay(100000, True, rng=lambda: 1.0) <= 22.0
+    # 群聊比私聊更谨慎。抖动固定后比较才有意义：两次独立随机本来就可能反超（曾随机失败）
+    assert send_delay(5, True, rng=lambda: 0.5) >= send_delay(5, False, rng=lambda: 0.5)
+    assert send_delay(5, False, rng=lambda: 0.0) >= 0.8
 
 
 def test_throttle_gap_randomized():

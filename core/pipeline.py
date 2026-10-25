@@ -348,11 +348,20 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
 
     # 联网自启（chatgpt-on-wechat「不懂就查」对标）：渠道消息像在寻求事实/资讯
     # 且搜索服务可用时自动开搜，用户无需手动开开关。失败静默，不影响主流程。
+    # 先看知识库能否回答：命中本地 KB 就不搜网——"退货政策是什么"这类含疑问词
+    # 的业务问题曾被启发式误判，每次白跑 4 次搜索、还拖慢 3~5 秒。
     web = message.web_search
     if not web:
         from core import websearch
         if websearch.available() and _wants_facts(query):
-            web = True
+            # 先探一次知识库：命中就不搜网（检索结果随后 build_context 会复用同一份缓存）
+            cfg_ret = cfg.get("retrieval", {})
+            emb_flag = cfg_ret.get("embedding", "auto")
+            kb_hits = retrieval.retrieve_scored(
+                query, 1, cfg_ret.get("min_overlap", 0.0),
+                use_embedding=None if emb_flag == "auto" else (emb_flag == "on"),
+            )
+            web = not kb_hits
 
     ctx = await build_context_async(query, history, cfg, visitor_key, web)
     # 反思修正：把"最近高频毛病"作为自我修正提醒注入上下文（带缓存，60s 内不重复查库）
