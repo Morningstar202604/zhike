@@ -1227,7 +1227,8 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
                       r"(?:\s*(?:早上|上午|中午|下午|晚上)?\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)?)", q)
             or re.search(r"(\d+\s*(?:分钟|小时|天|周|秒)后)", q)
             or re.search(r"((?:明天|后天|今天|今晚)\s*(?:早上|上午|中午|下午|晚上)?\s*\d{0,2}\s*[点:：]\s*\d{0,2})", q)
-            or re.search(r"(明天|后天|今天|今晚)", q)
+            or re.search(r"((?:早上|上午|中午|下午|晚上)\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)", q)
+            or re.search(r"((?<![\d:])\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)", q)
         )
         if tm:
             when = tm.group(1).strip()

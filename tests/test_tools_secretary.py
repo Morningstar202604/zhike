@@ -722,3 +722,60 @@ def test_detect_tool_routes_recurring_reminders():
     assert tools.detect_tool("每天8点提醒我喝水", enabled) == ("remind", {"text": "喝水", "when": "每天8点"})
     assert tools.detect_tool("工作日上午9点提醒我打卡", enabled) == ("remind", {"text": "打卡", "when": "工作日上午9点"})
     assert tools.detect_tool("每月31号提醒我交房租", enabled) == ("remind", {"text": "交房租", "when": "每月31号"})
+
+
+# ------------------------------------------------------------
+# 裸钟点提醒：不带「每天/明天」也必须能设
+# ------------------------------------------------------------
+
+@pytest.mark.parametrize("q,expected_when,expected_text", [
+    ("晚上10点提醒我睡觉", "晚上10点", "睡觉"),
+    ("10点提醒我开会", "10点", "开会"),
+    ("下午3点半提醒我接孩子", "下午3点半", "接孩子"),
+    ("8点提醒我起床", "8点", "起床"),
+])
+def test_detect_tool_routes_bare_clock_reminder(q, expected_when, expected_text):
+    name, args = tools.detect_tool(q, {"remind": 1})
+    assert name == "remind", q
+    assert args == {"text": expected_text, "when": expected_when}
+
+
+@pytest.mark.parametrize("q", [
+    "今天好累提醒我一下",
+    "明天提醒我买菜",
+])
+def test_detect_tool_does_not_fake_reminder_without_clock(q):
+    """没有具体钟点/相对时间时不要硬造提醒（否则会问一个用户没说的 9 点）。"""
+    assert tools.detect_tool(q, {"remind": 1})[0] is None
+
+
+def test_bare_clock_reminder_lands_in_future():
+    from core.tool_context import ToolContext
+
+    ctx = ToolContext(visitor_id="v-bare", channel_type="webchat")
+    res = tools.tool_remind(ctx=ctx, text="睡觉", when="晚上10点")
+    due = datetime.fromisoformat(res["due_at"])
+    assert due.hour == 22 and due > datetime.now().astimezone()
+
+
+@pytest.mark.parametrize("query,expected_when", [
+    ("8点提醒我吃药", "8点"),
+    ("下午3点半提醒我开会", "下午3点半"),
+    ("21:30提醒我睡觉", "21:30"),
+])
+def test_detect_tool_routes_bare_clock(query, expected_when):
+    """裸钟点（没有「明天/每天」前缀）也要能路由成提醒。
+
+    这类表达在群里最常见（「8点提醒我吃药」），漏掉等于提醒功能不可用。
+    负向先行 (?<![\d:]) 防止把 21:30 里的 "1:30" 误当成时间。
+    """
+    name, args = tools.detect_tool(query)
+    assert name == "remind", f"{query} 未路由到提醒"
+    assert args["when"] == expected_when
+
+
+def test_detect_tool_does_not_split_colon_time():
+    """21:30 不能被切成 "1:30"。"""
+    name, args = tools.detect_tool("21:30提醒我睡觉")
+    assert name == "remind"
+    assert args["when"] == "21:30"
