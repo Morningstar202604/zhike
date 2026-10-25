@@ -331,8 +331,8 @@ def _parse_repeat(text: str) -> tuple[str, str]:
     m = re.search(r"每月\s*(\d{1,2})\s*[号日]", t)
     if m:
         return f"monthly:{int(m.group(1))}", (t[:m.start()] + t[m.end():]).strip(" ，,。")
-    if re.search(r"(?:每)?个?工作日", t):
-        return "weekday", re.sub(r"(?:每)?个?工作日", "", t).strip(" ，,。")
+    if re.search(r"每?个?工作日", t):
+        return "weekday", re.sub(r"每?个?工作日", "", t).strip(" ，,。")
     if re.search(r"每天|每日|天天", t):
         return "daily", re.sub(r"每天|每日|天天", "", t).strip(" ，,。")
     return "", t
@@ -1222,9 +1222,11 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
         # 每月31号 / 明天早上9点」，再退到裸「明天」。反过来会把 "明天早上9点"
         # 切成 when=明天 + text=早上9点，时间就丢了。
         tm = (
-            # 周期规则 + 可选钟点；钟点可选（「每月31号」本身就够定位）
-            re.search(r"((?:每天|每日|天天|(?:每)?个?工作日|每(?:周|星期)[一二三四五六日天]|每月\s*\d{1,2}\s*[号日])"
+            # 周期规则 + 钟点。「工作日」单独出现太容易误伤（"这个工作日"），
+            # 因此 weekday 必须带钟点才算；其余规则钟点可选（「每月31号」本身够定位）。
+            re.search(r"((?:每天|每日|天天|每(?:周|星期)[一二三四五六日天]|每月\s*\d{1,2}\s*[号日])"
                       r"(?:\s*(?:早上|上午|中午|下午|晚上)?\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)?)", q)
+            or re.search(r"((?:每个|每)?工作日\s*(?:早上|上午|中午|下午|晚上)?\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)", q)
             or re.search(r"(\d+\s*(?:分钟|小时|天|周|秒)后)", q)
             or re.search(r"((?:明天|后天|今天|今晚)\s*(?:早上|上午|中午|下午|晚上)?\s*\d{0,2}\s*[点:：]\s*\d{0,2})", q)
             or re.search(r"((?:早上|上午|中午|下午|晚上)\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)", q)

@@ -779,3 +779,15 @@ def test_detect_tool_does_not_split_colon_time():
     name, args = tools.detect_tool("21:30提醒我睡觉")
     assert name == "remind"
     assert args["when"] == "21:30"
+
+
+def test_weekday_rule_requires_clock_to_avoid_false_positive():
+    """「工作日」单独出现太容易误伤正文（"这个工作日提醒我开会"）。
+
+    路由层要求 weekday 必须带钟点；工具层仍支持裸「工作日」默认 9 点。
+    """
+    enabled = {"remind": 1}
+    assert tools.detect_tool("这个工作日提醒我开会", enabled)[0] is None
+    assert tools.detect_tool("工作日好累啊", enabled)[0] is None
+    assert tools.detect_tool("工作日上午9点提醒我打卡", enabled) == (
+        "remind", {"text": "打卡", "when": "工作日上午9点"})

@@ -10,7 +10,7 @@ QQ 群/私聊 · Web 对话 · 协作台 · RAG 检索 · 工具调用 · 提醒
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-614%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-615%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-80%25%20core-blue)
 
 </div>
