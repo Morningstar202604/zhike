@@ -10,7 +10,7 @@ QQ 群/私聊 · Web 对话 · 协作台 · RAG 检索 · 工具调用 · 提醒
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-577%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-592%20passed-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-80%25%20core-blue)
 
 </div>
@@ -111,7 +111,7 @@ Web 对话 + 协作台 ────/api + /ws───────────�
 
 | 项 | 结果 |
 |---|---|
-| 后端测试 | 577 passed（含 15 条第三轮回归 + 秘书工具层 71 条） |
+| 后端测试 | 592 passed（含 15 条第三轮回归 + 秘书工具层 86 条） |
 | 覆盖率 | core 行 80% / 分支 79%（第三轮实测 4224 行） |
 | 变异测试 | 15 个关键变异全部被杀死（抽样） |
 | 在线体检 | `scripts/e2e_check.py` 18/18；`scripts/action_e2e.py` 13/13；`scripts/qq_e2e.py` 3/3（假协议端） |
