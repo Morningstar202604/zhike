@@ -193,6 +193,28 @@ def test_retrieve_fallback_without_embedding_backend(monkeypatch, tmp_path):
         retrieval._EMB_STATE["failed"] = False
 
 
+def test_encoder_sets_offline_for_local_model_dir(monkeypatch, tmp_path):
+    """本地目录模型必须离线加载：否则无外网时 HF Hub HEAD 指数退避会阻塞分钟级（e2e 曾因此超时）。"""
+    import os
+    import sentence_transformers
+
+    calls = {}
+
+    class _Stub:
+        def __init__(self, path):
+            calls["path"] = path
+
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", _Stub)
+    monkeypatch.setattr(retrieval, "BGE_MODEL", str(tmp_path))
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    retrieval._EMB_STATE.update({"model": None, "failed": False})
+    try:
+        assert retrieval._get_encoder() is not None
+        assert os.environ.get("HF_HUB_OFFLINE") == "1"
+    finally:
+        retrieval._EMB_STATE.update({"model": None, "failed": False})
+
+
 def test_retrieve_hybrid_embedding_boost(monkeypatch, tmp_path):
     kb_file = tmp_path / "kb.json"
     kb_file.write_text(json.dumps({"kb": [

@@ -58,6 +58,10 @@ pip install -r requirements-embedding.txt
 
 环境变量：`USER_VISION_MODEL`（看图，如 `glm-4v-flash`）；检索开关在管理配置 `retrieval.embedding`（auto/off）。
 
+模型来源二选一：
+- Hub 名称（默认 `BAAI/bge-small-zh-v1.5`）：首次需联网下载，之后走本地缓存。
+- 本地目录（`USER_EMB_MODEL=/path/to/bge-small-zh-v1.5`，推荐离线部署）：代码自动置 `HF_HUB_OFFLINE=1`，不触网；也可显式设该变量，缺网时立即降级为字面检索，而不是卡在 Hub 重试上。
+
 ## 1. 准备清单
 
 | 项目 | 必要性 | 说明 |
