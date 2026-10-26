@@ -1190,6 +1190,8 @@ async def invoke(name: str, args: dict | None, ctx: ToolContext = EMPTY) -> dict
     denied = _authorize_tool(name, ctx)
     if denied is not None:
         return denied
+    if not _config_ready(name):
+        return off_result(name, "这个能力还没接入（缺配置）。用已有资料回答，并说明查不到实时数据。")
     if name in _ASYNC_IMPLS:
         fn = _ASYNC_IMPLS[name]
         try:
@@ -1246,12 +1248,42 @@ def active_tools(cfg: dict) -> dict:
     return out
 
 
+# 依赖外部配置才有意义的工具：没配置时不该出现在模型的可选清单里。
+# 否则模型会挑一个注定返回「未配置」的工具，用户看到的是一句推脱，
+# 而真正该做的是用已有资料回答（实测 u2-flash 联网题稳定踩这个坑）。
+_REQUIRES_CONFIG = {
+    "web_search": ("SEARCH_PROVIDER", "TAVILY_API_KEY", "SERPER_API_KEY", "SEARXNG_URL"),
+    "query_order": ("ORDER_QUERY_URL",),
+    "initiate_refund": ("REFUND_API_URL",),
+    "list_files": ("EXECUTOR_URL",),
+    "read_file": ("EXECUTOR_URL",),
+    "write_file": ("EXECUTOR_URL",),
+    "parse_document": ("EXECUTOR_URL",),
+}
+
+
+def _config_ready(tid: str) -> bool:
+    from core import websearch
+
+    if tid == "web_search":
+        return websearch.available()
+    if tid in ("query_order", "initiate_refund"):
+        return bool(os.environ.get(_REQUIRES_CONFIG[tid][0], "").strip())
+    if tid in _REQUIRES_CONFIG:
+        # 执行器相关：URL 有默认值，真正可用与否由运行时 503 决定，
+        # 这里只在显式配置了才暴露，避免默认环境下模型选了必然失败的工具。
+        return bool(os.environ.get("EXECUTOR_URL", "").strip())
+    return True
+
+
 def tool_schema_block(cfg: dict) -> list[dict]:
     out = []
     enabled_cfg = cfg.get("tools", {})
     for t in store.active_tools():
         tid = t["id"]
         if not enabled_cfg.get(tid, True):
+            continue
+        if not _config_ready(tid):
             continue
         args = tool_args(tid) or list(t.get("args_json", {}).keys())
         out.append({"name": tid, "args": args, "desc": t.get("desc") or t.get("name") or tid})

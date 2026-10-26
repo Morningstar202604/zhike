@@ -52,8 +52,11 @@ def test_scanner_escapes_and_unicode():
 
 
 def test_scanner_prose_passthrough():
+    """散文直通——但尾部会压一个 HOLD 窗口等「可能是 JSON」的花括号，
+    所以必须调用 finish() 冲刷，否则结尾几十个字符看起来像丢了。"""
     s = llm_mod._AnswerStreamer()
     out = s.feed("我是知客，您的智能在线客服。")
+    out += s.finish()
     assert "".join(out) == "我是知客，您的智能在线客服。"
 
 

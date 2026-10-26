@@ -159,6 +159,27 @@ async def _race_chain(chain: list[dict], messages: list, base_payload: dict,
     return result
 
 
+def _max_tokens(llm_cfg: dict) -> int:
+    """单次输出预算。
+
+    推理模型会把 max_tokens 先花在 reasoning_content 上：实测 u2-flash 在 1024
+    预算下 finish_reason=length 且 content 为空，整轮被判成「模型没给出答复」。
+    这里按上下文窗口给一个下限，用户显式设得更大则以用户为准。
+    """
+    configured = int(llm_cfg.get("max_tokens") or 512)
+    ctx_window = int(llm_cfg.get("context_window") or 0)
+    max_output = int(llm_cfg.get("max_output") or 0)
+    floor = 512
+    if max_output >= 32_000:
+        # 推理模型（u2-flash 实测）：先用 6k+ token 在 reasoning_content 上，
+        # 2048 预算下 content 必为空、finish_reason=length，整轮被判失败。
+        # 按端点上报的单次输出上限给 1/4，封顶 16k——既够推理，又不会顶爆端点限制。
+        floor = min(max(max_output // 4, 8_192), 16_384)
+    elif ctx_window >= 32_000 or max_output >= 8_000:
+        floor = 4_096
+    return min(max(configured, floor), max_output or 16_384)
+
+
 def _data_url(b64: str) -> str:
     """裸 base64 → data URL：按魔数识别常见图片 MIME（OpenAI 多模态内容格式的通用做法）。"""
     head = (b64 or "")[:16].lstrip()
@@ -192,6 +213,9 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
         parts.append("可用工具：\n" + json.dumps(ctx["tools_schema"], ensure_ascii=False))
     if modules_on.get("memory", True):
         parts.append("访客相关记忆：\n" + ctx["memory_block"])
+    if ctx.get("skills_block"):
+        # 技能说明书放在工具清单之后：先知道有哪些工具，再知道按什么流程用
+        parts.append(str(ctx["skills_block"]))
     if ctx.get("read_block"):
         # 已经替你打开/读到的原文。中性表述，避免模型说"系统日志/搜索结果"这类机制腔。
         parts.append(str(ctx["read_block"]))
@@ -214,8 +238,30 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
         "注意：你没有人类同事，也没有任何人工客服/坐席可转接。"
         "escalate 只表示「这条需要管理员后续补充资料」，绝不能对用户说转人工、转接真人或叫人来处理。"
     )
-    # 可用于内容块的额度 = 总预算 - persona - 固定尾巴
-    content_budget = max(120, budget - len(ctx["persona"]) - len(tail) - 4)
+    # 能力事实必须写进 prompt：模型不知道自己「这一轮有没有联网」。
+    # 不说清楚，它会反复说「我这就去查」却调不到工具（实测 u2-flash 稳定复现）。
+    tool_names = {t.get("name") for t in (ctx.get("tools_schema") or []) if isinstance(t, dict)}
+    if "web_search" not in tool_names and "read_webpage" not in tool_names:
+        tail += (
+            "【能力边界】本轮没有联网能力，也没有网页读取能力。"
+            "不要表示「我去查 / 正在查 / 稍等」，直接基于你已有的知识回答；"
+            "涉及实时价格、新闻、版本号等可能变化的信息，明确说明「以下为既有知识，具体以官方为准」。"
+        )
+    elif "web_search" not in tool_names:
+        tail += (
+            "【能力边界】本轮没有联网搜索，只有网页直读（read_webpage）。"
+            "需要具体页面时给出你确知的官方 URL 再读；不确定 URL 就直接用已有知识回答并标注时效。"
+        )
+    # 内容块额度必须同时满足三件事：装得下 persona、装得下固定尾巴、还留有内容空间。
+    # 旧算法 budget - persona - tail 在 persona 比 budget 长时直接变成 120，
+    # 于是工具清单/知识库/技能全被压成「…（预算不足）」占位——
+    # 实测 2800 字人设 + 2400 预算时，模型完全看不到工具和技能，答得像裸模型。
+    persona_len = len(ctx["persona"])
+    # 模型上下文越长，允许的字符预算越大（按 1 token ≈ 2 汉字保守折算，只用 1/4 窗口）
+    ctx_window = int((cfg.get("llm") or {}).get("context_window") or 0)
+    window_budget = min(ctx_window // 4 * 2, 24_000) if ctx_window else 0
+    budget = max(budget, window_budget)
+    content_budget = max(800, budget - persona_len - len(tail) - 4)
 
     body = ""
     n = max(len(parts), 1)
@@ -265,7 +311,7 @@ async def _post_chat(base: str, api_key: str, payload: dict) -> str | None:
     429 单独抛 RateLimited：调用方要短退避重试，而不是把整条候选链冷却 120 秒——
     一次并发高峰就让机器人彻底沉默 2 分钟，是最难解释给用户的故障。
     """
-    client = get_client(base, timeout=60)
+    client = get_client(base, timeout=180)
     resp = await client.post(
         f"{base}/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -288,7 +334,27 @@ async def _post_chat(base: str, api_key: str, payload: dict) -> str | None:
         if resp.status_code == 429:
             raise RateLimited(1.0)
     resp.raise_for_status()
-    return (resp.json()["choices"][0]["message"]["content"] or "").strip()
+    data = resp.json()
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    content = (message.get("content") or "").strip()
+    if not content and choice.get("finish_reason") == "length":
+        # 推理模型把预算花在 reasoning 上：加大预算重试一次（只重试一次，
+        # 避免被一个永远截断的端点拖死整条备援链）。
+        bigger = dict(payload)
+        bigger["max_tokens"] = min(max(int(payload.get("max_tokens") or 512) * 4, 2_048), 16_384)
+        if bigger["max_tokens"] > int(payload.get("max_tokens") or 0):
+            lg.info("llm truncated at %s tokens, retrying with %s",
+                    payload.get("max_tokens"), bigger["max_tokens"])
+            retry = await client.post(
+                f"{base}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=bigger,
+            )
+            retry.raise_for_status()
+            rchoice = (retry.json().get("choices") or [{}])[0]
+            content = ((rchoice.get("message") or {}).get("content") or "").strip()
+    return content
 
 
 async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict | None:
@@ -308,7 +374,7 @@ async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict |
         "model": model,
         "temperature": llm_cfg.get("temperature", 0.2),
         "top_p": llm_cfg.get("top_p", 1.0),
-        "max_tokens": llm_cfg.get("max_tokens", 512),
+        "max_tokens": _max_tokens(llm_cfg),
         "response_format": {"type": "json_object"},
     }
     # 备援链竞速：主配置 → fallback_model → providers；视觉调用只走主配置。
@@ -320,17 +386,82 @@ async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict |
 
 
 class _AnswerStreamer:
-    """字符级状态机：从 LLM 增量输出中抽取 answer 字段值；非 JSON（prose）输出自动直通。"""
+    """字符级状态机：只把「给用户看的正文」吐给打字机。
+
+    两种模型输出都见过：
+    1. 纯 JSON：`{"thought":..., "answer":"正文", ...}` —— 只取 answer 值
+    2. 散文打头再贴 JSON：`我需要先查一下。{"thought":..., ...}` —— 散文留下，JSON 丢弃
+
+    第 2 种如果按字符直通，用户会看到大半段带 thought/tool_args 的原始 JSON
+    （实测 u2-flash 在联网任务上稳定复现）。所以 prose 模式必须带缓冲：
+    末尾保留一个窗口，遇到 `{` 先判「可能是决策 JSON 的开头」就继续等，
+    确认真是 JSON 就整段丢弃并停止输出；确认不是就原样放行。
+    """
+
+    # 决策 JSON 的顶层键
+    _KEYS = ('"thought"', '"tool"', '"answer"', '"citations"', '"confidence"',
+             '"escalate"', '"tool_args"')
+    _JSON_START_RE = re.compile(r'^\{\s*"(?:thought|tool|answer|citations|confidence|escalate|tool_args)"')
+    HOLD = 48  # 尾部保留窗口：覆盖 '{' + 空白 + 键名
 
     def __init__(self):
         self.mode = "detect"   # detect | json | prose
-        self.buf = ""          # json 模式：等待 '"answer":"' 出现
-        self.in_str = False    # 已进入 answer 字符串
-        self.esc = ""          # 转义等待态（"" | "\\" | "u"）
+        self.buf = ""          # json 模式：等待 '"answer":"'
+        self.pending = ""      # prose 模式：未决缓冲
+        self.in_str = False
+        self.esc = ""
         self.hexbuf = ""
         self.done = False
+        self.stopped = False
+
+    # ---- prose 缓冲 ----
+
+    def _could_be_json(self, frag: str) -> bool:
+        """frag 以 '{' 开头时，判断它是否可能长成决策 JSON。"""
+        body = frag[1:].lstrip()
+        if not body:
+            return True
+        if not body.startswith('"'):
+            return False
+        return any(k.startswith(body) or body.startswith(k) for k in self._KEYS)
+
+    def _drain(self, final: bool) -> list[str]:
+        out: list[str] = []
+        while not self.stopped:
+            idx = self.pending.find("{")
+            if idx < 0:
+                if final:
+                    out.append(self.pending)
+                    self.pending = ""
+                elif len(self.pending) > self.HOLD:
+                    cut = len(self.pending) - self.HOLD
+                    out.append(self.pending[:cut])
+                    self.pending = self.pending[cut:]
+                break
+            if idx > 0:
+                out.append(self.pending[:idx])
+                self.pending = self.pending[idx:]
+            frag = self.pending
+            if self._JSON_START_RE.match(frag):
+                # 确认是决策 JSON：从这里开始整段丢弃
+                self.stopped = True
+                self.pending = ""
+                break
+            if not final and len(frag) <= self.HOLD and self._could_be_json(frag):
+                break  # 还看不出来，继续等
+            out.append("{")
+            self.pending = frag[1:]
+        return out
+
+    def finish(self) -> list[str]:
+        """流结束时调用：把缓冲里剩下的正文吐出来。"""
+        return self._drain(final=True)
+
+    # ---- 主入口 ----
 
     def feed(self, piece: str) -> list[str]:
+        if self.stopped:
+            return []
         out: list[str] = []
         for ch in piece:
             if self.mode == "detect":
@@ -338,10 +469,14 @@ class _AnswerStreamer:
                     continue
                 self.mode = "prose" if ch != "{" else "json"
                 if self.mode == "prose":
-                    out.append(ch)
+                    self.pending += ch
+                    out.extend(self._drain(final=False))
                 continue
             if self.mode == "prose":
-                out.append(ch)
+                self.pending += ch
+                out.extend(self._drain(final=False))
+                if self.stopped:
+                    return out
                 continue
             if self.done:
                 continue
@@ -349,14 +484,14 @@ class _AnswerStreamer:
                 self.buf += ch
                 if len(self.buf) > 512:
                     self.buf = self.buf[-64:]
-                m = re.search(r'"answer"\s*:\s*"', self.buf)
-                if m:
+                if re.search(r'"answer"\s*:\s*"', self.buf):
                     self.in_str = True
                     self.buf = ""
                 continue
             if self.esc == "\\":
                 self.esc = ""
-                mapping = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f"}
+                mapping = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\",
+                           "/": "/", "b": "\b", "f": "\f"}
                 if ch in mapping:
                     out.append(mapping[ch])
                 elif ch == "u":
@@ -402,17 +537,51 @@ async def react_stream(query: str, ctx: dict, cfg: dict, image_b64: str = ""):
         "messages": messages,
         "temperature": llm_cfg.get("temperature", 0.2),
         "top_p": llm_cfg.get("top_p", 1.0),
-        "max_tokens": llm_cfg.get("max_tokens", 512),
+        "max_tokens": _max_tokens(llm_cfg),
         "stream": True,
+        # 结构化输出：模型不会在 JSON 前面加「我这就去查」这类散文，
+        # 否则打字机会把那句散文和后面的 JSON 一起吐给用户（实测 u2-flash）。
+        "response_format": {"type": "json_object"},
     }
     scanner = _AnswerStreamer()
     buf = ""
+    finish_reason = ""
     try:
-        client = get_client(base, timeout=90)
+        client = get_client(base, timeout=180)
         async with client.stream(
             "POST", f"{base}/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"}, json=payload,
         ) as resp:
+            if resp.status_code in (400, 422):
+                # 端点不支持 response_format：去掉重试一次（保持结构化解析的容错）
+                retry = {k: v for k, v in payload.items() if k != "response_format"}
+                async with client.stream(
+                    "POST", f"{base}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"}, json=retry,
+                ) as resp2:
+                    resp2.raise_for_status()
+                    async for line in resp2.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        chunk = line[5:].strip()
+                        if chunk == "[DONE]":
+                            break
+                        try:
+                            delta = json.loads(chunk)["choices"][0].get("delta", {}) or {}
+                        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                            continue
+                        piece = delta.get("content")
+                        if piece:
+                            buf += piece
+                            for t in scanner.feed(piece):
+                                if t:
+                                    yield {"type": "delta", "text": t}
+                    data_fallback = _parse_llm_answer(buf)
+                    if data_fallback is None:
+                        yield {"type": "error", "error": "empty llm answer"}
+                        return
+                    yield {"type": "final", "data": data_fallback}
+                    return
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.startswith("data:"):
@@ -421,9 +590,12 @@ async def react_stream(query: str, ctx: dict, cfg: dict, image_b64: str = ""):
                 if chunk == "[DONE]":
                     break
                 try:
-                    delta = json.loads(chunk)["choices"][0].get("delta", {}) or {}
+                    choice = json.loads(chunk)["choices"][0]
+                    delta = choice.get("delta", {}) or {}
                 except (json.JSONDecodeError, KeyError, IndexError, TypeError):
                     continue
+                if choice.get("finish_reason"):
+                    finish_reason = str(choice["finish_reason"])
                 piece = delta.get("content")
                 if piece:
                     buf += piece
@@ -434,11 +606,71 @@ async def react_stream(query: str, ctx: dict, cfg: dict, image_b64: str = ""):
         lg.warning("llm stream failed: %s %s", type(e).__name__, str(e)[:120])
         yield {"type": "error", "error": f"{type(e).__name__}: {e}"}
         return
+    # 冲刷 prose 缓冲：HOLD 窗口里还压着几十个字符，不冲刷就会丢结尾
+    for t in scanner.finish():
+        if t:
+            yield {"type": "delta", "text": t}
     data = _parse_llm_answer(buf)
     if data is None:
-        yield {"type": "error", "error": "empty llm answer"}
+        reason = "truncated_by_max_tokens" if finish_reason == "length" else "empty llm answer"
+        if finish_reason == "length":
+            lg.warning("llm stream truncated before any content (max_tokens=%s)",
+                       payload.get("max_tokens"))
+        yield {"type": "error", "error": reason}
         return
     yield {"type": "final", "data": data}
+
+
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.S)
+
+
+def _extract_embedded_json(raw: str) -> dict | None:
+    """从「散文 + JSON」混合输出里抽出决策对象。
+
+    实测 u2-flash 会输出「我需要先搜索…」+ 完整 JSON：整串 json.loads 失败、
+    又不以 { 开头，旧逻辑把整段（含 thought/tool_args）原样发给用户。
+    这里优先扫出最外层 {...}，能解析就用它。
+    """
+    for match in _JSON_OBJECT_RE.finditer(raw):
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and ("answer" in data or "tool" in data):
+            return data
+    return None
+# 模型「先说一句再给 JSON」时的引导语，属于过程说明，不该出现在给用户的回答里
+_PREAMBLE_RE = re.compile(
+    r"^(?:我(?:需要|来|先|这就)|让我|先|好的[，,]?\s*(?:我)?|稍等)[^\n]{0,60}?[。：:]\s*$")
+
+
+# 「只承诺不执行」的空转答复：模型说要去查/正在查，却没有发起工具调用。
+# 这类文本直接发给用户等于永远答不上来（实测 u2-flash 在联网题上稳定复现）。
+_PROMISE_ONLY_RE = re.compile(
+    r"^(?:"
+    r"我(?:需要|得|要|想|先|这就|马上|立刻)*(?:先)?(?:去|来)?(?:查|搜|看|确认|核实|了解|核对)|"
+    r"(?:正)?在?(?:查|搜|核对|核实)(?:一下|下)?|"
+    r"请稍候|稍等片刻?|让我(?:先)?(?:查|搜|看)"
+    r")"
+)
+
+
+def is_promise_only(answer: str) -> bool:
+    """答复只是「我这就去查 / 稍等」这类承诺，没有实际内容时返回 True。
+
+    判据三条同时成立才算空转：短（≤200 字）、以承诺句式开头、且不含
+    具体数字/单位/表格——避免把「我需要先说明：DeepSeek 输入 2 元/百万」误杀。
+    """
+    text = (answer or "").strip()
+    if not text:
+        return True
+    if len(text) > 200:
+        return False
+    if "|" in text or chr(10) in text:
+        return False
+    if re.search(r"\d", text) and re.search(r"(元|token|Token|%|ms|MB|GB)", text):
+        return False
+    return bool(_PROMISE_ONLY_RE.match(text))
 
 
 def _parse_llm_answer(raw: str) -> dict | None:
@@ -448,6 +680,10 @@ def _parse_llm_answer(raw: str) -> dict | None:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
+        embedded = _extract_embedded_json(raw)
+        if embedded is not None:
+            lg.info("llm mixed prose+json detected, using embedded decision")
+            return embedded
         # 半截 JSON（max_tokens 截断/模型跑偏）：先抢救 answer 字段，救不回来才当 prose。
         # 绝不能把 "{...半截 JSON 原文" 发给用户。
         if raw.startswith("{"):
@@ -461,12 +697,20 @@ def _parse_llm_answer(raw: str) -> dict | None:
                 return {"answer": answer, "confidence": 0.6, "citations": [], "escalate": False}
             return None  # 连 answer 都没有的残 JSON：宁走降级也不给用户看乱码
         if raw:
-            lg.info("llm prose answer accepted: %s", raw[:120])
-            return {"answer": raw, "confidence": 0.62, "citations": [], "escalate": False}
+            # 纯散文：去掉「我需要先查一下。」这类过程说明，只留正文
+            lines = [ln for ln in raw.splitlines() if not _PREAMBLE_RE.match(ln.strip())]
+            cleaned = "\n".join(lines).strip() or raw
+            lg.info("llm prose answer accepted: %s", cleaned[:120])
+            return {"answer": cleaned, "confidence": 0.62, "citations": [], "escalate": False}
         return None
     if not isinstance(data, dict):
         return None
-    # 空答案当失败：交给规则降级，而不是把沉默发给用户
+    # 工具调用决策的 answer 本来就是空的（要先执行工具再回答）。
+    # 旧逻辑把空 answer 一律判失败，导致「模型选了工具」被当成「模型没说话」，
+    # 整条备援链把 u2-flash 标成 empty 并冷却 120 秒（实测日志：candidate failed (empty)）。
+    if str(data.get("tool") or "").strip():
+        return data
+    # 既没有工具也没有答案：交给规则降级，而不是把沉默发给用户
     if not str(data.get("answer") or "").strip():
         return None
     return data
@@ -483,7 +727,7 @@ async def probe() -> dict:
         return {"configured": True, "ok": False, "error": "未配置 Base URL", "source": source}
     start = _time.monotonic()
     try:
-        client = get_client(base, timeout=15)
+        client = get_client(base, timeout=60)
         resp = await client.post(
             f"{base}/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},

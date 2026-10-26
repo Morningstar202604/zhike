@@ -87,11 +87,20 @@ def authorized_qq() -> set[str]:
 
 
 def agent_tier() -> Tier:
-    """部署的权限档位。T3 需要 ALLOW_TIER3=true 双开关，防误配。"""
+    """部署的权限档位。T3 需要 ALLOW_TIER3=true 双开关，防误配。
+
+    配置里的 permissions.open_mode=false 会把档位压到 T1（界面「最小权限」模式）。
+    """
     try:
         tier = int(os.environ.get("AGENT_TIER", "1"))
     except ValueError:
         tier = 1
+    try:
+        from core import config as config_mod
+
+        tier = config_mod.effective_agent_tier(tier)
+    except Exception:  # 配置不可用时按环境变量原值，绝不放开权限
+        pass
     tier = max(0, min(3, tier))
     if tier == 3 and os.environ.get("ALLOW_TIER3", "").strip().lower() not in ("1", "true", "yes", "on"):
         # 只设了档位没设开关：降级到 T1 并让调用方记录告警

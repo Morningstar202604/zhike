@@ -9,8 +9,23 @@ export interface AgentConfig {
     api_key?: string
     key_source?: string
     fallback_model?: string
-    /** 已保存的提供商档案（AstrBot 对标）：切换时写入 base_url/model */
-    providers?: { name: string; base_url: string; model: string; api_key?: string; has_key?: boolean }[]
+    /** 厂商能力（模型检测自动写入） */
+    context_window?: number
+    max_output?: number
+    protocol?: string
+    tool_calling?: boolean
+    /** 已保存的提供商档案：切换时写入 base_url/model；能力字段随厂商持久化 */
+    providers?: {
+      name: string
+      base_url: string
+      model: string
+      api_key?: string
+      has_key?: boolean
+      protocol?: string
+      context_window?: number
+      max_output?: number
+      tool_calling?: boolean
+    }[]
   }
   retrieval: { kb_top_k: number; min_overlap: number; embedding?: 'auto' | 'off' }
   context: {
@@ -22,6 +37,9 @@ export interface AgentConfig {
     modules: Record<string, boolean>
     persona: string
   }
+  skills?: { items: { id: string; name: string; description: string; guide: string; enabled: boolean; builtin: boolean }[] }
+  hooks?: { items: { id: string; name: string; event: string; match: string; action: string; value: string; enabled: boolean; times: number }[] }
+  permissions?: { open_mode: boolean; locked: string[]; audit_changes: boolean }
   memory: {
     enable: boolean
     retrieval_top_k: number

@@ -186,3 +186,52 @@ def test_run_stream_rule_mode_escalates(monkeypatch):
     final = events[-1][1]
     assert final.escalate is True
     assert final.text
+
+
+def test_promise_only_answer_triggers_forced_retry(monkeypatch, tmp_path):
+    """模型说「我这就去查」但没调工具时，必须再逼一轮真实答案（实测 u2-flash）。"""
+    from core import pipeline
+
+    calls = []
+
+    async def fake_react(query, ctx, cfg, image_b64=""):
+        calls.append(1)
+        if len(calls) == 1:
+            return {"answer": "我先去查一下两家最新的官方定价页，再给你对比。", "confidence": 0.6}
+        return {"answer": "DeepSeek 与通义千问的公开定价对比如下……", "confidence": 0.8}
+
+    monkeypatch.setattr(pipeline.llm, "react", fake_react)
+    ctx = {
+        "persona": "你是秘书", "kb_block": "（无）", "tools_schema": [], "tools": {},
+        "memory_block": "（无）", "modules_on": {}, "summary": "", "used": {},
+        "history": [], "tool_ctx": pipeline.EMPTY,
+    }
+    reply = __import__("asyncio").run(pipeline._llm_answer("对比定价", ctx, {"llm": {"has_key": True}}))
+    assert reply is not None
+    assert "DeepSeek" in reply.text
+    assert len(calls) >= 2
+
+
+def test_tool_call_gets_observation_then_real_answer(monkeypatch):
+    """模型要工具时必须执行并把结果回填，不能直接拿工具 note 当答复。"""
+    from core import pipeline
+
+    async def fake_react(query, ctx, cfg, image_b64=""):
+        if ctx.get("read_block"):
+            return {"answer": "根据查到的资料，结论是这样。", "confidence": 0.9}
+        return {"tool": "read_webpage", "tool_args": {"url": "https://example.com"}, "answer": ""}
+
+    async def fake_invoke(tools_map, name, args, ctx):
+        return {"tool": name, "connected": True, "found": True, "note": "页面正文：价格表……"}
+
+    monkeypatch.setattr(pipeline.llm, "react", fake_react)
+    monkeypatch.setattr(pipeline.tools_mod, "invoke_with", fake_invoke)
+    ctx = {
+        "persona": "你是秘书", "kb_block": "（无）",
+        "tools_schema": [{"name": "read_webpage"}], "tools": {"read_webpage": object()},
+        "memory_block": "（无）", "modules_on": {}, "summary": "", "used": {},
+        "history": [], "tool_ctx": pipeline.EMPTY,
+    }
+    reply = __import__("asyncio").run(pipeline._llm_answer("查一下价格", ctx, {"llm": {"has_key": True}}))
+    assert reply is not None
+    assert "结论" in reply.text

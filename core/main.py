@@ -1192,6 +1192,69 @@ def create_app() -> FastAPI:
             if not isinstance(k, str) or not k.isidentifier():
                 raise HTTPException(400, f"参数名 '{k}' 非法")
 
+    @app.get("/api/skills", dependencies=[Depends(require_admin)])
+    def list_skills():
+        from core import skills as skills_mod
+
+        cfg = config.get_config()
+        items = skills_mod.normalize_items((cfg.get("skills") or {}).get("items"))
+        return {"items": items, "builtin": skills_mod.BUILTIN_SKILLS,
+                "active": skills_mod.names(cfg)}
+
+    @app.put("/api/skills", dependencies=[Depends(require_admin)])
+    def save_skills(body: dict):
+        from core import skills as skills_mod
+
+        items = skills_mod.normalize_items(body.get("items"))
+        config.update_config({"skills": {"items": items}})
+        store.append_audit("admin", "config.updated", {
+            "groups": ["skills"], "count": len(items),
+            "active": [s["name"] for s in items if s["enabled"]],
+        })
+        return {"items": items}
+
+    @app.get("/api/hooks", dependencies=[Depends(require_admin)])
+    def list_hooks():
+        from core import hooks as hooks_mod
+
+        cfg = config.get_config()
+        return {"items": hooks_mod.normalize_items((cfg.get("hooks") or {}).get("items")),
+                "events": list(hooks_mod.EVENTS),
+                "actions": {k: list(v) for k, v in hooks_mod.ACTIONS.items()}}
+
+    @app.put("/api/hooks", dependencies=[Depends(require_admin)])
+    def save_hooks(body: dict):
+        from core import hooks as hooks_mod
+
+        items = hooks_mod.normalize_items(body.get("items"))
+        config.update_config({"hooks": {"items": items}})
+        store.append_audit("admin", "config.updated", {
+            "groups": ["hooks"], "count": len(items),
+            "enabled": [h["name"] for h in items if h["enabled"]],
+        })
+        return {"items": items}
+
+    @app.get("/api/permissions", dependencies=[Depends(require_admin)])
+    def get_permissions():
+        from core import permissions as perm
+
+        return perm.describe(config.get_config())
+
+    @app.put("/api/permissions", dependencies=[Depends(require_admin)])
+    def save_permissions(body: dict):
+        from core import permissions as perm
+
+        try:
+            patch = perm.validate_patch(config.get_config(), body or {})
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if patch:
+            config.update_config({"permissions": patch})
+            store.append_audit("admin", "permission.updated", {
+                "keys": sorted(patch.keys()), "open_mode": patch.get("open_mode"),
+            })
+        return perm.describe(config.get_config())
+
     @app.get("/api/tools", dependencies=[Depends(require_admin)])
     def list_tools():
         return {"tools": store.list_tools()}
@@ -1628,6 +1691,64 @@ def create_app() -> FastAPI:
     @app.get("/api/admin/logs", dependencies=[Depends(require_admin)])
     def admin_logs(limit: int = 200, level: str | None = None):
         return {"entries": events_log.entries(limit=limit, level=level)}
+
+    # ============================================================
+    # 模型厂商：预设 / 发现 / 能力匹配 / 连接测试
+    # ============================================================
+
+    class ProviderProbeIn(BaseModel):
+        base_url: str
+        api_key: str = ""
+        protocol: str = "openai-compatible"
+        model: str = ""
+        max_output: int = 0
+        private_ok: bool = False
+
+    @app.get("/api/providers/presets", dependencies=[Depends(require_admin)])
+    def provider_presets():
+        from core import providers as prov
+
+        return {"presets": [
+            {"name": p.name, "base_url": p.base_url, "protocol": p.protocol,
+             "private_ok": p.private_ok, "note": p.note}
+            for p in prov.PRESETS
+        ], "protocols": [{"value": v, "label": prov.PROTOCOL_LABEL[v]} for v in prov.PROTOCOLS]}
+
+    def _probe_req(body: ProviderProbeIn):
+        from core import providers as prov
+
+        if body.protocol not in prov.PROTOCOLS:
+            raise HTTPException(400, f"不支持的协议：{body.protocol}")
+        # 编辑态回填的是掩码 Key：回查库内同 (base_url, model) 的真实 Key，
+        # 绝不把 "••••1234" 当 Key 发出去。
+        api_key = (body.api_key or "").strip()
+        if api_key.startswith("••"):
+            cfg = config.get_config()
+            for p in cfg["llm"].get("providers") or []:
+                if (p.get("base_url") or "").rstrip("/") == body.base_url.rstrip("/"):
+                    api_key = p.get("api_key") or ""
+                    break
+            else:
+                if cfg["llm"].get("base_url", "").rstrip("/") == body.base_url.rstrip("/"):
+                    api_key = cfg["llm"].get("api_key") or ""
+        return prov.ProviderRequest(
+            base_url=body.base_url, api_key=api_key, protocol=body.protocol,
+            model=body.model, max_output=body.max_output, private_ok=body.private_ok,
+        )
+
+    @app.post("/api/providers/discover", dependencies=[Depends(require_admin)])
+    async def providers_discover(body: ProviderProbeIn):
+        from core import providers as prov
+
+        req = _probe_req(body)
+        return await prov.discover(req)
+
+    @app.post("/api/providers/test", dependencies=[Depends(require_admin)])
+    async def providers_test(body: ProviderProbeIn):
+        from core import providers as prov
+
+        req = _probe_req(body)
+        return await prov.test_connection(req)
 
     @app.post("/api/admin/llm-test", dependencies=[Depends(require_admin)])
     async def llm_test():

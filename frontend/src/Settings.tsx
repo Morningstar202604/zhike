@@ -4,7 +4,9 @@ import {
   SlidersHorizontal, BookOpen, BarChart3, Brain, ShieldAlert,
   Save, Plus, Pencil, Trash2, X, Activity, Inbox, MessageSquare,
   FileText, Users, Search, Wrench, Zap, ChevronDown, ChevronUp,
-  ChevronLeft, ChevronRight, Upload, Download, KeyRound, Check } from 'lucide-react'
+  ChevronLeft, ChevronRight, Upload, Download, KeyRound, Check,
+  Plug, Wand2, Lock } from 'lucide-react'
+import { ProviderPanel, SkillsPanel, HooksPanel, PermissionsPanel } from './ProviderCenter'
 import {
   useConfig, useUpdateConfig, useKb, useKbMutations, useKbImport, useKbTest, useKbDocImport, exportKb, useTools, useToolMutations,
   useInjectionRules, useInjectionRuleMutations, useLlmTest, useLlmModels,
@@ -25,7 +27,11 @@ import './pages2.css'
 import { t as tr } from './lib/t'
 
 const TABS = [
+  { key: 'providers', icon: <Plug size={15} />, label: '模型厂商', sub: '地址 + Key 自动检测模型与能力 · 三协议' },
   { key: 'params', icon: <SlidersHorizontal size={15} />, label: '能力参数', sub: '模型 / 检索 / 上下文 / 记忆 / 引擎' },
+  { key: 'skills', icon: <Wand2 size={15} />, label: '技能', sub: '什么时候用哪个工具' },
+  { key: 'hooks', icon: <ShieldAlert size={15} />, label: '钩子', sub: '管线固定位置的强制规则' },
+  { key: 'permission', icon: <Lock size={15} />, label: '权限', sub: '全面放开 / 核心锁定' },
   { key: 'cards', icon: <Brain size={15} />, label: '角色卡', sub: 'SillyTavern 卡导入 / 按群绑定人格' },
   { key: 'tools', icon: <Wrench size={15} />, label: '工具注册表', sub: '可自定义 Agent 能执行的动作' },
   { key: 'guardrail', icon: <ShieldAlert size={15} />, label: '注入规则', sub: '护栏检测规则管理' },
@@ -81,7 +87,7 @@ export default function Settings() {
             <h1>{tr(active.label)}</h1>
             <p>{tr(active.sub)}</p>
           </div>
-          {tab === 'params' && (
+          {(tab === 'params' || tab === 'providers') && (
             <button className="btn" onClick={() => shown && upd.mutate(shown)}
                     disabled={upd.isPending || !shown}>
               <Save size={14} />
@@ -95,6 +101,12 @@ export default function Settings() {
             <ErrorBanner message={(upd.error as Error).message} onRetry={() => upd.mutate(shown!)} />
           </div>
         )}
+        {tab === 'providers' && shown && (
+          <ProviderPanel cfg={shown} setCfg={(next) => setDraft(next)} persist={(next) => upd.mutate(next)} />
+        )}
+        {tab === 'skills' && <SkillsPanel />}
+        {tab === 'hooks' && <HooksPanel />}
+        {tab === 'permission' && <PermissionsPanel />}
         {tab === 'params' && shown && <ParamsPanel cfg={shown} setDraft={setDraft} upd={upd} />}
         {tab === 'cards' && <CardsPanel />}
         {tab === 'tools' && <ToolsPanel />}

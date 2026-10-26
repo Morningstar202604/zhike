@@ -25,6 +25,8 @@ def test_privileged_tool_denied_for_web_visitor():
 
 def test_privileged_tool_allowed_for_authorized_qq(monkeypatch):
     monkeypatch.setenv("AUTHORIZED_QQ", "12345")
+    # 执行器相关工具只在配置了 EXECUTOR_URL 时才出现在可用清单里
+    monkeypatch.setenv("EXECUTOR_URL", "http://127.0.0.1:8020")
     ctx = ToolContext(visitor_id="v", channel_type="qq", channel_user_id="12345",
                       principal="qq:12345")
     # 通过桩掉执行器来确认它「走过了权限闸门」，而不是被拒在前一步
@@ -38,7 +40,8 @@ def test_privileged_tool_allowed_for_authorized_qq(monkeypatch):
     assert res["found"] is True
 
 
-def test_privileged_tool_allowed_for_admin():
+def test_privileged_tool_allowed_for_admin(monkeypatch):
+    monkeypatch.setenv("EXECUTOR_URL", "http://127.0.0.1:8020")
     ctx = ToolContext(visitor_id="v", principal="admin")
     from core import executor_client
 

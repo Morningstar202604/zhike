@@ -68,5 +68,21 @@ def check_url(url: str) -> str:
     host = parsed.hostname
     if not host:
         raise UnsafeUrl("URL 缺少主机名")
+    if is_metadata_host(host):
+        raise UnsafeUrl("拒绝访问云元数据地址")
     resolve_public(host, parsed.port or (443 if parsed.scheme == "https" else 80))
     return url
+
+
+_METADATA_HOSTS = {
+    "169.254.169.254",          # AWS / GCP / 阿里云 / Azure 通用元数据
+    "metadata.google.internal",
+    "metadata",
+    "100.100.100.200",          # 阿里云
+    "fd00:ec2::254",            # AWS IPv6 元数据
+}
+
+
+def is_metadata_host(host: str) -> bool:
+    """只判定云元数据地址（内网端点放行时仍必须拒绝它）。"""
+    return (host or "").strip().lower() in _METADATA_HOSTS

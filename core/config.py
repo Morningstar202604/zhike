@@ -17,6 +17,11 @@ def _defaults() -> dict:
             "max_tokens": 512,
             "api_key": None,
             "has_key": False,
+            # 厂商能力（由模型检测自动写入）：上下文窗口 / 单次输出上限 / 协议 / 是否支持工具
+            "context_window": int(os.environ.get("USER_LLM_CONTEXT_WINDOW", "0") or 0),
+            "max_output": int(os.environ.get("USER_LLM_MAX_OUTPUT", "0") or 0),
+            "protocol": os.environ.get("USER_LLM_PROTOCOL", "openai-compatible"),
+            "tool_calling": True,
             # 已保存的提供商档案（AstrBot 多提供商对标）：不含 Key，Key 只跟随当前激活配置
             "providers": [],
         },
@@ -74,6 +79,19 @@ def _defaults() -> dict:
             # 关掉后不再假装「正在转接」，避免承诺一个不存在的真人。
             # 默认关闭：本产品默认是纯机器人（QQ 群/私聊），没有人工客服坐席。
             "handoff": os.environ.get("USER_HANDOFF_ENABLED", "0").lower() in ("1", "true", "yes", "on"),
+        },
+        # 技能：注入系统提示词的「能力说明书」（内置可停用、自定义可增删）
+        "skills": {"items": []},
+        # 钩子：管线固定位置的确定性规则（不是让模型判断，而是系统强制执行）
+        "hooks": {"items": []},
+        # 权限：全面放开模式下，只有核心项锁定（不可从界面改）
+        "permissions": {
+            # 全面放开：除「核心影响」外全部可改（默认开启，符合本机单人使用场景）
+            "open_mode": True,
+            # 锁定项：涉及密钥、鉴权、越权执行、数据销毁的开关，界面只读
+            "locked": ["auth", "secrets", "destructive_actions", "data_purge", "executor_roots"],
+            # 审计：权限相关变更都留痕
+            "audit_changes": True,
         },
         # 渠道准入（chatgpt-on-wechat 群白名单对标）：开启后仅白名单群可获得回复
         "channels": {
@@ -159,7 +177,8 @@ def get_config() -> dict:
 _SCHEMA: dict[str, dict[str, type | tuple]] = {
     "llm": {"base_url": str, "model": str, "fallback_model": str, "api_key": (str, type(None)),
             "temperature": (int, float), "top_p": (int, float), "max_tokens": int,
-            "has_key": bool, "key_source": str, "providers": list},
+            "has_key": bool, "key_source": str, "providers": list,
+            "context_window": int, "max_output": int, "protocol": str, "tool_calling": bool},
     "retrieval": {"kb_top_k": int, "min_overlap": (int, float), "embedding": str},
     "context": {"history_turns": int, "char_budget": int, "compress_threshold": int,
                 "summarize": bool, "relevant_only": bool, "modules": dict, "persona": str},
@@ -171,6 +190,9 @@ _SCHEMA: dict[str, dict[str, type | tuple]] = {
     "engine": {"mode": str},
     "escalation": {"confidence_threshold": (int, float), "max_message_len": int, "react_steps": int, "handoff": bool},
     "channels": {"allowlist_enabled": bool, "group_allowlist": list},
+    "skills": {"items": list},
+    "hooks": {"items": list},
+    "permissions": {"open_mode": bool, "locked": list, "audit_changes": bool},
 }
 
 
@@ -208,9 +230,29 @@ def validate_patch(patch: dict) -> None:
         raise ValueError("retrieval.kb_top_k 必须在 1-50 之间")
 
 
+def effective_agent_tier(env_tier: int) -> int:
+    """把 permissions.open_mode 折算成实际档位（最小权限模式下压到 T1）。"""
+    try:
+        from core import permissions as perm
+
+        return perm.effective_agent_tier(get_config(), int(env_tier))
+    except Exception:
+        return int(env_tier)
+
+
 def update_config(patch: dict) -> dict:
     patch = json.loads(json.dumps(patch or {}))
     validate_patch(patch)
+    # 技能/钩子：入库前统一归一化（丢非法正则、补内置技能、限条数）。
+    # 不归一化就落库的话，一条坏正则会拖垮每轮对话。
+    if isinstance(patch.get("skills"), dict):
+        from core import skills as skills_mod
+
+        patch["skills"]["items"] = skills_mod.normalize_items(patch["skills"].get("items"))
+    if isinstance(patch.get("hooks"), dict):
+        from core import hooks as hooks_mod
+
+        patch["hooks"]["items"] = hooks_mod.normalize_items(patch["hooks"].get("items"))
     llm_patch = patch.get("llm") or {}
     if "api_key" in llm_patch and isinstance(llm_patch["api_key"], str) and llm_patch["api_key"].startswith("••"):
         llm_patch["api_key"] = get_config()["llm"].get("api_key") or ""

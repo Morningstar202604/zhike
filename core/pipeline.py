@@ -392,11 +392,80 @@ async def _rule_react(query: str, ctx: dict, cfg: dict) -> AgentReply:
     )
 
 
-async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> AgentReply | None:
-    data = await llm.react(query, ctx, cfg, image_b64)
-    if data is None:
-        return None
-    return await _make_llm_reply(data, ctx, cfg)
+async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "",
+                       first: dict | None = None) -> AgentReply | None:
+    """单轮 LLM + 最多两轮工具回填（ReAct 的 OBSERVE 补齐）。
+
+    为什么必须有这层：单轮时代模型选完工具就被当成「回答完了」，
+    `_make_llm_reply` 只能拿工具 note 当答复——用户看到的是「正在为您查询」，
+    或者干脆一串空文本（实测 u2-flash 在联网题上稳定复现）。
+    这里按 ReAct 语义执行工具并把 observation 回填，直到模型给出正文；
+    最后再用「无工具模式」逼一次答案，避免无限要工具。
+
+    first：调用方已经拿到的一次决策（流式路径复用，省掉一次重复请求）。
+    """
+    visible = {t.get("name") for t in (ctx.get("tools_schema") or []) if isinstance(t, dict)}
+    tools_map = ctx.get("tools") or {}
+    observations: list[str] = []
+    working = dict(ctx)
+
+    # 最多 2 轮：推理模型每轮 30-90s，3 轮会顶到网关超时（实测 95.7s 后整体失败）
+    for round_no in range(2):
+        data = first if (round_no == 0 and first is not None) else await llm.react(
+            query, working, cfg, image_b64)
+        if data is None:
+            return None
+        answer = str(data.get("answer") or "").strip()
+        tool_name = str(data.get("tool") or "").strip()
+        if tool_name and tool_name in visible and tool_name in tools_map:
+            args = data.get("tool_args") or {}
+            result = await tools_mod.invoke_with(tools_map, tool_name, args,
+                                                 ctx.get("tool_ctx") or EMPTY)
+            note = str((result or {}).get("note") or "")
+            observations.append(f"[{tool_name}] {note[:1500]}")
+            if (result or {}).get("connected") is False:
+                # 工具没接入：再让模型选工具也没有新信息，直接进「无工具作答」分支
+                break
+            working = dict(working)
+            working["read_block"] = (
+                "你刚才调用的工具结果如下，直接据此回答，不要再提工具/系统："
+                + chr(10) + chr(10).join(observations[-3:]))
+            if answer and not llm.is_promise_only(answer):
+                data["tool"] = None
+                return await _make_llm_reply(data, working, cfg)
+            continue
+        if answer and not llm.is_promise_only(answer):
+            data["tool"] = None
+            return await _make_llm_reply(data, working, cfg)
+        break
+
+    # 兜底：关掉工具再问一次，模型只能自己作答
+    forced = dict(ctx)
+    forced["tools_schema"] = []
+    forced["read_block"] = (
+        "现在没有可用工具，也不要表示要去查询或让用户等待。"
+        "用你已经知道的信息直接回答；不确定的数字明确写「这一点需你确认」，不要编造。"
+        + (chr(10) + "已知工具结果：" + chr(10) + chr(10).join(observations[-3:]) if observations else ""))
+    try:
+        final = await llm.react(query, forced, cfg, image_b64)
+    except Exception:
+        final = None
+    forced_answer = str((final or {}).get("answer") or "").strip()
+    if forced_answer and not llm.is_promise_only(forced_answer):
+        final["tool"] = None
+        return await _make_llm_reply(final, forced, cfg)
+    # 连「不许再拖」都只换来一句「我这就去查」：不能再把空话发给用户。
+    # 明确说明能力边界，比假装正在处理诚实。
+    honest = AgentReply(
+        text=("这次没查到能直接引用的实时数据，我不瞎编。"
+              "你可以把要对比的页面或截图发我，我读完再给结论；"
+              "或者我先按已有常识给一版框架，具体数字你核对官方页面。"),
+        confidence=0.35,
+        mode="llm_react",
+        tool_used=None,
+        ctx_used=(ctx or {}).get("used"),
+    )
+    return honest
 
 
 async def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
@@ -406,13 +475,31 @@ async def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
     tool_name = parsed.tool
     tool_result = None
     tool_missed = False
+    # 只认「展示给模型的工具清单」里的名字：模型有时会凭记忆点一个没配置的工具
+    # （如没配搜索时硬选 web_search）。那种情况不该去执行——执行结果必然是
+    # 「未接入」，还会把用户答案顶掉。直接当作没有工具，让模型的正文生效。
+    # 只在「调用方给了明确可见清单」时做白名单过滤：
+    # 空清单意味着调用方（单测/自定义实现）直接给了 tools 映射，
+    # 这时按映射判断即可，不能因为 schema 为空就把工具全否掉。
+    schema_list = [t for t in (ctx.get("tools_schema") or []) if isinstance(t, dict)]
+    if schema_list:
+        visible_tools = {t.get("name") for t in schema_list}
+        if tool_name and tool_name not in visible_tools:
+            tool_name = None
     if tool_name and tool_name in tools:
         args = parsed.tool_args or {}
         tool_result = await tools_mod.invoke_with(ctx.get("tools"), tool_name, args,
                                                   ctx.get("tool_ctx") or EMPTY)
         if tool_result.get("status") == "bad_args":
             tool_result = {"tool": tool_name, "status": "bad_args", "note": "工具参数不合法。"}
-        parsed.answer = (tool_result or {}).get("note") or parsed.answer or "工具已执行。"
+        # 工具「没接入/没配置」时不能把它的提示当最终答复发给用户：
+        # 模型本来可以基于已有资料回答，拿 note 顶替等于对用户说「我做不了」。
+        unavailable = (tool_result or {}).get("connected") is False
+        note = (tool_result or {}).get("note") or ""
+        if unavailable and (parsed.answer or "").strip():
+            pass  # 保留模型自己给出的答案
+        else:
+            parsed.answer = note or parsed.answer or "工具已执行。"
         # 工具自己说「没接入 / 没查到」时标记升级：对客话术必须与系统状态一致，
         # 不承诺「已转人工」——这里没有客服团队，只落一条待补充的工单。
         # status=empty（没待办/没记录）是正常答案，不算缺口。
@@ -447,6 +534,7 @@ async def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
     if answer.confidence < threshold and not answer.escalate:
         answer.escalate = True
         answer.escalate_reason = answer.escalate_reason or "low_confidence"
+    # 输出钩子统一在 run()/run_stream() 出口应用（这里再加一次会让「追加落款」叠两遍）
     return answer
 
 
@@ -509,6 +597,22 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
     if len(query) > max_len:
         query = query[:max_len]
 
+    # 输入钩子：用户消息进管线前的确定性规则（拦截/改写），优先于一切模型判断
+    try:
+        from core import hooks as hooks_mod
+
+        hook_res = hooks_mod.run_pre_input(query, cfg)
+        if hook_res["action"] == "block":
+            ctx = await build_context_async(query, history, cfg, visitor_key, False)
+            return AgentReply(text=hook_res["text"], confidence=1.0, mode="hook",
+                              ctx_used=ctx["used"], tool_used="hook:pre_input")
+        if hook_res["action"] == "rewrite" and hook_res["text"] != query:
+            message = ChannelMessage(**{**message.__dict__, "text": hook_res["text"]})
+            query = hook_res["text"]
+    except Exception as exc:  # 钩子故障不影响对话
+        import logging as _logging
+        _logging.getLogger("cs.events").warning("hook pre_input failed: %s", type(exc).__name__)
+
     # 记忆 opt-out：访客说"不要记我/忘记我"直接拦截并清记忆
     opt_out_reply = _maybe_opt_out_memory(query, visitor_key)
     if opt_out_reply:
@@ -539,6 +643,14 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
             web = not kb_hits
 
     ctx = await build_context_async(query, history, cfg, visitor_key, web)
+    # 技能说明书：告诉模型「什么时候用哪个工具」——只有工具没有技能时，
+    # 模型经常知道有 read_file 却不知道先列目录，等于工具白装。
+    try:
+        from core import skills as skills_mod
+
+        ctx["skills_block"] = skills_mod.render(cfg)
+    except Exception:  # 技能渲染失败绝不能影响主链路
+        ctx["skills_block"] = ""
     # 工具上下文：让工具知道"谁在问、在哪个群、刚才说了什么、有没有带图"
     ctx["tool_ctx"] = ToolContext(
         visitor_id=visitor_key or "",
@@ -637,6 +749,26 @@ def _critique_reply(text: str, history: list[dict]) -> list[str]:
     return issues
 
 
+def _apply_post_hooks(reply: AgentReply, cfg: dict) -> AgentReply:
+    """输出钩子：回复落库前的确定性改写/追加/替换。
+
+    与输出侧护栏分工：护栏管「不许泄露」，钩子管「运营要求」（加免责声明、
+    统一签名、特定话题替换话术）。两者都在模型之外强制执行，不依赖模型配合。
+    """
+    try:
+        from core import hooks as hooks_mod
+
+        res = hooks_mod.run_post_reply(reply.text or "", cfg)
+    except Exception:
+        return reply
+    if res["action"] == "pass":
+        return reply
+    reply.text = res["text"]
+    if res["action"] in ("replace", "block"):
+        reply.tool_used = "hook:post_reply"
+    return reply
+
+
 _SELF_FIX_CACHE: tuple[float, str] = (0.0, "")
 
 
@@ -674,49 +806,57 @@ async def run(message: ChannelMessage, history: list[dict], visitor_key: str) ->
         if isinstance(prepared, AgentReply):
             return prepared
         cfg, query, ctx = prepared
+        reply = await _run_body(message, history, visitor_key, cfg, query, ctx)
+        # 输出钩子统一在出口应用：所有分支（标注/直连工具/README/LLM/规则）一视同仁，
+        # 分支内部各自加一遍必然会漏。
+        return _apply_post_hooks(reply, cfg)
 
-        # 标注回复（Dify annotations 对标）：命中管理员标注的标准答案，直接回复，
-        # 不走 KB/LLM——最便宜、最可控、零延迟。放在所有引擎分支之前。
-        ann = store.annotation_hit(query)
-        if ann:
-            return AgentReply(
-                text=ann["answer"], mode="annotation", confidence=1.0,
-                citations=[f"标注#{ann['id']}"],
-            )
 
-        # 工具意图直通：提醒/记忆/待办这类语义极其明确的请求，直接执行工具，
-        # 不赌模型会不会选工具。实测 LLM 在 QQ 群里经常推脱「我没这功能」——
-        # 明明注册了工具，模型却宁可道歉也不调用，用户体验是致命的。
-        direct = await _direct_tool(query, ctx, cfg)
-        if direct is not None:
-            return direct
+async def _run_body(message: ChannelMessage, history: list[dict], visitor_key: str,
+                cfg: dict, query: str, ctx: dict) -> AgentReply:
 
-        # 链接直读：消息里给了明确 URL 且要求看内容时，直接抓取再交给模型总结。
-        # 不能指望模型每轮都主动选 read_webpage——实测它会先吐槽"占位符网站"
-        # 而不是真去读（模型没有"必须调用工具"的硬约束）。
-        web_reply = await _prefetch_url(query, ctx, cfg)
-        if web_reply is not None:
-            return web_reply
-        file_reply = await _prefetch_file(query, ctx, cfg)
-        if file_reply is not None:
-            return file_reply
+    # 标注回复（Dify annotations 对标）：命中管理员标注的标准答案，直接回复，
+    # 不走 KB/LLM——最便宜、最可控、零延迟。放在所有引擎分支之前。
+    ann = store.annotation_hit(query)
+    if ann:
+        return AgentReply(
+            text=ann["answer"], mode="annotation", confidence=1.0,
+            citations=[f"标注#{ann['id']}"],
+        )
 
-        mode = cfg.get("engine", {}).get("mode", "auto")
-        llm_reply = None
-        if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
-            with tracing.span("zhike.llm", {"model": cfg["llm"].get("model", "")}):
-                try:
-                    llm_reply = await _llm_answer(query, ctx, cfg, image_b64=message.image_b64)
-                except Exception:
-                    llm_reply = None
-            if llm_reply is None and mode == "llm":
-                rule = await _rule_react(query, ctx, cfg)
-                rule.mode = "rule_fallback"
-                return rule
-        if llm_reply:
-            _maybe_critique(llm_reply, ctx, visitor_key)
-            return llm_reply
-        return await _rule_react(query, ctx, cfg)
+    # 工具意图直通：提醒/记忆/待办这类语义极其明确的请求，直接执行工具，
+    # 不赌模型会不会选工具。实测 LLM 在 QQ 群里经常推脱「我没这功能」——
+    # 明明注册了工具，模型却宁可道歉也不调用，用户体验是致命的。
+    direct = await _direct_tool(query, ctx, cfg)
+    if direct is not None:
+        return direct
+
+    # 链接直读：消息里给了明确 URL 且要求看内容时，直接抓取再交给模型总结。
+    # 不能指望模型每轮都主动选 read_webpage——实测它会先吐槽"占位符网站"
+    # 而不是真去读（模型没有"必须调用工具"的硬约束）。
+    web_reply = await _prefetch_url(query, ctx, cfg)
+    if web_reply is not None:
+        return web_reply
+    file_reply = await _prefetch_file(query, ctx, cfg)
+    if file_reply is not None:
+        return file_reply
+
+    mode = cfg.get("engine", {}).get("mode", "auto")
+    llm_reply = None
+    if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
+        with tracing.span("zhike.llm", {"model": cfg["llm"].get("model", "")}):
+            try:
+                llm_reply = await _llm_answer(query, ctx, cfg, image_b64=message.image_b64)
+            except Exception:
+                llm_reply = None
+        if llm_reply is None and mode == "llm":
+            rule = await _rule_react(query, ctx, cfg)
+            rule.mode = "rule_fallback"
+            return rule
+    if llm_reply:
+        _maybe_critique(llm_reply, ctx, visitor_key)
+        return llm_reply
+    return await _rule_react(query, ctx, cfg)
 
 
 async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: str):
@@ -762,8 +902,18 @@ async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: 
                     break
         except Exception:  # aqg: top-level boundary
             data = None
+        # 流式只跑了一轮，必须补 OBSERVE：
+        # - 模型要工具 → 执行并把结果回填
+        # - 模型只说「我这就去查」→ 逼一轮真实答案
+        # 否则用户看到的是空回复或一句空话（实测 u2-flash 两种都复现）。
         if data is not None:
-            final = await _make_llm_reply(data, ctx, cfg)
+            wants_tool = bool(str(data.get("tool") or "").strip())
+            promise_only = llm.is_promise_only(str(data.get("answer") or ""))
+            if wants_tool or promise_only:
+                final = await _llm_answer(query, ctx, cfg,
+                                          image_b64=message.image_b64, first=data)
+            else:
+                final = await _make_llm_reply(data, ctx, cfg)
         elif not deltas_sent:
             # 流式未产出任何内容：按非流式再试一次（内部含多模型备援），仍失败才回规则
             try:
@@ -774,6 +924,8 @@ async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: 
         final = await _rule_react(query, ctx, cfg)
         if mode == "llm" and cfg.get("llm", {}).get("has_key"):
             final.mode = "rule_fallback"
+    # 输出钩子：与非流式入口同一套规则（final.text 是权威内容，前端会以它覆盖打字机片段）
+    final = _apply_post_hooks(final, cfg)
     # 已向客户端发过 delta 时不再补发 delta：
     # 否则前端会把「半截 LLM 文本 + 规则话术」拼在一起显示（已复现）。
     # final 仍完整返回，前端以它为准覆盖。
