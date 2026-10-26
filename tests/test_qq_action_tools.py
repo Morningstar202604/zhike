@@ -57,3 +57,14 @@ def test_action_error_becomes_readable_note(monkeypatch):
     res = asyncio.run(tools.invoke("qq_group_ban", {"user_id": "2", "duration": "60"}, ctx))
     assert res["found"] is False
     assert "没办成" in res["note"]
+
+
+def test_avatar_and_profile_tools_registered():
+    """换头像/改资料也是可逆写动作，必须走同一套鉴权（不能绕过动作层直连协议端）。"""
+    for name in ("qq_set_avatar", "qq_set_profile"):
+        assert name in tools._ASYNC_IMPLS
+        assert name in tools.TOOL_META
+    from core.actions import registry
+
+    assert registry.REGISTRY["set_qq_avatar"].risk == 1
+    assert registry.REGISTRY["set_qq_profile"].risk == 1

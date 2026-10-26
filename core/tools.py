@@ -1461,6 +1461,15 @@ _QQ_ACTION_TOOLS: dict[str, dict] = {
         "args": {"flag": "string", "sub_type": "string", "approve": "boolean"},
         "desc": "同意/拒绝入群请求",
     },
+    "qq_set_avatar": {
+        "action": "set_qq_avatar", "args": {"file": "string"},
+        "desc": "换机器人 QQ 头像（file 为本机图片路径或 http 链接）",
+    },
+    "qq_set_profile": {
+        "action": "set_qq_profile",
+        "args": {"nickname": "string", "personal_note": "string", "sex": "string"},
+        "desc": "改机器人 QQ 昵称 / 签名 / 性别",
+    },
 }
 
 for _tool_name, _meta in _QQ_ACTION_TOOLS.items():

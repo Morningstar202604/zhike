@@ -250,7 +250,12 @@ async def _collect(event: MessageEvent):
             elif seg.type == "image":
                 summary = str(seg.data.get("summary", "") or "")
                 url = str(seg.data.get("url", "") or "")
+                # 群里绝大多数梗图 summary 都是「[动画表情]」，直接拿来当关键词
+                # 会让「按关键词找表情」永远命中同一批空标签。用「群号+序号」兜底，
+                # 同时把 summary 清空，避免库里 300 条全是同一个词。
                 if url and ("动画表情" in summary or "表情" in summary):
+                    if not summary.strip("[]") or summary.strip("[]") == "动画表情":
+                        summary = ""
                     asyncio.create_task(_download_emote(url, group, summary))
     except Exception:  # aqg: 收集器顶层兜底
         pass

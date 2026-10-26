@@ -311,6 +311,10 @@ _EXTRA_TOOLS: list[dict] = [
      {"flag": "string", "approve": "boolean"}),
     ("qq_group_handle", "处理入群请求", "同意或拒绝入群申请",
      {"flag": "string", "sub_type": "string", "approve": "boolean"}),
+    ("qq_set_avatar", "换头像", "更换机器人 QQ 头像（本机图片路径或链接）",
+     {"file": "string"}),
+    ("qq_set_profile", "改资料", "改机器人 QQ 昵称 / 签名 / 性别",
+     {"nickname": "string", "personal_note": "string", "sex": "string"}),
 ]
 
 

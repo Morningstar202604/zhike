@@ -651,7 +651,7 @@ export default function VisitorChat() {
           {!hasMessages && !loading && (
             <div className="welcome">
               <div className="welcome-logo">
-                <img src="/character.svg" alt="知客" width={96} height={96}
+                <img src="/character.png" alt="知客" width={96} height={96}
                      style={{ borderRadius: 22, display: 'block' }} />
               </div>
               <h2>{t('你好，我是知客，你的私人秘书')}</h2>

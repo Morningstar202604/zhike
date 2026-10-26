@@ -24,7 +24,7 @@ export function Avatar({ kind = 'agent', size = 34 }) {
       // 二次元角色像（本地矢量图，不依赖外部图床）：比一个「知」字更像"人"
       icon: (
         <img
-          src="/character.svg"
+          src="/character.png"
           alt=""
           width={size}
           height={size}

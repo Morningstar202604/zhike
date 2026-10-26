@@ -114,6 +114,12 @@ _SPECS: list[ActionSpec] = [
                group="destructive", timeout_s=20),
     ActionSpec("set_restart", "重启协议端（会导致机器人短暂离线）", RISK_L2,
                ("delay",), (), group="destructive", timeout_s=30),
+
+    # ===== L1：账号资料（可逆，改错了能改回来） =====
+    ActionSpec("set_qq_avatar", "更换机器人 QQ 头像", RISK_L1,
+               ("file",), ("file",), group="account", timeout_s=30),
+    ActionSpec("set_qq_profile", "修改机器人 QQ 昵称/签名/性别", RISK_L1,
+               ("nickname", "personal_note", "sex"), (), group="account", timeout_s=20),
 ]
 
 REGISTRY: dict[str, ActionSpec] = {s.name: s for s in _SPECS}
