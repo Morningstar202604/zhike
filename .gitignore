@@ -41,3 +41,6 @@ coverage.xml
 # 覆盖率/缓存产物
 .coverage
 .ruff_cache/
+
+# 运行日志（默认 logs/app.log）
+logs/

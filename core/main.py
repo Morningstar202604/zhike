@@ -1119,6 +1119,10 @@ def create_app() -> FastAPI:
             "memory_enable": cfg.get("memory", {}).get("enable"),
             "escalate_threshold": cfg.get("escalation", {}).get("confidence_threshold"),
             "react_steps": cfg.get("escalation", {}).get("react_steps"),
+            # 检索实际模式（hybrid / fts5 / bigram）：静默降级会让界面上"向量检索已开"
+            # 与真实行为不符，这里给控制台一个可核对的字段。
+            "retrieval": retrieval.mode(),
+            "log_file": events_log.file_path(),
         }
 
     # ---- 本机令牌引导（免手输管理员令牌）----

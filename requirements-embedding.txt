@@ -4,3 +4,7 @@ sentence-transformers~=3.0
 numpy~=1.26
 # 向量持久化索引（小库标准方案，替代内存矩阵）
 sqlite-vec~=0.1
+
+# 注：sqlite-vec 与 sentence-transformers 必须装在同一 venv（本机 .venv）；
+# 只装 sentence-transformers 时向量索引会静默降级为 FTS5（现在会在
+# /api/agent/health 的 retrieval.mode 暴露为 fts5，并打一次 WARNING）。

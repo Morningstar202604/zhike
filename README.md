@@ -26,7 +26,7 @@
 | 工具暴露 | MCP server（`core/mcp_server.py`），任意 MCP 客户端可调用 | Model Context Protocol |
 | 多步执行 | ReAct 循环 PLAN → ACT → OBSERVE，步数/工具/Token/墙钟/费用预算 + 死循环检测 | ReAct + Agent SDK 预算范式 |
 | 检索 | SQLite FTS5 BM25 + 可选 BGE 向量，RRF 融合；索引故障退字面兜底 | BM25 / RRF |
-| 可观测 | OpenTelemetry GenAI span（可选）+ 指标 + 结构化事件日志 | OTel GenAI semantic conventions |
+| 可观测 | OpenTelemetry GenAI span（可选）+ 指标 + 结构化事件日志（默认落 `logs/app.log`，8MB 轮转） | OTel GenAI semantic conventions |
 | 结构化输出 | Pydantic 校验 + 逐字段宽松兜底 | PydanticAI / Agents SDK |
 | 权限 | L0 只读 / L1 可逆写 / L2 破坏性（强制审批）× T0–T3 自主度 | 最小权限 + 审批闸门 |
 | 审计 | 动作/审批/配置变更写 SHA-256 哈希链，控制台可校验 | 追加式审计链 |
@@ -155,7 +155,7 @@ MIT。NapCat 为自定义非商用许可的非官方协议端，商用前请自�
 | Tool exposure | MCP server (`core/mcp_server.py`), callable by any MCP client | Model Context Protocol |
 | Multi-step execution | ReAct loop PLAN → ACT → OBSERVE with step/tool/token/wall-clock/cost budgets and loop detection | ReAct + Agent SDK budgeting |
 | Retrieval | SQLite FTS5 BM25 + optional BGE vectors, fused with RRF; lexical fallback on index failure | BM25 / RRF |
-| Observability | Optional OpenTelemetry GenAI spans, metrics, structured event logs | OTel GenAI conventions |
+| Observability | Optional OpenTelemetry GenAI spans, metrics, structured event logs (default `logs/app.log`, 8MB rotation) | OTel GenAI conventions |
 | Structured output | Pydantic validation with per-field lenient fallback | PydanticAI / Agents SDK |
 | Permissions | L0 read / L1 reversible write / L2 destructive (forced approval) × autonomy T0–T3 | Least privilege + approval gate |
 | Audit | SHA-256 hash chain over actions, approvals and config changes; verifiable in the console | Append-only audit chain |

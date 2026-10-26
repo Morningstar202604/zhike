@@ -30,7 +30,7 @@ TOKENIZER_VERSION = 2
 
 _KB_CACHE: tuple[str, int, list[dict]] | None = None
 _INDEX_LOCK = threading.Lock()
-_INDEX_STATE: dict = {"sig": "", "fts5": False, "vec": False}
+_INDEX_STATE: dict = {"sig": "", "fts5": False, "vec": False, "warned_vec": False}
 
 
 # ---------- KB 源文件加载（保持人可读 JSON 为真相源） ----------
@@ -180,8 +180,16 @@ def _ensure_conn() -> sqlite3.Connection | None:
             conn.enable_load_extension(False)
             conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS kb_vec USING vec0(embedding float[{dim}])".format(dim=EMBED_DIM))
             _INDEX_STATE["vec"] = True
-        except Exception:
+        except Exception as e:
             _INDEX_STATE["vec"] = False
+            # 静默降级会被误以为"向量检索已启用"：明确告警一次，并在
+            # /api/agent/health 的 retrieval 字段暴露当前模式。
+            if not _INDEX_STATE.get("warned_vec"):
+                _INDEX_STATE["warned_vec"] = True
+                logger.warning(
+                    "sqlite-vec unavailable (%s): vector search disabled, using FTS5 BM25 only. "
+                    "install with: pip install -r requirements-embedding.txt",
+                    type(e).__name__)
         _RET_LOCAL.conn = conn
         _RET_LOCAL.path = db_path
         return conn
@@ -384,3 +392,31 @@ def retrieve_scored(query: str, top_k: int, min_overlap: float, use_embedding: b
 
 def retrieve(query: str, top_k: int = 4, min_overlap: float = 0.0, use_embedding: bool | None = None) -> list[dict]:
     return [e for _, e in retrieve_scored(query, top_k, min_overlap, use_embedding)]
+
+
+def mode() -> dict:
+    """当前检索模式（给 /api/agent/health 与控制台用）。
+
+    首次调用会真正打开一次索引连接：否则进程刚启动、还没人检索过时
+    这里会报 bigram（其实是"尚未探测"），控制台看到的是假降级。
+    """
+    if not _INDEX_STATE.get("sig"):
+        try:
+            _ensure_conn()
+        except Exception:
+            pass
+    vec = bool(_INDEX_STATE.get("vec"))
+    fts = bool(_INDEX_STATE.get("fts5"))
+    if vec and fts:
+        name = "hybrid"
+    elif fts:
+        name = "fts5"
+    else:
+        name = "bigram"
+    return {
+        "mode": name,
+        "fts5": fts,
+        "vector": vec,
+        "embedding_available": embedding_available(),
+        "embedding_model": BGE_MODEL if embedding_available() else "",
+    }
