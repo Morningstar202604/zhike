@@ -651,6 +651,21 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
         ctx["skills_block"] = skills_mod.render(cfg)
     except Exception:  # 技能渲染失败绝不能影响主链路
         ctx["skills_block"] = ""
+    # 人物/群档案 + 黑话：让模型「先认得人再开口」，不用每轮从零推断。
+    try:
+        from core import profiles as profiles_mod
+
+        user_key = ("qq:" + str(message.channel_user_id)) if message.channel_type in ("qq", "onebot")             else ("web:" + str(visitor_key))
+        group_key = ("qq_group:" + str(message.group_id)) if message.group_id else ""
+        ctx["profile_block"] = profiles_mod.profile_block(user_key, group_key)
+        ctx["lexicon_block"] = profiles_mod.lexicon_block(group_key or user_key)
+        profiles_mod.learn_from_message(query, group_key or user_key)
+    except Exception:  # 档案失败不能影响对话
+        ctx["profile_block"] = ""
+        ctx["lexicon_block"] = ""
+    if query:
+        # 引用回复：把用户这一句原话交给模型，避免"答非所问还答得理直气壮"
+        ctx["quote_block"] = "【用户这一句原话】" + query[:300]
     # 工具上下文：让工具知道"谁在问、在哪个群、刚才说了什么、有没有带图"
     ctx["tool_ctx"] = ToolContext(
         visitor_id=visitor_key or "",
@@ -708,10 +723,14 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
         )
 
     if message.image_b64 and cfg.get("multimodal", {}).get("enable", True):
-        # 配了视觉模型且有 Key → 交给 LLM 看图；否则请用户用文字描述
-        # 未单独配视觉模型时视为沿用主模型（与 llm._build_messages 保持一致）
-        vision_ready = bool((cfg.get("multimodal", {}) or {}).get("vision_model")
-                            or (cfg.get("llm", {}) or {}).get("model"))             and bool(cfg.get("llm", {}).get("has_key", False))
+        # 视觉能力判定要看「模型真的支持图片」，而不是「配了模型名」。
+        # 主模型 u2-flash 明确不支持 image_url（端点 400），之前只判断"有模型名"
+        # 就把图丢给它，结果整轮失败掉回规则引擎——用户看到的就是"识别不了"。
+        vision_model = (cfg.get("multimodal", {}) or {}).get("vision_model") or ""
+        vision_ready = bool(vision_model) and bool(cfg.get("llm", {}).get("has_key", False))
+        if not vision_ready:
+            # 主模型支持多模态时可沿用主模型
+            vision_ready = bool((cfg.get("llm", {}) or {}).get("supports_vision"))                 and bool(cfg.get("llm", {}).get("has_key", False))
         if not vision_ready:
             return AgentReply(
                 text="图收到了，但我这会儿看不了图。你用文字说一下图里有啥？",
@@ -841,6 +860,10 @@ async def _run_body(message: ChannelMessage, history: list[dict], visitor_key: s
     if file_reply is not None:
         return file_reply
 
+    # 没接通模型时不要用规则话术硬撑着回 QQ：那等于对外宣称"我是机器人但我不懂"。
+    # mode="no_model" 让网关直接静默（Web 端仍保留兜底话术，不影响网页访客体验）。
+    if message.channel_type.startswith("qq") and not cfg.get("llm", {}).get("has_key"):
+        return AgentReply(text="", confidence=0.0, mode="no_model", ctx_used=ctx["used"])
     mode = cfg.get("engine", {}).get("mode", "auto")
     llm_reply = None
     if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):

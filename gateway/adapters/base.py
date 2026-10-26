@@ -86,8 +86,9 @@ class ChannelAdapter(Protocol):
         """平台原始事件 → 统一消息。返回 None 表示忽略（如非消息事件、自己发的）。"""
         ...
 
-    async def send(self, msg: NormalizedMessage, content: str) -> SendResult:
-        """把回复发回来源。"""
+    async def send(self, msg: NormalizedMessage, content: str,
+                   quote: str | None = None) -> SendResult:
+        """把回复发回来源。quote=被引用消息 id（平台支持时带上）。"""
         ...
 
     async def execute(self, action: str, params: dict) -> dict:

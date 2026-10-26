@@ -77,13 +77,18 @@ class OneBot11Adapter:
         s = str(value)
         return int(s) if s.isdigit() else s
 
-    async def send(self, msg: NormalizedMessage, content: str) -> SendResult:
+    async def send(self, msg: NormalizedMessage, content: str,
+                   quote: str | None = None) -> SendResult:
         if self._bot is None:
             return SendResult(ok=False, error="协议端未连接")
         api, params = self._resolve_api(msg)
         last_id = None
+        segments = reply_segments(content or "", self._max_chars)
+        if quote and segments:
+            # 只给第一段加引用：每段都引用会在群里刷出一排引用块
+            segments[0] = f"[CQ:reply,id={quote}]" + segments[0]
         try:
-            for seg in reply_segments(content or "", self._max_chars):
+            for seg in segments:
                 if not seg:
                     continue
                 data = await self._bot.call_api(api, message=seg, **params)

@@ -633,7 +633,7 @@ export default function VisitorChat() {
             {escalated && (
               <span className="badge warn">
                 <ShieldCheck size={12} />
-                已升级{operatorName ? ` · ${operatorName}` : ''}{ticketId}
+                {operatorName ? `${t('已由')} ${operatorName} ${t('接手')}` : t('已记下')}{ticketId}
               </span>
             )}
             <button className="btn ghost sm" onClick={newChat} title={t('开始新对话')} disabled={loading}>
@@ -651,7 +651,8 @@ export default function VisitorChat() {
           {!hasMessages && !loading && (
             <div className="welcome">
               <div className="welcome-logo">
-                <Logo size={56} />
+                <img src="/character.svg" alt="知客" width={96} height={96}
+                     style={{ borderRadius: 22, display: 'block' }} />
               </div>
               <h2>{t('你好，我是知客，你的私人秘书')}</h2>
               <p>
@@ -703,7 +704,7 @@ export default function VisitorChat() {
           {escalated && !operatorName && (
             <div className="escalate-bar">
               <Headset size={14} />
-              已为你叫了真人，上线后会实时出现在这里。
+              这条我记下来了，有结论会回你。
             </div>
           )}
         </div>

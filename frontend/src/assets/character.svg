@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="知客 · 二次元角色像">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="72%">
+      <stop offset="0%" stop-color="#FBF7EF"/>
+      <stop offset="62%" stop-color="#F2EDE2"/>
+      <stop offset="100%" stop-color="#E4DCCB"/>
+    </radialGradient>
+    <linearGradient id="hair" x1="30%" y1="0%" x2="70%" y2="100%">
+      <stop offset="0%" stop-color="#22463F"/>
+      <stop offset="46%" stop-color="#12302B"/>
+      <stop offset="100%" stop-color="#0A1E1B"/>
+    </linearGradient>
+    <linearGradient id="hairShine" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7FBFB1" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#9FD9C9" stop-opacity=".55"/>
+      <stop offset="100%" stop-color="#7FBFB1" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="skin" x1="40%" y1="0%" x2="60%" y2="100%">
+      <stop offset="0%" stop-color="#FDEEE2"/>
+      <stop offset="100%" stop-color="#F6DCCB"/>
+    </linearGradient>
+    <linearGradient id="iris" x1="30%" y1="10%" x2="70%" y2="90%">
+      <stop offset="0%" stop-color="#1D6F63"/>
+      <stop offset="55%" stop-color="#0E5C55"/>
+      <stop offset="100%" stop-color="#08332F"/>
+    </linearGradient>
+    <linearGradient id="collar" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#16362F"/>
+      <stop offset="100%" stop-color="#0C2320"/>
+    </linearGradient>
+    <clipPath id="frame">
+      <rect width="512" height="512" rx="112"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="512" height="512" fill="url(#bg)"/>
+    <!-- 背景晕染与细线 -->
+    <circle cx="256" cy="214" r="176" fill="#FFFFFF" opacity=".55"/>
+    <circle cx="256" cy="214" r="176" fill="none" stroke="#0E5C55" stroke-opacity=".10" stroke-width="2"/>
+    <circle cx="392" cy="112" r="26" fill="#C2452D" opacity=".10"/>
+    <circle cx="118" cy="150" r="14" fill="#0E5C55" opacity=".10"/>
+
+    <!-- 后发 -->
+    <path d="M256 62c-84 0-138 56-138 132 0 44 6 78 6 108 0 34 10 58 22 74h220c12-16 22-40 22-74 0-30 6-64 6-108 0-76-54-132-138-132z"
+          fill="url(#hair)"/>
+    <!-- 肩与衣领 -->
+    <path d="M150 400c14-40 52-62 106-62s92 22 106 62v60H150z" fill="url(#collar)"/>
+    <path d="M256 338l-42 26 42 34 42-34z" fill="#F7F5F0" opacity=".92"/>
+    <path d="M256 366l-20 12 20 18 20-18z" fill="#C2452D" opacity=".85"/>
+    <!-- 脖子 -->
+    <path d="M232 288h48v44c0 14-48 14-48 0z" fill="#EFD2BF"/>
+    <!-- 脸 -->
+    <path d="M256 118c-66 0-108 44-108 112 0 60 44 106 108 106s108-46 108-106c0-68-42-112-108-112z"
+          fill="url(#skin)"/>
+    <!-- 耳朵 -->
+    <ellipse cx="147" cy="243" rx="14" ry="22" fill="#F6DCCB"/>
+    <ellipse cx="365" cy="243" rx="14" ry="22" fill="#F6DCCB"/>
+
+    <!-- 刘海：三束尖角 -->
+    <path d="M256 78c-78 0-128 50-130 116 12-26 30-40 52-44-8 20-4 38 4 52 10-30 30-52 58-60-6 22 0 42 10 56 12-34 38-58 74-64 26-4 44 10 52 32 12-56-40-88-120-88z"
+          fill="url(#hair)"/>
+    <path d="M138 196c-10 26-16 54-16 82 8-28 20-50 36-66-6-8-14-14-20-16z" fill="#12302B"/>
+    <path d="M374 196c10 26 16 54 16 82-8-28-20-50-36-66 6-8 14-14 20-16z" fill="#12302B"/>
+    <!-- 发丝高光 -->
+    <path d="M170 128c34-20 78-26 118-18" stroke="url(#hairShine)" stroke-width="14"
+          stroke-linecap="round" fill="none" opacity=".9"/>
+
+    <!-- 眉毛 -->
+    <path d="M186 214c14-8 30-9 44-4" stroke="#2A1C18" stroke-width="7" stroke-linecap="round" fill="none" opacity=".85"/>
+    <path d="M282 210c14-5 30-4 44 4" stroke="#2A1C18" stroke-width="7" stroke-linecap="round" fill="none" opacity=".85"/>
+
+    <!-- 眼睛（二次元大眼） -->
+    <g>
+      <path d="M188 240c0-16 14-28 32-28s32 12 32 28-14 30-32 30-32-14-32-30z" fill="#FFFFFF"/>
+      <circle cx="220" cy="242" r="21" fill="url(#iris)"/>
+      <circle cx="220" cy="245" r="10" fill="#08211E"/>
+      <circle cx="213" cy="234" r="6.5" fill="#FFFFFF"/>
+      <circle cx="228" cy="252" r="3" fill="#FFFFFF" opacity=".8"/>
+      <path d="M186 232c14-14 46-16 66 0" stroke="#241713" stroke-width="9" stroke-linecap="round" fill="none"/>
+      <path d="M188 226c2-10 6-14 10-14" stroke="#241713" stroke-width="5" stroke-linecap="round" fill="none" opacity=".7"/>
+    </g>
+    <g>
+      <path d="M260 242c0-16 14-28 32-28s32 12 32 28-14 30-32 30-32-14-32-30z" fill="#FFFFFF"/>
+      <circle cx="292" cy="244" r="21" fill="url(#iris)"/>
+      <circle cx="292" cy="247" r="10" fill="#08211E"/>
+      <circle cx="285" cy="236" r="6.5" fill="#FFFFFF"/>
+      <circle cx="300" cy="254" r="3" fill="#FFFFFF" opacity=".8"/>
+      <path d="M258 234c14-14 46-16 66 0" stroke="#241713" stroke-width="9" stroke-linecap="round" fill="none"/>
+      <path d="M316 228c2-10 6-14 10-14" stroke="#241713" stroke-width="5" stroke-linecap="round" fill="none" opacity=".7"/>
+    </g>
+
+    <!-- 腮红 -->
+    <ellipse cx="176" cy="286" rx="20" ry="10" fill="#E9816B" opacity=".26"/>
+    <ellipse cx="336" cy="286" rx="20" ry="10" fill="#E9816B" opacity=".26"/>
+
+    <!-- 鼻与嘴 -->
+    <path d="M256 274l-5 10h10z" fill="#D9A78E" opacity=".75"/>
+    <path d="M242 300c6 8 22 8 28 0" stroke="#8C4A3C" stroke-width="5" stroke-linecap="round" fill="none"/>
+
+    <!-- 朱砂发饰：呼应品牌印章 -->
+    <g>
+      <circle cx="378" cy="196" r="15" fill="#C2452D"/>
+      <circle cx="378" cy="196" r="15" fill="none" stroke="#F7F5F0" stroke-width="2" opacity=".55"/>
+      <circle cx="372" cy="190" r="4" fill="#F7F5F0" opacity=".65"/>
+      <path d="M378 211c-4 16-16 26-30 30" stroke="#C2452D" stroke-width="4" stroke-linecap="round" fill="none" opacity=".8"/>
+    </g>
+    <!-- 左侧细发夹 -->
+    <path d="M158 214l-16 26" stroke="#C9A227" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="141" cy="243" r="5" fill="#C9A227"/>
+  </g>
+
+  <!-- 外框 -->
+  <rect x="1.5" y="1.5" width="509" height="509" rx="111" fill="none" stroke="#0E5C55" stroke-opacity=".16" stroke-width="3"/>
+</svg>

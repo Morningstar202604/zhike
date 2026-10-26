@@ -222,6 +222,14 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
     if ctx.get("skills_block"):
         # 技能说明书放在工具清单之后：先知道有哪些工具，再知道按什么流程用
         parts.append(str(ctx["skills_block"]))
+    if ctx.get("profile_block"):
+        # 人物/群档案：先认得人，再开口
+        parts.append(str(ctx["profile_block"]))
+    if ctx.get("lexicon_block"):
+        parts.append(str(ctx["lexicon_block"]))
+    if ctx.get("quote_block"):
+        # 引用回复的依据：让模型明确在回哪一句，别答非所问
+        parts.append(str(ctx["quote_block"]))
     if ctx.get("read_block"):
         # 已经替你打开/读到的原文。中性表述，避免模型说"系统日志/搜索结果"这类机制腔。
         parts.append(str(ctx["read_block"]))
@@ -300,8 +308,10 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
 
     # 未显式配置视觉模型时沿用主模型：agnes/deepseek 之外多数 OpenAI 兼容端点
     # 的旗舰模型本身支持图片输入，留空就没图看属于白丢能力。
-    vision_model = ((cfg.get("multimodal", {}) or {}).get("vision_model", "") or "").strip()         or (llm_cfg.get("model") or "").strip()
-    if image_b64 and vision_model:
+    # 只在显式配置了视觉模型时才带图：主模型未必支持 image_url
+    # （u2-flash 实测返回 400 model does not support image_url content）。
+    vision_model = ((cfg.get("multimodal", {}) or {}).get("vision_model", "") or "").strip()
+    if image_b64 and vision_model and (cfg.get("multimodal") or {}).get("enable", True):
         img = image_b64
         if img.startswith("data:"):
             img = img.split(",", 1)[-1]

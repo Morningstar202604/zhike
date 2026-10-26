@@ -596,13 +596,19 @@ const en: Record<string, string> = {
   '7天累计': 'Last 7 days',
   '7 天累计': 'Last 7 days',
   '立即检查': 'Check now',
-  '设提醒': 'Create reminder',  '会话列表副标题': '{{query}} · refreshes every 10s · {{total}} total',
+  '设提醒': 'Create reminder',
+  '会话列表副标题': '{{query}} · refreshes every 10s · {{total}} total',
   '查看': 'View',
-  '分页状态': '{{total}} total · page {{page}} / {{pages}}',  '工具数统计': '{{n}} tools · changes take effect immediately',
+  '分页状态': '{{total}} total · page {{page}} / {{pages}}',
+  '工具数统计': '{{n}} tools · changes take effect immediately',
   'KB引用统计': '{{n}} answers cited the knowledge base',
   '升级统计': '{{n}} escalations',
   '导入成功统计': 'Imported: {{added}} added, {{total}} total',
-  '文档导入统计': 'Imported {{file}}: {{added}} entries, {{total}} total',  '会话搜索副标题': 'Search “{{query}}” · refreshes every 10s · {{total}} total',
+  '文档导入统计': 'Imported {{file}}: {{added}} entries, {{total}} total',
+  '会话搜索副标题': 'Search “{{query}}” · refreshes every 10s · {{total}} total',
+  '已由': 'Handled by',
+  '接手': 'is on it',
+  '已记下': 'Noted',
 }
 
 export default en

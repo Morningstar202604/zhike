@@ -189,3 +189,35 @@ def test_gateway_chat_lock_is_per_chat():
     same, distinct = asyncio.run(check())
     assert same is True
     assert distinct is False
+
+
+def test_face_and_mface_become_readable_tokens():
+    """表情段以前被直接丢弃，模型只看到空文本 —— 这是"表情识别不了"的根因。"""
+    from gateway.mapping import from_onebot_v11
+
+    ev = from_onebot_v11({
+        "post_type": "message", "message_type": "group", "self_id": "1",
+        "user_id": "2", "group_id": "9", "to_me": True, "message_id": "m1",
+        "sender": {"nickname": "小明"},
+        "message": [
+            {"type": "text", "data": {"text": "笑死"}},
+            {"type": "face", "data": {"id": "13"}},
+            {"type": "mface", "data": {"summary": "[猫猫头]"}},
+        ],
+    })
+    assert ev is not None
+    assert "笑死" in ev.text
+    assert "[表情:呲牙]" in ev.text
+    assert "[表情:猫猫头]" in ev.text
+
+
+def test_cq_string_face_is_converted():
+    from gateway.mapping import from_onebot_v11
+
+    ev = from_onebot_v11({
+        "post_type": "message", "message_type": "group", "self_id": "1",
+        "user_id": "2", "group_id": "9", "to_me": True, "message_id": "m2",
+        "sender": {"nickname": "小明"},
+        "message": "好啊[CQ:face,id=14]",
+    })
+    assert ev is not None and "[表情:微笑]" in ev.text

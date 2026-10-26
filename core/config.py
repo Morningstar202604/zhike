@@ -22,6 +22,9 @@ def _defaults() -> dict:
             "max_output": int(os.environ.get("USER_LLM_MAX_OUTPUT", "0") or 0),
             "protocol": os.environ.get("USER_LLM_PROTOCOL", "openai-compatible"),
             "tool_calling": True,
+            # 主模型是否支持图片输入：多数纯文本模型（u2-flash 等）不支持，
+            # 只有显式声明或配了 vision_model 才把图送进模型。
+            "supports_vision": os.environ.get("USER_LLM_SUPPORTS_VISION", "").lower() in ("1", "true", "yes", "on"),
             # 已保存的提供商档案（AstrBot 多提供商对标）：不含 Key，Key 只跟随当前激活配置
             "providers": [],
         },
@@ -63,7 +66,10 @@ def _defaults() -> dict:
         # 早期默认空导致「图片一律走规则话术」，等于工具装了却从来不跑）。
         "vision_model": os.environ.get("USER_VISION_MODEL", ""),
         # 生图模型：用于 generate_image（文生图），与看图模型分开配。
-        "image_model": os.environ.get("USER_IMAGE_MODEL", "agnes-image-2.1-flash"),
+        "image_model": os.environ.get("USER_IMAGE_MODEL", ""),
+        # 生图端点（可选）：与对话端点分离，UniSound 这类只有 chat 的端点需要单独配
+        "image_base_url": os.environ.get("IMAGE_API_BASE_URL", ""),
+        "image_api_key": "",
     },
     "guardrail": {
         "injection_block": True,
@@ -154,6 +160,12 @@ def get_config() -> dict:
         stored_key = crypto.decrypt_key(stored_key)
         cfg["llm"]["api_key"] = stored_key
     # providers 档案的 Key 同样密文落库，读时解密（多模型备援链用）
+    image_key = (cfg.get("multimodal") or {}).get("image_api_key")
+    if image_key:
+        try:
+            cfg["multimodal"]["image_api_key"] = crypto.decrypt_key(image_key)
+        except Exception:
+            cfg["multimodal"]["image_api_key"] = ""
     for p in cfg["llm"].get("providers") or []:
         if isinstance(p, dict) and p.get("api_key"):
             try:
@@ -178,14 +190,16 @@ _SCHEMA: dict[str, dict[str, type | tuple]] = {
     "llm": {"base_url": str, "model": str, "fallback_model": str, "api_key": (str, type(None)),
             "temperature": (int, float), "top_p": (int, float), "max_tokens": int,
             "has_key": bool, "key_source": str, "providers": list,
-            "context_window": int, "max_output": int, "protocol": str, "tool_calling": bool},
+            "context_window": int, "max_output": int, "protocol": str, "tool_calling": bool,
+            "supports_vision": bool},
     "retrieval": {"kb_top_k": int, "min_overlap": (int, float), "embedding": str},
     "context": {"history_turns": int, "char_budget": int, "compress_threshold": int,
                 "summarize": bool, "relevant_only": bool, "modules": dict, "persona": str},
     "memory": {"enable": bool, "retrieval_top_k": int, "auto_capture": bool,
                "capture_keywords": list, "visit_greeting": bool},
     "tools": {},
-    "multimodal": {"enable": bool, "vision_model": str, "image_model": str},
+    "multimodal": {"enable": bool, "vision_model": str, "image_model": str,
+                   "image_base_url": str, "image_api_key": str},
     "guardrail": {"injection_block": bool},
     "engine": {"mode": str},
     "escalation": {"confidence_threshold": (int, float), "max_message_len": int, "react_steps": int, "handoff": bool},
@@ -259,6 +273,12 @@ def update_config(patch: dict) -> dict:
     # 落库前加密 api_key（Fernet），DB 里不再存明文
     if "api_key" in llm_patch and isinstance(llm_patch["api_key"], str):
         llm_patch["api_key"] = crypto.encrypt_key(llm_patch["api_key"])
+    mm_patch = patch.get("multimodal") or {}
+    if isinstance(mm_patch.get("image_api_key"), str) and mm_patch["image_api_key"]:
+        if mm_patch["image_api_key"].startswith("••"):
+            mm_patch["image_api_key"] = (get_config().get("multimodal") or {}).get("image_api_key") or ""
+        else:
+            mm_patch["image_api_key"] = crypto.encrypt_key(mm_patch["image_api_key"])
     # providers 档案的 Key：掩码回环保留旧值；新值加密；空值删除
     provs = llm_patch.get("providers")
     if isinstance(provs, list):

@@ -1,4 +1,6 @@
-def _ingest(client, text, user="u1", channel="qq_group", group="g1"):
+def _ingest(client, text, user="u1", channel="webchat", group="g1"):
+    # 默认用 webchat：QQ 渠道在「没接通模型」时按产品要求静默不回，
+    # 那部分行为由 test_qq_silent_without_model 单独覆盖。
     return client.post(
         "/v1/ingest",
         json={
@@ -43,7 +45,7 @@ def test_ingest_reuses_session(client):
 
 
 def test_ingest_private_channel_no_group(client):
-    r = _ingest(client, "怎么开发票", user="u-pv", channel="qq_private", group=None)
+    r = _ingest(client, "怎么开发票", user="u-pv", channel="webchat", group=None)
     assert r.status_code == 200
     assert r.json()["reply"]["text"]
 
@@ -55,3 +57,25 @@ def test_ingest_rate_limited(client, monkeypatch):
     assert _ingest(client, "问题二", user="u-rl").status_code == 200
     assert _ingest(client, "问题三", user="u-rl").status_code == 429
     assert _ingest(client, "问题三", user="u-rl-b").status_code == 200
+
+
+def test_qq_silent_when_no_model(client, monkeypatch):
+    """QQ 渠道没接通模型时必须静默（用户明确要求：没连上模型就别回复）。
+    Web 渠道仍保留兜底话术，不受影响。"""
+    from core import config as config_mod
+
+    original = config_mod.get_config
+
+    def patched():
+        cfg = original()
+        cfg["llm"] = {**cfg["llm"], "has_key": False, "api_key": ""}
+        return cfg
+
+    monkeypatch.setattr(config_mod, "get_config", patched)
+    r = _ingest(client, "你好", user="u-nomodel", channel="qq_group")
+    assert r.status_code == 200
+    assert r.json()["reply"]["text"] == ""
+    assert r.json()["reply"]["mode"] == "no_model"
+
+    web = _ingest(client, "你好", user="u-nomodel-web", channel="webchat")
+    assert web.json()["reply"]["text"], "Web 端仍要有兜底回复"

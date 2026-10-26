@@ -538,7 +538,9 @@ def test_qq_group_members_needs_group():
 # 视觉模型回落：不配 vision_model 时用主模型，不能静默「看不了图」
 # ------------------------------------------------------------
 
-def test_llm_build_messages_uses_main_model_for_vision_when_unset():
+def test_llm_build_messages_never_sends_image_to_text_only_model():
+    """未配视觉模型时不能把图塞给主模型：u2-flash 这类纯文本模型会 400
+    （实测 "model does not support image_url content"），旧行为让整轮直接失败。"""
     from core import llm
 
     cfg = {"llm": {"model": "m-main"}, "multimodal": {"vision_model": ""},
@@ -547,7 +549,7 @@ def test_llm_build_messages_uses_main_model_for_vision_when_unset():
            "memory_block": "", "summary": "", "history": []}
     msgs, model = llm._build_messages("看图", ctx, cfg, image_b64="iVBORw0KGgo")
     assert model == "m-main"
-    assert isinstance(msgs[-1]["content"], list), "未配视觉模型时应按多模态消息发送"
+    assert isinstance(msgs[-1]["content"], str), "无视觉模型必须退纯文本"
 
 
 def test_llm_build_messages_prefers_explicit_vision_model():

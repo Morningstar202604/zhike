@@ -150,11 +150,18 @@ def test_build_messages_vision_routing():
     assert content[1]["type"] == "image_url" and content[1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert "data:data:" not in content[1]["image_url"]["url"]
 
-    # 没有配视觉模型时沿用主模型，仍按多模态发送（不能把图丢掉）
+    # 没有配视觉模型时绝不把图丢给主模型：u2-flash 这类纯文本模型会 400
+    # （实测 "model does not support image_url content"），旧行为会让整轮失败。
     cfg2 = _cfg()
     msgs2, model2 = llm_mod._build_messages("你好", _mini_ctx(), cfg2, image_b64="iVBORw0KGgo")
     assert model2 == "m"
-    assert isinstance(msgs2[-1]["content"], list)
+    assert isinstance(msgs2[-1]["content"], str), "无视觉模型时必须退纯文本，不能带图"
+
+    # 显式声明主模型支持视觉时才沿用
+    cfg3 = _cfg()
+    cfg3["llm"]["supports_vision"] = True
+    msgs3v, model3v = llm_mod._build_messages("你好", _mini_ctx(), cfg3, image_b64="iVBORw0KGgo")
+    assert model3v == "m"
 
     # 没有图时保持纯文本消息
     msgs3, model3 = llm_mod._build_messages("你好", _mini_ctx(), cfg2)

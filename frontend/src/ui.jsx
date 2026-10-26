@@ -21,19 +21,17 @@ import { t } from './lib/t'
 export function Avatar({ kind = 'agent', size = 34 }) {
   const map = {
     agent: {
+      // 二次元角色像（本地矢量图，不依赖外部图床）：比一个「知」字更像"人"
       icon: (
-        <span
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: size * 0.5,
-            fontWeight: 600,
-            lineHeight: 1,
-          }}
-        >
-          知
-        </span>
+        <img
+          src="/character.svg"
+          alt=""
+          width={size}
+          height={size}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+        />
       ),
-      bg: 'var(--brand)',
+      bg: 'transparent',
       color: '#F7F5F0',
       label: 'Agent',
     },

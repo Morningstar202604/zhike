@@ -261,11 +261,11 @@ async def _collect(event: MessageEvent):
 _CMD_START = time.time()
 _CMD_STATS = {"commands": 0, "handled": 0}
 HELP_TEXT = (
-    "知客指令（@我使用）：\n"
+    "我能做的事（@我或私聊）：\n"
     "/帮助 — 显示本菜单\n"
-    "/状态 — 机器人运行状态\n"
-    "/重置 — 开启全新对话（清除当前上下文，保留长期记忆）\n"
-    "其他任何问题直接发给我即可～"
+    "/状态 — 我的运行状态\n"
+    "/重置 — 开启全新对话（清上下文，长期记忆保留）\n"
+    "平时直接说话就行：设提醒、记事、查资料、看群消息、发图、读文件都能办。"
 )
 
 
@@ -293,11 +293,10 @@ async def _handle_command(msg, text: str) -> bool:
         elif action == "status":
             bot = _pick_bot()
             reply = (
-                f"机器人：在线（{bot.self_id if bot else '未知'}）\n"
-                f"网关运行：{_uptime_text()}\n"
-                f"已处理消息：{_CMD_STATS['handled']} 条\n"
-                f"已执行指令：{_CMD_STATS['commands']} 次\n"
-                "发 /帮助 查看全部指令"
+                f"在线：{bot.self_id if bot else '未知'}\n"
+                f"跑了 {_uptime_text()}\n"
+                f"已处理 {_CMD_STATS['handled']} 条消息、{_CMD_STATS['commands']} 条指令\n"
+                "发 /帮助 看我能干啥"
             )
         elif action == "reset":
             async with httpx.AsyncClient(timeout=15) as client:
@@ -311,7 +310,7 @@ async def _handle_command(msg, text: str) -> bool:
                     headers=_channel_headers(),
                 )
                 resp.raise_for_status()
-            reply = "已开启全新对话～ 上下文已清空，长期记忆保留。"
+            reply = "行，翻篇了。刚才聊的我不提了，你记的事还留着。"
         else:
             return False
     except Exception as e:  # 指令失败给明确反馈，不吞异常
@@ -623,6 +622,9 @@ async def handle(event: MessageEvent):
         if image_b64:
             payload["image_b64"] = image_b64
 
+    # 引用回复：把用户这条消息的 message_id 交给适配器，first 段带 [CQ:reply]。
+    # 群里消息刷得快，不带引用就不知道在回哪一句（用户明确要求）。
+    quote_id = msg.message_id if msg.is_group else None
     started = time.time()
     reply: dict | None = None
     # 同一会话串行 + 全局并发上限：群里刷屏时既不乱序也不打爆核心。
@@ -638,15 +640,19 @@ async def handle(event: MessageEvent):
             })
         except Exception as e:  # 核心不可达时给用户明确反馈，而不是沉默
             logger.warning("ingest failed: %s: %s", type(e).__name__, str(e)[:120])
-            reply_text = "我这会儿连不上后台，稍后再试～"
+            reply_text = ""  # 网关自己出问题时不冒泡给用户，只记日志
             await bus.publish(EV_ACTION_DONE, {
                 "action": "ingest", "duration_ms": int((time.time() - started) * 1000),
                 "ok": False, "error": f"{type(e).__name__}",
             })
 
-        # 白名单外的群/核心限流/空回复：静默，不发消息
+        # 白名单外的群 / 核心限流 / 没接通模型 / 空回复：静默，不发消息。
+        # no_model 是「LLM 未配置或不可用」——此时宁可不说话，也不要用规则话术
+        # 顶着"秘书"身份乱回（用户明确要求过：没连上模型就别回复）。
         mode = (reply or {}).get("mode") or ""
-        if mode in ("not_allowed", "rate_limited") or not reply_text.strip():
+        if mode in ("not_allowed", "rate_limited", "no_model") or not reply_text.strip():
+            if mode == "no_model":
+                logger.warning("model unavailable, reply suppressed (chat=%s)", msg.chat_id)
             return
 
         # 渲染管线：markdown 净化 → 小黄脸/图片标记 → 表情包收藏 → CQ 码
@@ -679,14 +685,14 @@ async def handle(event: MessageEvent):
                 # 同一条回复的连发间隔短于跨回复间隔（2.5~4.5s），像真人刷屏式补充
                 await asyncio.sleep(_env_f("GATEWAY_SPLIT_GAP", 2.5) + random.random() * 2.0)
             await asyncio.sleep(send_delay(len(seg), msg.is_group) * (1.0 if i == 0 else 0.6))
-            result = await adapter.send(msg, seg)
+            result = await adapter.send(msg, seg, quote=quote_id)
             if msg.is_group:
                 _GROUP_THROTTLE.record(msg.chat_id)
             if not result.ok:
                 logger.warning("reply send failed (part %d/%d): %s",
                                i + 1, len(segments), result.error)
                 await asyncio.sleep(0.5)
-                result = await adapter.send(msg, seg)
+                result = await adapter.send(msg, seg, quote=quote_id)
                 if not result.ok:
                     break
     _CMD_STATS["handled"] += 1

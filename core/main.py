@@ -1196,6 +1196,50 @@ def create_app() -> FastAPI:
             if not isinstance(k, str) or not k.isidentifier():
                 raise HTTPException(400, f"参数名 '{k}' 非法")
 
+    # ---- 用户 / 群档案 & 黑话库 ----
+    @app.get("/api/profiles", dependencies=[Depends(require_admin)])
+    def profiles_list(kind: str = "", limit: int = 100):
+        from core import profiles as profiles_mod
+
+        return {"profiles": profiles_mod.list_profiles(kind, limit)}
+
+    @app.put("/api/profiles/{key}", dependencies=[Depends(require_admin)])
+    def profile_save(key: str, body: dict):
+        from core import profiles as profiles_mod
+
+        kind = str(body.get("kind") or ("group" if "group" in key else "user"))
+        try:
+            rec = profiles_mod.upsert_profile(
+                key, kind,
+                display_name=str(body.get("display_name") or ""),
+                alias=str(body.get("alias") or ""),
+                tags=[str(t) for t in (body.get("tags") or [])][:20],
+                note=str(body.get("note") or ""),
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"profile": rec}
+
+    @app.get("/api/lexicon", dependencies=[Depends(require_admin)])
+    def lexicon_list(scope: str = "", limit: int = 100):
+        from core import profiles as profiles_mod
+
+        return {"entries": profiles_mod.list_lexicon(scope, limit)}
+
+    @app.post("/api/lexicon", dependencies=[Depends(require_admin)])
+    def lexicon_add(body: dict):
+        from core import profiles as profiles_mod
+
+        rec = profiles_mod.add_lexicon(
+            str(body.get("scope") or "global"),
+            str(body.get("term") or ""),
+            str(body.get("meaning") or ""),
+            str(body.get("example") or ""),
+        )
+        if not rec:
+            raise HTTPException(400, "term 不能为空且不超过 40 字")
+        return {"entry": rec}
+
     @app.get("/api/skills", dependencies=[Depends(require_admin)])
     def list_skills():
         from core import skills as skills_mod

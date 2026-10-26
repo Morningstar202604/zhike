@@ -874,15 +874,24 @@ async def tool_generate_image(ctx: ToolContext, prompt: str, size: str = "1024x1
     if not text:
         return need_ctx("generate_image", "画面描述")
     cfg = config.get_config()
+    mm = cfg.get("multimodal") or {}
+    # 生图端点与对话端点通常不是同一个（UniSound 实测 /images/generations 404）。
+    # 支持独立配置 IMAGE_API_BASE_URL / IMAGE_API_KEY；没配就如实说画不了，
+    # 不要拿对话端点的 key 去撞一个不存在的路径再报「画图失败」。
+    image_base = str(mm.get("image_base_url") or os.environ.get("IMAGE_API_BASE_URL") or "").rstrip("/")
+    image_key = str(mm.get("image_api_key") or os.environ.get("IMAGE_API_KEY") or "")
     llm_cfg = cfg.get("llm") or {}
-    if not llm_cfg.get("has_key"):
-        return off_result("generate_image", "还没配模型 Key，画不了图。")
-    model = (cfg.get("multimodal") or {}).get("image_model") or "agnes-image-2.1-flash"
-    base = str(llm_cfg.get("base_url") or "").rstrip("/")
+    if not image_base:
+        llm_cfg = llm_cfg if llm_cfg.get("has_key") else {}
+        image_base = str(llm_cfg.get("base_url") or "").rstrip("/")
+        image_key = str(llm_cfg.get("api_key") or "")
+    if not image_base or not image_key:
+        return off_result("generate_image", "生图服务还没接（需要 IMAGE_API_BASE_URL + IMAGE_API_KEY）。")
+    model = mm.get("image_model") or "gpt-image-2"
     try:
-        resp = await http_pool.get_client(timeout=90).post(
-            f"{base}/images/generations",
-            headers={"Authorization": f"Bearer {llm_cfg.get('api_key', '')}"},
+        resp = await http_pool.get_client(timeout=120).post(
+            f"{image_base}/images/generations",
+            headers={"Authorization": f"Bearer {image_key}"},
             json={"model": model, "prompt": text[:900], "n": 1, "size": size or "1024x1024"},
         )
         resp.raise_for_status()
