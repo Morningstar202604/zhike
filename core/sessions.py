@@ -14,7 +14,9 @@ from core import store
 
 
 def idle_ttl() -> int:
-    return int(os.environ.get("SESSION_IDLE_TTL", "1800"))
+    # 默认 12 小时：原来 30 分钟就换新会话，群友隔一会儿回来问「刚才那事」，
+    # 机器人已经"失忆"，用户体感就是「老是记不住、回顾不了」。
+    return int(os.environ.get("SESSION_IDLE_TTL", "43200"))
 
 
 def _is_fresh(row: dict | None) -> bool:

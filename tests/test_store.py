@@ -154,3 +154,21 @@ def test_message_soft_delete_excluded_from_context(tmp_path, monkeypatch):
     # 跨会话不能删别人的消息
     store.create_session("s-other", "v2")
     assert store.delete_message("s-other", mid) is False
+
+
+def test_prev_session_messages_keeps_context_across_ttl(monkeypatch, tmp_path):
+    """TTL 换会话后要能取到上一段对话，否则用户体感是「每次都失忆」。"""
+    monkeypatch.setenv("CS_AGENT_DB", str(tmp_path / "prev.db"))
+    from core import store
+
+    store._SCHEMA_READY.clear()
+    store.init_db()
+    store.create_session("old-sid", "qq:123")
+    store.add_message("old-sid", "visitor", "我明天要去杭州出差")
+    store.add_message("old-sid", "agent", "记下了，要我帮你订票吗")
+    store.create_session("new-sid", "qq:123")
+
+    msgs = store.prev_session_messages("qq:123", "new-sid", limit=6)
+    assert [m["content"] for m in msgs] == ["我明天要去杭州出差", "记下了，要我帮你订票吗"]
+    # 排除当前会话本身
+    assert all(m["content"] != "new" for m in msgs)

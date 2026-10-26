@@ -2188,3 +2188,28 @@ def export_session(session_id: str) -> dict | None:
     if not sess:
         return None
     return {"session": sess, "messages": get_messages(session_id, limit=None, include_deleted=False)}
+
+
+def prev_session_messages(visitor_id: str, exclude_sid: str = "", limit: int = 6) -> list[dict]:
+    """同一访客/渠道的上一条会话末尾若干条消息（TTL 换会话后维持语境）。
+
+    channel_sessions 在换会话时已经指向新 sid，所以不能按 channel 查；
+    按 visitor_id 找「除当前会话外最近一次会话」，不会把别人的内容串进来。
+    """
+    if not visitor_id:
+        return []
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id FROM sessions WHERE visitor_id = ? AND id != ? "
+            "ORDER BY started_at DESC LIMIT 1",
+            (visitor_id, exclude_sid or ""),
+        ).fetchone()
+        if not row:
+            return []
+        rows = conn.execute(
+            "SELECT role, content FROM messages WHERE session_id = ? "
+            "AND (deleted IS NULL OR deleted = 0) ORDER BY id DESC LIMIT ?",
+            (row["id"], max(1, min(int(limit), 20))),
+        ).fetchall()
+    return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]

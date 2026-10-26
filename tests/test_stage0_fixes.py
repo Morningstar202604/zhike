@@ -115,7 +115,9 @@ def _age_channel(channel: str, seconds: int):
         conn.execute("UPDATE channel_sessions SET updated_at=? WHERE channel=?", (old, channel))
 
 
-def test_ttl_expired_creates_new_session(client):
+def test_ttl_expired_creates_new_session(client, monkeypatch):
+    # 默认 TTL 已改成 12 小时（跨会话保持语境），这里显式设 30 分钟验证过期逻辑
+    monkeypatch.setenv("SESSION_IDLE_TTL", "1800")
     first = _ingest(client, user="ttl-a", group="ttl-exp")
     _age_channel("qq_group:ttl-exp", 3600)
     second = _ingest(client, user="ttl-b", group="ttl-exp")
@@ -130,8 +132,9 @@ def test_ttl_reuse_refreshes_timestamp(client):
     assert after > before, "复用必须刷新最后活动时间，否则 TTL 永不滚动"
 
 
-def test_ttl_keeps_old_session_rows(client):
+def test_ttl_keeps_old_session_rows(client, monkeypatch):
     """换新会话不能删历史会话（数据保留）。"""
+    monkeypatch.setenv("SESSION_IDLE_TTL", "1800")
     first = _ingest(client, user="ttl-e", group="ttl-keep")
     _age_channel("qq_group:ttl-keep", 3600)
     _ingest(client, user="ttl-f", group="ttl-keep")

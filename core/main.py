@@ -470,6 +470,15 @@ def create_app() -> FastAPI:
         # 管线只需要最近若干轮：全量读取会让长会话的上下文构建从 18ms 涨到 37ms。
         # 取 60 条（约 30 轮）足够 history_turns 默认 10 轮 + 相关性筛选回溯。
         history = store.get_messages(sid, limit=60, include_deleted=False)
+        # 新会话（TTL 到期被换掉）时 history 是空的：补一段「同一渠道上一条会话」的尾巴，
+        # 让机器人至少知道刚才聊到哪，不用用户重新交代（用户明确要求「别老是回顾不了」）。
+        if not history:
+            try:
+                prev = store.prev_session_messages(visitor_key, sid, limit=6)
+                if prev:
+                    history = prev
+            except Exception:  # 兜底失败不影响主流程
+                pass
         visitor_msg_id = store.add_message(sid, "visitor", text or "（附图）")
         try:
             reply = await pipeline.run(
