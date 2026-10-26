@@ -87,8 +87,31 @@ def bigram_text(text: str) -> str:
 
 # ---------- 向量后端（BGE-zh，成熟中文检索模型，CPU 可跑） ----------
 BGE_MODEL = os.environ.get("USER_EMB_MODEL", "BAAI/bge-small-zh-v1.5")
-# bge-small-zh 实际输出 312 维（hidden=312 CLS pooling）；旧代码写死 512 导致 vec 插入必然失败
-EMBED_DIM = int(os.environ.get("USER_EMB_DIM", "312"))
+
+
+def _detect_dim() -> int:
+    """嵌入维度：环境变量 > 本地模型 config.json > 默认 512。
+
+    写死维度是最贵的错误：模型一换，vec 插入全部 Dimension mismatch，
+    向量检索永久静默降级成 bigram（线上日志每轮刷屏）。
+    bge-small-zh(-v1.5) 实测 hidden_size=512。
+    """
+    raw = (os.environ.get("USER_EMB_DIM") or "").strip()
+    if raw.isdigit():
+        return int(raw)
+    try:
+        cfg_path = os.path.join(BGE_MODEL, "config.json")
+        if os.path.isfile(cfg_path):
+            with open(cfg_path, encoding="utf-8") as fh:
+                hidden = int(json.load(fh).get("hidden_size") or 0)
+            if hidden > 0:
+                return hidden
+    except (OSError, ValueError):
+        pass
+    return 512
+
+
+EMBED_DIM = _detect_dim()
 _COS_FLOOR, _COS_CEIL = 0.55, 0.90
 _EMB_STATE: dict = {"model": None, "failed": False}
 _BGE_QUERY_PREFIX = "为这个句子生成表示以检索相关文章："
@@ -162,8 +185,15 @@ def _ensure_conn() -> sqlite3.Connection | None:
 
     try:
         RETRIEVAL_DB.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn = sqlite3.connect(db_path, check_same_thread=False, timeout=10.0)
         conn.row_factory = sqlite3.Row
+        # 多进程（core + 网关 + 测试探针）会同时读写检索库：WAL + busy_timeout
+        # 才能避免 database is locked 把整条混合检索降级掉。
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=10000")
+        except sqlite3.Error:
+            pass
         # 索引签名表：跨进程共享"当前索引对应哪版 KB/分词"，避免多 worker 互相重建
         conn.execute("CREATE TABLE IF NOT EXISTS index_meta (k TEXT PRIMARY KEY, v TEXT)")
         # 探测 FTS5
@@ -178,6 +208,14 @@ def _ensure_conn() -> sqlite3.Connection | None:
             conn.enable_load_extension(True)
             sqlite_vec.load(conn)
             conn.enable_load_extension(False)
+            # 已有 vec 表的维度必须与新模型对齐：旧库是按 312 建的，
+            # 模型输出 512 时每次插入都 Dimension mismatch，向量检索永久静默失效。
+            row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name='kb_vec'").fetchone()
+            if row and f"float[{EMBED_DIM}]" not in str(row["sql"] or ""):
+                conn.execute("DROP TABLE IF EXISTS kb_vec")
+                # 表结构变了，签名要作废，否则不会重建索引
+                conn.execute("DELETE FROM index_meta WHERE k='sig'")
             conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS kb_vec USING vec0(embedding float[{dim}])".format(dim=EMBED_DIM))
             _INDEX_STATE["vec"] = True
         except Exception as e:

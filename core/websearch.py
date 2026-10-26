@@ -121,15 +121,129 @@ async def _search_serper(query: str, top_k: int) -> list[dict]:
     ]
 
 
+_CHATTY_PREFIX = re.compile(
+    r"^(?:请|麻烦|帮我|你|能不能|可以)?(?:用)?(?:联网|网上|在线)?(?:帮我)?"
+    r"(?:搜一下|搜搜|搜索|搜|查一下|查查|查|看看|看一下|找一下|找找|找)"
+    r"(?:一下|下)?[，,：:\s]*")
+_CHATTY_SUFFIX = re.compile(
+    r"[，,。;；]?\s*(?:给(?:我|出)?(?:来源|链接|出处|原文)|并?注明来源|要有?来源|附上?链接)[。\s]*$")
+
+
+def clean_query(query: str) -> str:
+    """把口语指令洗成检索词。
+
+    模型常把用户原话直接丢给搜索：「联网搜一下今天科技新闻，给出来源」
+    在必应里会先去匹配「联网」这个词，返回百科词条——实测就是这样翻车的。
+    """
+    q = (query or "").strip()
+    for _ in range(2):
+        q2 = _CHATTY_PREFIX.sub("", q)
+        if q2 == q:
+            break
+        q = q2
+    for _ in range(2):
+        q2 = _CHATTY_SUFFIX.sub("", q)
+        if q2 == q:
+            break
+        q = q2
+    # 时间/疑问类填充词对检索没有区分度，反而把主题词淹掉
+    q = re.sub(r"(今天|今日|昨天|明天|现在|最近|最新|有什么|什么|哪些|一下|请问|帮我|我想知道)",
+               " ", q)
+    q = re.sub(r"\s+", " ", q).strip(" ，,。.;；:：")
+    return q or (query or "").strip()
+
+
+_NEWS_HINT = re.compile(r"新闻|资讯|动态|头条|最新|今天|今日|昨天|本周|热点|发布|进展|融资|发布会")
+
+# 「今天/历史上的今天」类站点对任何含时间词的查询都是天然噪声源（必应会把它们排前列）
+_JUNK_DOMAINS = ("rili.com.cn", "lishi.yyxw.com", "lssdjt.com", "todayonhistory.com")
+
+
+async def _rss_items(url: str, limit: int = 12) -> list[dict]:
+    """抓一个 RSS/Atom 源，返回统一结构的条目。失败返回空列表。"""
+    try:
+        client = get_client(timeout=12)
+        resp = await client.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+        }, follow_redirects=True)
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        return []
+    text = resp.text
+    out: list[dict] = []
+    for chunk in re.findall(r"<item>(.*?)</item>", text, re.S)[:limit]:
+        t = re.search(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", chunk, re.S)
+        l = re.search(r"<link>(.*?)</link>", chunk, re.S)
+        d = re.search(r"<description>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</description>", chunk, re.S)
+        p = re.search(r"<pubDate>(.*?)</pubDate>", chunk, re.S)
+        if not t:
+            continue
+        link = (l.group(1).strip() if l else "")
+        # Solidot 之类把链接塞在 CDATA 里，原样输出会在前端显示成 <![CDATA[...]]>
+        link = re.sub(r"^<!\[CDATA\[|\]\]>$", "", link).strip()
+        out.append({
+            "title": _clean(html.unescape(t.group(1)), 120),
+            "url": link,
+            "snippet": _clean(html.unescape(d.group(1)) if d else "", 260),
+            "published": (p.group(1).strip() if p else ""),
+        })
+    return out
+
+
+# 国内直连可达的科技新闻源（免 Key、无频控）：用于「今天有什么科技新闻」这类
+# 时效性问题——网页搜索给的是频道首页，RSS 才给得到当天具体条目。
+_NEWS_FEEDS = (
+    "https://www.ithome.com/rss/",
+    "https://www.solidot.org/index.rss",
+    "https://www.chinanews.com.cn/rss/scroll-news.xml",
+)
+
+
+async def _news_feed_results(query: str, top_k: int) -> list[dict]:
+    """按关键词从新闻源里筛条目；命中不到就退化为最新几条。
+
+    匹配用 bigram 重叠而不是整句包含：中文没有空格，切词器会把
+    「今天AI领域有什么新闻」当成一个词，永远命中不了任何标题。
+    """
+    import asyncio as _asyncio
+
+    batches = await _asyncio.gather(*[_rss_items(u) for u in _NEWS_FEEDS],
+                                    return_exceptions=True)
+    items: list[dict] = []
+    for b in batches:
+        if isinstance(b, list):
+            items.extend(b)
+    if not items:
+        return []
+    q = clean_query(query)
+    # 去掉时间/疑问类高频词，剩下的实词才算主题
+    q = re.sub(r"(今天|今日|昨天|最新|有什么|什么|新闻|资讯|动态|消息|报道|一下|请问)", " ", q)
+    words = [w for w in re.split(r"[\s，,。、的了吗呢]+", q) if len(w) >= 2]
+    grams = {q[i:i + 2] for i in range(len(q) - 1)} if len(q) >= 2 else set()
+    scored: list[tuple[int, dict]] = []
+    for it in items:
+        blob = f"{it.get('title','')} {it.get('snippet','')}"
+        score = sum(2 for w in words if w in blob)
+        if grams:
+            score += sum(1 for g in grams if g.strip() and g in blob)
+        scored.append((score, it))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    picked = [it for s, it in scored if s > 0][:top_k]
+    return picked or [it for _, it in scored[:top_k]]
+
+
 async def _search_bing(query: str, top_k: int) -> list[dict]:
     """必应（cn.bing.com）HTML 抓取：免 Key 兜底通道（国内直连可达）。
 
     解析 b_algo 结果块；结构变了就抛 SearchError，上层静默降级。
+    时效性问题额外并一路新闻 RSS：网页搜索只能给频道首页，答不了「今天」。
     """
+    q = clean_query(query)
     client = get_client("https://cn.bing.com", timeout=20)
     resp = await client.get(
         "https://cn.bing.com/search",
-        params={"q": query, "count": str(top_k * 2), "mkt": "zh-CN"},
+        params={"q": q, "count": str(top_k * 2), "mkt": "zh-CN"},
         headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
@@ -155,9 +269,17 @@ async def _search_bing(query: str, top_k: int) -> list[dict]:
         out.append({"title": _clean(title, 120), "url": url, "snippet": _clean(snippet)})
         if len(out) >= top_k:
             break
+    if _NEWS_HINT.search(query or ""):
+        fresh = await _news_feed_results(query, max(3, top_k // 2))
+        if fresh:
+            # 新闻条目排前面：时效性问题里「频道首页」等于没答
+            seen = {f["url"] for f in fresh}
+            out = fresh + [r for r in out if r["url"] not in seen]
+    # 日历/历史上的今天这类站是「今天+任意词」的万能匹配噪声，检索里一律剔掉
+    out = [r for r in out if not any(d in str(r.get("url") or "") for d in _JUNK_DOMAINS)]
     if not out:
         raise SearchError("必应返回未解析到结果")
-    return out
+    return out[:max(top_k, 1)]
 
 
 _BACKENDS = {

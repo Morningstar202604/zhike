@@ -8,7 +8,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Tests](https://img.shields.io/badge/tests-642%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-706%20passed-brightgreen)
 
 </div>
 
@@ -16,7 +16,7 @@
 
 ## 中文
 
-**可自托管的个人助理 Agent 底座**：QQ 群/私聊 + Web 双渠道，内置 ReAct 工具循环、RAG 检索、长期记忆、提醒调度、动作权限分级与全链路审计。MIT 开源。
+**可自托管的个人助理 Agent 底座**：QQ 群/私聊 + Web 双渠道，内置 ReAct 工具循环、原生 function calling、混合检索（FTS5 + 向量 RRF）、长期记忆、提醒调度、动作权限分级与全链路审计。自带猫娘人格「零」：毒舌、有立场、政治话题打太极。MIT 开源。
 
 ### 核心设计
 
@@ -34,7 +34,7 @@
 ### 功能
 
 - **对话**：SSE 流式、图片多模态、Markdown、停止生成、重新生成、逐条删除
-- **35 个内置工具**：看/生/发图、联网搜索、读网页、读文档（PDF/DOCX/XLSX）、算数、时间、长期记忆、提醒、群记录/群成员/好友、主动发消息、群管理（禁言/改名片/改群名/公告/传文件/撤回/入群与好友审批）
+- **37 个内置工具**：看/生/发图、联网搜索、读网页、读文档（PDF/DOCX/XLSX）、算数、时间、长期记忆、提醒、群记录/群成员/好友、主动发消息、群管理（禁言/改名片/改群名/公告/传文件/撤回/入群与好友审批）
 - **提醒待办**：`10 分钟后`/`明天 9 点`/`每天 8 点`/`每个工作日 9 点`，按本地时区调度并推回原渠道
 - **RAG 知识库**：Markdown/PDF/Word/Excel 导入、分块、试召回、标注回复（命中即秒回）
 - **协作台**：待接管队列、内部备注、快捷话术、SLA 首响计时、答案回流知识库
@@ -113,7 +113,7 @@ QQ 接入见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md)，Docker / 反代 / 免费部�
 ### 测试
 
 ```bash
-python -m pytest tests -q                      # 642 passed
+python -m pytest tests -q                      # 706 passed
 ruff check core executor gateway scripts --select E9,F63,F7,F82,F401,F841
 cd frontend && npx tsc --noEmit && npm test && npm run build
 ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010
@@ -134,7 +134,7 @@ core/       FastAPI 服务：管线、工具、检索、记忆、提醒、动作
 gateway/    NoneBot2 + OneBot v11 网关：QQ 消息、拟人节奏、群节流
 executor/   独立电脑执行器：路径白名单、命令白名单、删除默认进回收站
 frontend/   React 控制台（Vite + TS/JSX + ECharts + react-i18next）
-tests/      642 条 pytest 回归
+tests/      706 条 pytest 回归
 docs/       QQ 接入路径（QQ-LOGIN.md）与截图
 ```
 
@@ -243,7 +243,7 @@ Screenshots are captured against a demo database from `scripts/seed_demo.py` usi
 ### Tests
 
 ```bash
-python -m pytest tests -q                      # 642 passed
+python -m pytest tests -q                      # 706 passed
 ruff check core executor gateway scripts --select E9,F63,F7,F82,F401,F841
 cd frontend && npx tsc --noEmit && npm test && npm run build
 ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010
@@ -264,7 +264,7 @@ core/       FastAPI service: pipeline, tools, retrieval, memory, reminders, acti
 gateway/    NoneBot2 + OneBot v11 gateway: QQ messages, human-like pacing, group throttling
 executor/   Standalone computer executor: path allowlist, command allowlist, trash-by-default delete
 frontend/   React console (Vite + TS/JSX + ECharts + react-i18next)
-tests/      642 pytest regressions
+tests/      706 pytest regressions
 docs/       QQ setup (QQ-LOGIN.md) and screenshots
 ```
 

@@ -1271,6 +1271,37 @@ _REQUIRES_CONFIG = {
 }
 
 
+_EXECUTOR_PROBE_CACHE: list = [0.0, False]
+
+
+def _executor_ready() -> bool:
+    """执行器是否可用：显式配了 EXECUTOR_URL 就算配置到位；否则探测默认 8020。
+
+    旧实现只认环境变量，而执行器本来就有默认地址 127.0.0.1:8020 且在跑——
+    结果 6 个文件/文档类工具被永久藏起来，模型永远看不见，用户看到的就是
+    「机器人读不了文件」。探测用 TCP 连接（毫秒级）+ 30 秒缓存，不拖慢每轮。
+    """
+    if os.environ.get("EXECUTOR_URL", "").strip():
+        return True
+    import socket
+    import time as _time
+
+    now = _time.monotonic()
+    if now - _EXECUTOR_PROBE_CACHE[0] < 30:
+        return _EXECUTOR_PROBE_CACHE[1]
+    ok = False
+    try:
+        base = os.environ.get("EXECUTOR_URL") or "http://127.0.0.1:8020"
+        hostport = base.split("//", 1)[-1].split("/", 1)[0]
+        host, _, port = hostport.partition(":")
+        with socket.create_connection((host or "127.0.0.1", int(port or 8020)), timeout=0.4):
+            ok = True
+    except (OSError, ValueError):
+        ok = False
+    _EXECUTOR_PROBE_CACHE[:] = (now, ok)
+    return ok
+
+
 def _config_ready(tid: str) -> bool:
     from core import websearch
 
@@ -1279,9 +1310,7 @@ def _config_ready(tid: str) -> bool:
     if tid in ("query_order", "initiate_refund"):
         return bool(os.environ.get(_REQUIRES_CONFIG[tid][0], "").strip())
     if tid in _REQUIRES_CONFIG:
-        # 执行器相关：URL 有默认值，真正可用与否由运行时 503 决定，
-        # 这里只在显式配置了才暴露，避免默认环境下模型选了必然失败的工具。
-        return bool(os.environ.get("EXECUTOR_URL", "").strip())
+        return _executor_ready()
     return True
 
 

@@ -408,6 +408,18 @@ async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "",
     tools_map = ctx.get("tools") or {}
     observations: list[str] = []
     working = dict(ctx)
+    # 工具执行轨迹要带回 AgentReply：控制台/日志靠它证明「真的调用了搜索」，
+    # 之前无论调了多少工具都写 tool_used=None，看起来像整套工具全失效。
+    used_tools: list[str] = []
+    last_result: dict | None = None
+
+    def _with_tools(reply: AgentReply) -> AgentReply:
+        if used_tools:
+            reply.tool_used = used_tools[-1]
+            reply.tool_result = last_result
+            if len(used_tools) > 1:
+                reply.tool_result = {**(last_result or {}), "tool_chain": used_tools}
+        return reply
 
     # 最多 2 轮：推理模型每轮 30-90s，3 轮会顶到网关超时（实测 95.7s 后整体失败）
     for round_no in range(2):
@@ -423,6 +435,8 @@ async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "",
                                                  ctx.get("tool_ctx") or EMPTY)
             note = str((result or {}).get("note") or "")
             observations.append(f"[{tool_name}] {note[:1500]}")
+            used_tools.append(tool_name)
+            last_result = result if isinstance(result, dict) else None
             if (result or {}).get("connected") is False:
                 # 工具没接入：再让模型选工具也没有新信息，直接进「无工具作答」分支
                 break
@@ -432,11 +446,11 @@ async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "",
                 + chr(10) + chr(10).join(observations[-3:]))
             if answer and not llm.is_promise_only(answer):
                 data["tool"] = None
-                return await _make_llm_reply(data, working, cfg)
+                return _with_tools(await _make_llm_reply(data, working, cfg))
             continue
         if answer and not llm.is_promise_only(answer):
             data["tool"] = None
-            return await _make_llm_reply(data, working, cfg)
+            return _with_tools(await _make_llm_reply(data, working, cfg))
         break
 
     # 兜底：关掉工具再问一次，模型只能自己作答
@@ -453,7 +467,7 @@ async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "",
     forced_answer = str((final or {}).get("answer") or "").strip()
     if forced_answer and not llm.is_promise_only(forced_answer):
         final["tool"] = None
-        return await _make_llm_reply(final, forced, cfg)
+        return _with_tools(await _make_llm_reply(final, forced, cfg))
     # 连「不许再拖」都只换来一句「我这就去查」：不能再把空话发给用户。
     # 明确说明能力边界，比假装正在处理诚实。
     honest = AgentReply(
@@ -465,7 +479,7 @@ async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "",
         tool_used=None,
         ctx_used=(ctx or {}).get("used"),
     )
-    return honest
+    return _with_tools(honest)
 
 
 async def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
@@ -693,7 +707,12 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
         history=tuple(history or ()),
         # 工具层的权限主体：QQ 渠道按触发者 QQ 号，其余按访客身份。
         # 只有管理员/授权 QQ（AUTHORIZED_QQ）能触达读写主机文件、以机器人身份发消息。
-        principal=(f"qq:{message.channel_user_id}" if message.channel_type in ("qq", "onebot")
+        # channel_type 实际取值是 qq_group / qq_private（不是 "qq"）：旧判断用
+        # in ("qq","onebot") 恒为假，于是主人账号被当成 visitor，
+        # 所有特权工具一律拒绝——「主人账号说话机器人不听」的根因之一。
+        principal=(f"qq:{message.channel_user_id}"
+                   if str(message.channel_type or "").startswith("qq")
+                   or message.channel_type == "onebot"
                    else f"visitor:{visitor_key or 'anonymous'}"),
     )
     # 反思修正：把"最近高频毛病"作为自我修正提醒注入上下文（带缓存，60s 内不重复查库）

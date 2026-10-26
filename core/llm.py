@@ -180,6 +180,70 @@ def _max_tokens(llm_cfg: dict) -> int:
     return min(max(configured, floor), max_output or 16_384)
 
 
+def _openai_tools(schema: list[dict]) -> list[dict]:
+    """内部工具清单 → OpenAI function calling 的 tools 数组。
+
+    为什么必须走原生协议：之前把工具清单以 JSON 文本塞进 system prompt，
+    让模型「自己决定要不要输出 tool 字段」。实测 u2-flash 在联网题上直接
+    无视清单作答（编新闻、编链接），37 个工具形同虚设。原生 function calling
+    由服务端按 schema 约束参数，模型被训练过这套协议，选中率完全不同。
+    """
+    out: list[dict] = []
+    for t in schema or []:
+        if not isinstance(t, dict):
+            continue
+        name = str(t.get("name") or "").strip()
+        if not name:
+            continue
+        raw_args = t.get("args") or []
+        if isinstance(raw_args, dict):
+            props = {str(k): {"type": str(v) if str(v) in (
+                "string", "number", "integer", "boolean", "array", "object") else "string"}
+                     for k, v in raw_args.items()}
+            required = [str(k) for k in raw_args.keys()][:1]
+        else:
+            props = {str(a): {"type": "string"} for a in raw_args}
+            required = [str(raw_args[0])] if raw_args else []
+        out.append({"type": "function", "function": {
+            "name": name,
+            "description": str(t.get("desc") or name)[:400],
+            "parameters": {"type": "object", "properties": props, "required": required},
+        }})
+    return out
+
+
+def _from_native_tool_calls(message: dict) -> dict | None:
+    """官方 function calling 响应 → 内部决策结构。"""
+    calls = message.get("tool_calls") or []
+    if not calls:
+        return None
+    call = calls[0] if isinstance(calls[0], dict) else {}
+    fn = call.get("function") or {}
+    name = str(fn.get("name") or "").strip()
+    if not name:
+        return None
+    raw = fn.get("arguments")
+    args: dict = {}
+    if isinstance(raw, dict):
+        args = raw
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            args = parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError):
+            args = {}
+    return {
+        "thought": str(message.get("content") or "")[:500],
+        "tool": name,
+        "tool_args": args,
+        "answer": "",
+        "citations": [],
+        "confidence": 0.6,
+        "escalate": False,
+        "escalate_reason": "",
+    }
+
+
 def _data_url(b64: str) -> str:
     """裸 base64 → data URL：按魔数识别常见图片 MIME（OpenAI 多模态内容格式的通用做法）。"""
     head = (b64 or "")[:16].lstrip()
@@ -196,7 +260,8 @@ def _data_url(b64: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tuple[list[dict], str]:
+def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "",
+                    native_tools: bool = False) -> tuple[list[dict], str]:
     """组装 system+history+user 消息，返回 (messages, 所用模型名)。
 
     图片 + multimodal.vision_model 时按 OpenAI 多模态 content 数组（业界统一范式）改用视觉模型。
@@ -215,7 +280,9 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
     parts = []
     if modules_on.get("kb", True):
         parts.append("知识库条目：\n" + ctx["kb_block"])
-    if modules_on.get("tools", True):
+    if modules_on.get("tools", True) and not native_tools:
+        # 原生 function calling 已在请求体 tools 里声明，不再往 prompt 里塞一份
+        # （两份不一致时模型会照抄 prompt 里的旧签名）。
         parts.append("可用工具：\n" + json.dumps(ctx["tools_schema"], ensure_ascii=False))
     if modules_on.get("memory", True):
         parts.append("访客相关记忆：\n" + ctx["memory_block"])
@@ -244,14 +311,24 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
     if ctx["summary"]:
         parts.append(ctx["summary"])
     # 固定尾巴（ReAct 指令）必须先占预算，否则内容块会把总长顶出去
-    tail = (
-        f"ReAct 最大步数 {react_steps}。请只输出 JSON：\n"
-        '{"thought": str, "tool": name或null, "tool_args": {..}或null, '
-        '"answer": str, "citations": [id], "confidence": 0-1, '
-        '"escalate": bool, "escalate_reason": str}\n'
-        "注意：你没有人类同事，也没有任何人工客服/坐席可转接。"
-        "escalate 只表示「这条需要管理员后续补充资料」，绝不能对用户说转人工、转接真人或叫人来处理。"
-    )
+    if native_tools:
+        # 原生 function calling 模式下，工具名/参数由 API schema 约束，
+        # 这里只保留输出纪律，不再要求模型自己拼 JSON（拼 JSON 是旧兼容路径）。
+        tail = (
+            "需要外部信息或动作时直接调用已提供的工具；信息足够时直接给出回答正文。"
+            "回答只写给用户看的内容，不要输出 JSON、字段名、思考过程或工具参数。"
+            "注意：你没有人类同事，也没有任何人工客服/坐席可转接，"
+            "绝不能对用户说转人工、转接真人或叫人来处理。"
+        )
+    else:
+        tail = (
+            f"ReAct 最大步数 {react_steps}。请只输出 JSON：\n"
+            '{"thought": str, "tool": name或null, "tool_args": {..}或null, '
+            '"answer": str, "citations": [id], "confidence": 0-1, '
+            '"escalate": bool, "escalate_reason": str}\n'
+            "注意：你没有人类同事，也没有任何人工客服/坐席可转接。"
+            "escalate 只表示「这条需要管理员后续补充资料」，绝不能对用户说转人工、转接真人或叫人来处理。"
+        )
     # 身份自述强化：人设里已写「你是人」，但模型仍会自称 AI/助手（实测 u2-flash）。
     # 提示词末尾的重复约束比开头更有效，这里只强化执行、不改人设内容。
     tail += (chr(10) + "【自述纪律】回答里不要自称 AI、人工智能、机器人、助手程序或语言模型；"
@@ -326,37 +403,53 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
 
 
 async def _post_chat(base: str, api_key: str, payload: dict) -> str | None:
-    """单次 chat/completions 调用（含 4xx 时去掉 response_format 的重试）。
+    """单次 chat/completions 调用。
+
+    兼容性按 OpenAI 生态的真实差异分层降级：
+    ① 原样（可能带 tools + response_format）
+    ② 去掉 response_format（部分端点不支持结构化输出）
+    ③ 去掉 tools（部分端点不支持 function calling）
+    ④ 纯文本
+    工具调用结果统一序列化成内部决策 JSON 字符串，后面的解析与竞速逻辑共用一套。
 
     429 单独抛 RateLimited：调用方要短退避重试，而不是把整条候选链冷却 120 秒——
     一次并发高峰就让机器人彻底沉默 2 分钟，是最难解释给用户的故障。
     """
     client = get_client(base, timeout=180)
-    resp = await client.post(
-        f"{base}/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json=payload,
-    )
-    if resp.status_code == 429:
-        try:
-            retry_after = float(resp.headers.get("retry-after") or 0)
-        except (TypeError, ValueError):
-            retry_after = 0.0
-        raise RateLimited(retry_after)
-    if resp.status_code in (400, 422):
-        retry = dict(payload)
-        retry.pop("response_format", None)
+    attempts = [payload]
+    without_rf = {k: v for k, v in payload.items() if k != "response_format"}
+    if without_rf != payload:
+        attempts.append(without_rf)
+    without_tools = {k: v for k, v in without_rf.items() if k not in ("tools", "tool_choice")}
+    if without_tools != attempts[-1]:
+        attempts.append(without_tools)
+    plain = {k: v for k, v in without_tools.items()}
+    if plain != attempts[-1]:
+        attempts.append(plain)
+
+    resp = None
+    for idx, body in enumerate(attempts):
         resp = await client.post(
             f"{base}/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
-            json=retry,
+            json=body,
         )
         if resp.status_code == 429:
-            raise RateLimited(1.0)
+            try:
+                retry_after = float(resp.headers.get("retry-after") or 0)
+            except (TypeError, ValueError):
+                retry_after = 0.0
+            raise RateLimited(retry_after)
+        if resp.status_code in (400, 422) and idx < len(attempts) - 1:
+            continue
+        break
     resp.raise_for_status()
     data = resp.json()
     choice = (data.get("choices") or [{}])[0]
     message = choice.get("message") or {}
+    native = _from_native_tool_calls(message)
+    if native is not None:
+        return json.dumps(native, ensure_ascii=False)
     content = (message.get("content") or "").strip()
     if not content and choice.get("finish_reason") == "length":
         # 推理模型把预算花在 reasoning 上：加大预算重试一次（只重试一次，
@@ -388,14 +481,22 @@ async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict |
     if not base:
         return None
 
-    messages, model = _build_messages(query, ctx, cfg, image_b64)
+    # 工具走原生 function calling：模型看不到 prompt 里的工具清单，
+    # schema 由 API 层约束。协议端不支持 tools 时 _post_chat 会自动降级。
+    native = bool((llm_cfg or {}).get("tool_calling", True)) and bool(ctx.get("tools_schema"))
+    tools_payload = _openai_tools(ctx.get("tools_schema") or []) if native else []
+    messages, model = _build_messages(query, ctx, cfg, image_b64, native_tools=native)
     vision_model = (cfg.get("multimodal", {}) or {}).get("vision_model", "") or ""
     payload = {
         "model": model,
         "temperature": llm_cfg.get("temperature", 0.2),
         "top_p": llm_cfg.get("top_p", 1.0),
         "max_tokens": _max_tokens(llm_cfg),
-        "response_format": {"type": "json_object"},
+        # 带 tools 时不能同时要 json_object：OpenAI 官方与多数兼容端点会 400，
+        # 而且两套约束打架（模型要么调工具要么吐 JSON）。工具模式下靠原生协议，
+        # 无工具时才用 JSON 对象拿结构化字段。
+        **({"tools": tools_payload, "tool_choice": "auto"} if tools_payload
+           else {"response_format": {"type": "json_object"}}),
     }
     # 备援链竞速：主配置 → fallback_model → providers；视觉调用只走主配置。
     # 解析并入竞速：空答案/截断 JSON 也算候选失败，自动换下一个模型。
@@ -541,9 +642,12 @@ class _AnswerStreamer:
 
 async def react_stream(query: str, ctx: dict, cfg: dict, image_b64: str = ""):
     """流式 ReAct（OpenAI SSE 流式范式）。产出事件字典：
-    {"type": "delta", "text": str}   answer 字段增量片段（或 prose 原文），仅供前端打字机呈现
+    {"type": "delta", "text": str}   answer 增量片段，仅供前端打字机呈现
     {"type": "final", "data": dict}  完整结构化结果（同 react() 返回值），权威终态
     {"type": "error", "error": str}  请求失败，调用方应走规则降级
+
+    原生 function calling 模式下，模型的正文是散文而不是 JSON，直接放行；
+    tool_calls 按 index 分片累积，收完后转成内部决策结构交给上层执行。
     """
     llm_cfg = cfg.get("llm", {})
     api_key = llm_cfg.get("api_key") or ""
@@ -551,7 +655,9 @@ async def react_stream(query: str, ctx: dict, cfg: dict, image_b64: str = ""):
     if not llm_cfg.get("has_key") or not api_key or not base:
         yield {"type": "error", "error": "llm not configured"}
         return
-    messages, model = _build_messages(query, ctx, cfg, image_b64)
+    native = bool(llm_cfg.get("tool_calling", True)) and bool(ctx.get("tools_schema"))
+    tools_payload = _openai_tools(ctx.get("tools_schema") or []) if native else []
+    messages, model = _build_messages(query, ctx, cfg, image_b64, native_tools=native)
     payload = {
         "model": model,
         "messages": messages,
@@ -559,49 +665,22 @@ async def react_stream(query: str, ctx: dict, cfg: dict, image_b64: str = ""):
         "top_p": llm_cfg.get("top_p", 1.0),
         "max_tokens": _max_tokens(llm_cfg),
         "stream": True,
-        # 结构化输出：模型不会在 JSON 前面加「我这就去查」这类散文，
-        # 否则打字机会把那句散文和后面的 JSON 一起吐给用户（实测 u2-flash）。
-        "response_format": {"type": "json_object"},
+        **({"tools": tools_payload, "tool_choice": "auto"} if tools_payload
+           else {"response_format": {"type": "json_object"}}),
     }
-    scanner = _AnswerStreamer()
-    buf = ""
-    finish_reason = ""
-    try:
+
+    async def _run(body: dict):
+        """跑一次流式请求，产出 (kind, payload) 事件；kind 为 delta/tool/finish。"""
+        calls: dict[int, dict] = {}
+        text = ""
+        finish = ""
         client = get_client(base, timeout=180)
         async with client.stream(
             "POST", f"{base}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"}, json=payload,
+            headers={"Authorization": f"Bearer {api_key}"}, json=body,
         ) as resp:
             if resp.status_code in (400, 422):
-                # 端点不支持 response_format：去掉重试一次（保持结构化解析的容错）
-                retry = {k: v for k, v in payload.items() if k != "response_format"}
-                async with client.stream(
-                    "POST", f"{base}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"}, json=retry,
-                ) as resp2:
-                    resp2.raise_for_status()
-                    async for line in resp2.aiter_lines():
-                        if not line.startswith("data:"):
-                            continue
-                        chunk = line[5:].strip()
-                        if chunk == "[DONE]":
-                            break
-                        try:
-                            delta = json.loads(chunk)["choices"][0].get("delta", {}) or {}
-                        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-                            continue
-                        piece = delta.get("content")
-                        if piece:
-                            buf += piece
-                            for t in scanner.feed(piece):
-                                if t:
-                                    yield {"type": "delta", "text": t}
-                    data_fallback = _parse_llm_answer(buf)
-                    if data_fallback is None:
-                        yield {"type": "error", "error": "empty llm answer"}
-                        return
-                    yield {"type": "final", "data": data_fallback}
-                    return
+                raise _Unsupported()
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.startswith("data:"):
@@ -615,18 +694,87 @@ async def react_stream(query: str, ctx: dict, cfg: dict, image_b64: str = ""):
                 except (json.JSONDecodeError, KeyError, IndexError, TypeError):
                     continue
                 if choice.get("finish_reason"):
-                    finish_reason = str(choice["finish_reason"])
+                    finish = str(choice["finish_reason"])
+                for tc in delta.get("tool_calls") or []:
+                    if not isinstance(tc, dict):
+                        continue
+                    idx = int(tc.get("index") or 0)
+                    slot = calls.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                    if tc.get("id"):
+                        slot["id"] = str(tc["id"])
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["name"] += str(fn["name"])
+                    if fn.get("arguments"):
+                        slot["arguments"] += str(fn["arguments"])
                 piece = delta.get("content")
                 if piece:
-                    buf += piece
-                    for t in scanner.feed(piece):
+                    text += piece
+                    yield ("delta", piece)
+        yield ("done", {"text": text, "calls": calls, "finish": finish})
+
+    # 端点不支持 tools：去掉 tools 并退回 JSON 对象模式（旧兼容路径）
+    fallback_body = {k: v for k, v in payload.items() if k not in ("tools", "tool_choice")}
+    fallback_body["response_format"] = {"type": "json_object"}
+
+    scanner = _AnswerStreamer()
+    buf = ""
+    finish_reason = ""
+    calls: dict[int, dict] = {}
+    used_fallback = False
+    try:
+        async for kind, data in _run(payload):
+            if kind == "delta":
+                buf += data
+                if native:
+                    yield {"type": "delta", "text": data}
+                else:
+                    for t in scanner.feed(data):
                         if t:
                             yield {"type": "delta", "text": t}
+            else:
+                calls = data["calls"]
+                finish_reason = data["finish"]
+    except _Unsupported:
+        used_fallback = True
+        buf = ""
+        calls = {}
+        try:
+            async for kind, data in _run(fallback_body):
+                if kind == "delta":
+                    buf += data
+                    for t in scanner.feed(data):
+                        if t:
+                            yield {"type": "delta", "text": t}
+                else:
+                    calls = data["calls"]
+                    finish_reason = data["finish"]
+        except (httpx.HTTPError, ValueError) as e:
+            lg.warning("llm stream fallback failed: %s %s", type(e).__name__, str(e)[:120])
+            yield {"type": "error", "error": f"{type(e).__name__}: {e}"}
+            return
     except (httpx.HTTPError, ValueError) as e:
         lg.warning("llm stream failed: %s %s", type(e).__name__, str(e)[:120])
         yield {"type": "error", "error": f"{type(e).__name__}: {e}"}
         return
-    # 冲刷 prose 缓冲：HOLD 窗口里还压着几十个字符，不冲刷就会丢结尾
+
+    if calls:
+        yield {"type": "final", "data": _decision_from_calls(calls, buf)}
+        return
+    if not used_fallback:
+        # 原生模式：模型直接给了正文，没有 JSON 包装
+        answer = (buf or "").strip()
+        if not answer:
+            reason = ("truncated_by_max_tokens" if finish_reason == "length"
+                      else "empty llm answer")
+            yield {"type": "error", "error": reason}
+            return
+        yield {"type": "final", "data": {
+            "thought": "", "tool": None, "tool_args": {}, "answer": answer,
+            "citations": [], "confidence": 0.72, "escalate": False,
+            "escalate_reason": "",
+        }}
+        return
     for t in scanner.finish():
         if t:
             yield {"type": "delta", "text": t}
@@ -639,6 +787,34 @@ async def react_stream(query: str, ctx: dict, cfg: dict, image_b64: str = ""):
         yield {"type": "error", "error": reason}
         return
     yield {"type": "final", "data": data}
+
+
+class _Unsupported(Exception):
+    """端点不支持 tools/response_format，需要降级重试。"""
+
+
+def _decision_from_calls(calls: dict[int, dict], prose: str = "") -> dict:
+    """流式累积的 tool_calls → 内部决策结构。"""
+    first = calls[min(calls)] if calls else {}
+    name = str(first.get("name") or "").strip()
+    args: dict = {}
+    raw = first.get("arguments") or ""
+    if raw.strip():
+        try:
+            parsed = json.loads(raw)
+            args = parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError):
+            args = {}
+    return {
+        "thought": str(prose or "")[:500],
+        "tool": name,
+        "tool_args": args,
+        "answer": "",
+        "citations": [],
+        "confidence": 0.6,
+        "escalate": False,
+        "escalate_reason": "",
+    }
 
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.S)
