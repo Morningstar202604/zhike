@@ -95,3 +95,17 @@ def test_empty_answer_without_tool_still_fails():
     from core.llm import _parse_llm_answer
 
     assert _parse_llm_answer('{"thought":"嗯","tool":null,"answer":""}') is None
+
+
+def test_system_prompt_contains_real_clock():
+    """模型没有时钟，不注入真实时间就会编日期（实测把 10-26 说成 5-12）。"""
+    from datetime import datetime
+
+    from core import config, llm, pipeline
+
+    cfg = config.get_config()
+    ctx = pipeline.build_context("现在几点", [], cfg, "clock-probe")
+    msgs, _ = llm._build_messages("现在几点", ctx, cfg)
+    system = msgs[0]["content"]
+    assert "【当前时间】" in system
+    assert datetime.now().strftime("%Y-%m-%d") in system

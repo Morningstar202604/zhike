@@ -205,7 +205,13 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
     react_steps = cfg.get("escalation", {}).get("react_steps", 3)
     budget = cfg.get("context", {}).get("char_budget", 2400)
     modules_on = ctx["modules_on"]
-    system = ctx["persona"] + "\n"
+    # 模型没有时钟：不注入真实时间它会编日期（实测 u2-flash 把 2026-10-26 说成 5 月 12 日）
+    from datetime import datetime as _dt
+
+    _now = _dt.now().astimezone()
+    _week = "一二三四五六日"[_now.weekday()]
+    time_block = "【当前时间】" + _now.strftime("%Y-%m-%d %H:%M") + "（星期" + _week + "，" + (_now.tzname() or "本地时区") + "）。涉及「现在几点/今天几号/还有几天」一律以此为准，不要用训练数据里的日期，也不要编造时间。"
+    system = ctx["persona"] + chr(10) + time_block + chr(10)
     parts = []
     if modules_on.get("kb", True):
         parts.append("知识库条目：\n" + ctx["kb_block"])
@@ -238,6 +244,10 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> tu
         "注意：你没有人类同事，也没有任何人工客服/坐席可转接。"
         "escalate 只表示「这条需要管理员后续补充资料」，绝不能对用户说转人工、转接真人或叫人来处理。"
     )
+    # 身份自述强化：人设里已写「你是人」，但模型仍会自称 AI/助手（实测 u2-flash）。
+    # 提示词末尾的重复约束比开头更有效，这里只强化执行、不改人设内容。
+    tail += (chr(10) + "【自述纪律】回答里不要自称 AI、人工智能、机器人、助手程序或语言模型；"
+             "被问身份就用性格挡回去。")
     # 能力事实必须写进 prompt：模型不知道自己「这一轮有没有联网」。
     # 不说清楚，它会反复说「我这就去查」却调不到工具（实测 u2-flash 稳定复现）。
     tool_names = {t.get("name") for t in (ctx.get("tools_schema") or []) if isinstance(t, dict)}
