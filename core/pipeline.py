@@ -655,8 +655,22 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
     try:
         from core import profiles as profiles_mod
 
-        user_key = ("qq:" + str(message.channel_user_id)) if message.channel_type in ("qq", "onebot")             else ("web:" + str(visitor_key))
+        # channel_type 实际取值是 qq_group / qq_private（不是 "qq"），
+        # 用 startswith 判断，否则 QQ 用户会被错记成 web:qq:123 两条档案。
+        is_qq = str(message.channel_type or "").startswith("qq") or message.channel_type == "onebot"
+        user_key = ("qq:" + str(message.channel_user_id)) if is_qq else ("web:" + str(visitor_key))
         group_key = ("qq_group:" + str(message.group_id)) if message.group_id else ""
+        # 自动建档：每轮把「谁在说、在哪个群说」增量写进档案（首见创建，之后累加计数）。
+        # 只读不写的话，档案永远是空的——这正是「建档不生效」的根因。
+        profiles_mod.upsert_profile(
+            user_key, "user", display_name=str(message.channel_user_id or "")[:20],
+            alias=str(getattr(message, "display_name", "") or "")[:20],
+            stats_delta={"messages": 1})
+        if group_key:
+            profiles_mod.upsert_profile(
+                group_key, "group",
+                display_name=str(getattr(message, "group_name", "") or "")[:40],
+                stats_delta={"messages": 1})
         ctx["profile_block"] = profiles_mod.profile_block(user_key, group_key)
         ctx["lexicon_block"] = profiles_mod.lexicon_block(group_key or user_key)
         profiles_mod.learn_from_message(query, group_key or user_key)
@@ -862,7 +876,7 @@ async def _run_body(message: ChannelMessage, history: list[dict], visitor_key: s
 
     # 没接通模型时不要用规则话术硬撑着回 QQ：那等于对外宣称"我是机器人但我不懂"。
     # mode="no_model" 让网关直接静默（Web 端仍保留兜底话术，不影响网页访客体验）。
-    if message.channel_type.startswith("qq") and not cfg.get("llm", {}).get("has_key"):
+    if str(message.channel_type or "").startswith("qq") and not cfg.get("llm", {}).get("has_key"):
         return AgentReply(text="", confidence=0.0, mode="no_model", ctx_used=ctx["used"])
     mode = cfg.get("engine", {}).get("mode", "auto")
     llm_reply = None

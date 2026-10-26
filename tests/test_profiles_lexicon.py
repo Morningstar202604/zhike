@@ -77,3 +77,31 @@ def test_profiles_api_roundtrip(client):
     assert add.status_code == 200
     entries = client.get("/api/lexicon?scope=qq_group:9").json()["entries"]
     assert any(e["term"] == "上头" for e in entries)
+
+
+def test_pipeline_auto_creates_profile(monkeypatch, tmp_path):
+    """每轮对话都要给用户/群自动建档并累加消息数：只读不写等于没建档。"""
+    import asyncio
+
+    monkeypatch.setenv("CS_AGENT_DB", str(tmp_path / "auto.db"))
+    from core import config as config_mod
+    from core import pipeline, store
+    from core.pipeline import ChannelMessage
+
+    store._SCHEMA_READY.clear()
+    store.init_db()
+    cfg = config_mod.get_config()
+    cfg["engine"] = {"mode": "rule"}
+    monkeypatch.setattr(config_mod, "get_config", lambda: cfg)
+
+    msg = ChannelMessage(text="你好", channel_type="qq_group",
+                         channel_user_id="555", group_id="777",
+                         display_name="阿强", group_name="测试群")
+    asyncio.run(pipeline.run(msg, [], "qq:555"))
+    asyncio.run(pipeline.run(msg, [], "qq:555"))
+
+    u = profiles.get_profile("qq:555")
+    g = profiles.get_profile("qq_group:777")
+    assert u is not None and u["stats"]["messages"] == 2
+    assert g is not None and g["stats"]["messages"] == 2
+    assert u["aliases"] == ["阿强"]
