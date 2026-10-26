@@ -34,11 +34,12 @@
 ### 功能
 
 - **对话**：SSE 流式、图片多模态、Markdown、停止生成、重新生成、逐条删除
-- **26 个内置工具**：看/生/发图、联网搜索、读网页、读文档（PDF/DOCX/XLSX）、算数、时间、长期记忆、提醒、群记录/群成员/好友、主动发消息
+- **35 个内置工具**：看/生/发图、联网搜索、读网页、读文档（PDF/DOCX/XLSX）、算数、时间、长期记忆、提醒、群记录/群成员/好友、主动发消息、群管理（禁言/改名片/改群名/公告/传文件/撤回/入群与好友审批）
 - **提醒待办**：`10 分钟后`/`明天 9 点`/`每天 8 点`/`每个工作日 9 点`，按本地时区调度并推回原渠道
 - **RAG 知识库**：Markdown/PDF/Word/Excel 导入、分块、试召回、标注回复（命中即秒回）
 - **协作台**：待接管队列、内部备注、快捷话术、SLA 首响计时、答案回流知识库
 - **中英双语**：侧栏切换 `中 / EN`，界面框架全量翻译；业务数据保持原语言
+- **QQ 全量接管**：收到 face/mface 表情转成可读标记、群里回帖带引用、用户与群自动建档、群黑话自动沉淀、视觉模型独立配置（u2-med 实测可看图）
 - **渠道**：QQ（NapCat + OneBot v11 + NoneBot2 网关）、Web；企业微信/公众号适配骨架
 
 ### 镜像仓库
@@ -163,11 +164,12 @@ MIT。NapCat 为自定义非商用许可的非官方协议端，商用前请自�
 ### Features
 
 - **Chat**: SSE streaming, image multimodal, Markdown, stop/regenerate, per-message delete
-- **26 built-in tools**: image read/generate/send, web search, page reader, document parsing (PDF/DOCX/XLSX), calculator, clock, long-term memory, reminders, group history/members/friends, proactive messaging
+- **35 built-in tools**: image read/generate/send, web search, page reader, document parsing (PDF/DOCX/XLSX), calculator, clock, long-term memory, reminders, group history/members/friends, proactive messaging, and group admin (mute, card, rename, notice, upload, recall, join/friend approvals)
 - **Reminders**: `in 10 minutes` / `tomorrow at 9` / `daily at 8` / `weekdays at 9`, scheduled in local time and delivered to the originating channel
 - **RAG knowledge base**: Markdown/PDF/Word/Excel import, chunking, retrieval test, canned answers (instant reply on hit)
 - **Operator desk**: takeover queue, internal notes, canned replies, first-response SLA, one-click save to KB
 - **Bilingual UI**: switch `中 / EN` in the sidebar; all interface chrome is translated, business data stays as-is
+- **QQ, fully wired**: face/mface emoji become readable tokens, group replies quote the message, per-user/per-group profiles, auto-learned group slang, dedicated vision model (u2-med verified)
 - **Channels**: QQ (NapCat + OneBot v11 + NoneBot2 gateway) and Web; adapter skeleton for WeCom / official accounts
 
 ### Mirrors

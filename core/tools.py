@@ -1381,3 +1381,88 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
         return "read_webpage", {"url": url.group(0)}
 
     return None, None
+
+
+# ============================================================
+# QQ 全量接管：把 OneBot v11 的动作暴露成模型可调用的工具
+# ============================================================
+# 设计（对标 AstrBot / NoneBot 插件生态的「动作可编排」）：
+# - 模型只拿到**动作名 + 参数名**，权限与审批仍由 core.actions 统一裁决；
+# - 危险动作（L2）永远走审批，不会因为"变成工具"就绕过；
+# - 这一层不做业务判断，只把工具参数原样转成动作参数。
+
+def _qq_tool(action: str, tool_name: str, desc: str, args: dict[str, str]):
+    """生成一个薄封装工具：调用 → actions_service.execute（含鉴权/审计/审批）。"""
+
+    async def run(ctx: ToolContext, **kw) -> dict:
+        from core.actions import service as actions_service
+
+        params = {k: v for k, v in kw.items() if v not in (None, "")}
+        # 群/人目标缺省时用当前会话，避免模型每次都要问群号
+        if ctx.group_id and "group_id" in args and "group_id" not in params:
+            params["group_id"] = ctx.group_id
+        if ctx.channel_user_id and "user_id" in args and "user_id" not in params:
+            params["user_id"] = ctx.channel_user_id
+        try:
+            result = await actions_service.execute(
+                action=action, params=params,
+                principal_raw=ctx.principal or "admin",
+            )
+        except actions_service.ActionError as e:
+            if e.status == 409 or "审批" in str(e):
+                return ok_result(tool_name, f"这个操作需要管理员确认，已提交审批：{e}")
+            return miss_result(tool_name, f"没办成：{e}")
+        except Exception as e:
+            return miss_result(tool_name, f"没办成：{type(e).__name__}")
+        if result.get("status") == "pending_approval":
+            return ok_result(tool_name,
+                             f"这属于破坏性操作，已送管理员审批（编号 {result.get('approval_id')}）。")
+        return ok_result(tool_name, f"办好了。", data=result.get("result"))
+
+    run.__name__ = f"tool_{tool_name}"
+    return run
+
+
+_QQ_ACTION_TOOLS: dict[str, dict] = {
+    "qq_group_ban": {
+        "action": "set_group_ban", "args": {"group_id": "string", "user_id": "string", "duration": "number"},
+        "desc": "禁言群成员（duration 秒，0=解禁）",
+    },
+    "qq_group_kick": {
+        "action": "set_group_kick", "args": {"group_id": "string", "user_id": "string"},
+        "desc": "把成员移出群（破坏性，需审批）",
+    },
+    "qq_group_card": {
+        "action": "set_group_card", "args": {"group_id": "string", "user_id": "string", "card": "string"},
+        "desc": "改群名片",
+    },
+    "qq_group_rename": {
+        "action": "set_group_name", "args": {"group_id": "string", "group_name": "string"},
+        "desc": "改群名",
+    },
+    "qq_group_notice": {
+        "action": "send_group_notice", "args": {"group_id": "string", "content": "string"},
+        "desc": "发群公告",
+    },
+    "qq_recall": {
+        "action": "delete_msg", "args": {"message_id": "string"},
+        "desc": "撤回一条消息",
+    },
+    "qq_upload_file": {
+        "action": "upload_group_file", "args": {"group_id": "string", "file": "string", "name": "string"},
+        "desc": "往群里传文件（file 为本机路径）",
+    },
+    "qq_friend_handle": {
+        "action": "set_friend_add_request", "args": {"flag": "string", "approve": "boolean"},
+        "desc": "同意/拒绝加好友请求",
+    },
+    "qq_group_handle": {
+        "action": "set_group_add_request",
+        "args": {"flag": "string", "sub_type": "string", "approve": "boolean"},
+        "desc": "同意/拒绝入群请求",
+    },
+}
+
+for _tool_name, _meta in _QQ_ACTION_TOOLS.items():
+    _ASYNC_IMPLS[_tool_name] = _qq_tool(_meta["action"], _tool_name, _meta["desc"], _meta["args"])
+    TOOL_META[_tool_name] = {"name": _tool_name, "desc": _meta["desc"], "args": _meta["args"]}

@@ -293,6 +293,24 @@ _EXTRA_TOOLS: list[dict] = [
      {"group_id": "string", "keyword": "string"}),
     ("qq_groups", "查我的群", "列出机器人加入的 QQ 群", {}),
     ("qq_friends", "查好友", "列出机器人的 QQ 好友", {}),
+    # QQ 全量接管：群管理动作也纳入工具注册表，权限仍由 actions 层裁决
+    ("qq_group_ban", "群禁言", "禁言成员（duration 秒，0=解禁）",
+     {"group_id": "string", "user_id": "string", "duration": "number"}),
+    ("qq_group_kick", "移出群成员", "把成员移出群（破坏性，需审批）",
+     {"group_id": "string", "user_id": "string"}),
+    ("qq_group_card", "改群名片", "修改成员群名片",
+     {"group_id": "string", "user_id": "string", "card": "string"}),
+    ("qq_group_rename", "改群名", "修改群名称",
+     {"group_id": "string", "group_name": "string"}),
+    ("qq_group_notice", "发群公告", "发布群公告",
+     {"group_id": "string", "content": "string"}),
+    ("qq_recall", "撤回消息", "撤回一条已发消息", {"message_id": "string"}),
+    ("qq_upload_file", "传群文件", "上传本机文件到群",
+     {"group_id": "string", "file": "string", "name": "string"}),
+    ("qq_friend_handle", "处理好友请求", "同意或拒绝加好友",
+     {"flag": "string", "approve": "boolean"}),
+    ("qq_group_handle", "处理入群请求", "同意或拒绝入群申请",
+     {"flag": "string", "sub_type": "string", "approve": "boolean"}),
 ]
 
 
