@@ -117,7 +117,14 @@ def run_post_reply(text: str, cfg: dict) -> dict:
         if not _hit(hook, text):
             continue
         if hook["action"] == "append":
-            return {"action": "append", "text": f"{text}\n\n{hook['value']}".strip(), "hook": hook["name"]}
+            suffix = (hook["value"] or "").strip()
+            if not suffix:
+                continue
+            # 模型会从历史里学到「回答要带落款」自己先写一遍；
+            # 再无脑追加就叠成两行（实测落款重复）。
+            if (text or "").rstrip().endswith(suffix):
+                return {"action": "pass", "text": text, "hook": hook["name"]}
+            return {"action": "append", "text": f"{text}\n\n{suffix}".strip(), "hook": hook["name"]}
         if hook["action"] == "replace":
             return {"action": "replace", "text": hook["value"], "hook": hook["name"]}
         return {"action": "block", "text": hook["value"] or _DEFAULT_BLOCK, "hook": hook["name"]}

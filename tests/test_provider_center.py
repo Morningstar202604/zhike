@@ -218,3 +218,18 @@ def test_providers_discover_requires_admin(client, monkeypatch):
     r = client.post("/api/providers/discover", json={"base_url": "https://example.com/v1"},
                     headers={"X-Admin-Token": "wrong"})
     assert r.status_code in (401, 503)
+
+
+def test_post_reply_append_is_idempotent():
+    """模型自己写了落款时不能再追加一遍（实测叠成两行）。"""
+    from core import hooks
+
+    cfg = {"hooks": {"items": [{
+        "id": "sig", "name": "落款", "event": "post_reply", "match": "",
+        "action": "append", "value": "—— 知客 · 你的私人秘书", "enabled": True,
+    }]}}
+    once = hooks.run_post_reply("好的", cfg)
+    assert once["text"].count("—— 知客") == 1
+    twice = hooks.run_post_reply(once["text"], cfg)
+    assert twice["text"].count("—— 知客") == 1, "已经有落款就不能再追加"
+    assert twice["action"] == "pass"
