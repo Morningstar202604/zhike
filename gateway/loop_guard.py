@@ -10,9 +10,10 @@ bot 连续互道「晚安」40+ 轮、每轮约 55 秒，直到人工叫停；�
 2. 回声复读：连续 3 条与我们上一句高度重合（bigram 包含率 ≥0.35）
 3. 问题连发：10 分钟内 ≥6 条疑问句且平均间隔 <30s，或 ≥10 条且平均间隔 <60s
    （群消息必然 @ 了我们，连续追问就是冲我们来的——用户明确要求把这种判成机器人）
-4. 秒回连击：连续 ≥10 条在回我们、且都在我们发言后 15s 内回，
-   平均间隔 ≤10s、平均长度 ≤60 字（真人打不了这么整齐）
+4. 秒回连击：连续 ≥12 条在回我们、都在我们发言后 15s 内回，
+   平均间隔 ≤8s、平均长度 ≤40 字（真人打字快也难连续 12 次引用式秒回）
 5. 昵称即机器人：昵称命中 bot/机器人/自动回复 等，且已连发 3 条
+6. 极短连击：连续 3 条只有「。」「……」「嗯」这种 2 字以内（对刷到最后靠单字符拖场）
 
 刻意不做「按总轮数一刀切」：真人也能连聊几十轮，按轮数误杀太伤。
 问题连发/秒回连击都要求「正在回我们」——不引用我们、自顾自问的，不算对刷。
@@ -47,7 +48,7 @@ MAX_MUTE_S = 4 * 3600.0
 WINDOW_CLOSING = 900.0
 WINDOW_QUESTION = 600.0
 WINDOW_TURNS = 1200.0
-WINDOW_RAPID = 10
+WINDOW_RAPID = 12
 MAX_TRACKED_CHATS = 500
 
 
@@ -65,6 +66,7 @@ class _PeerState:
     questions: list[tuple[float, bool]] = field(default_factory=list)
     turns: list[tuple[float, bool, int]] = field(default_factory=list)
     rapid: list[tuple[float, int]] = field(default_factory=list)
+    trivial: int = 0
 
 
 def _bigrams(text: str) -> set[str]:
@@ -86,6 +88,18 @@ def is_closing(text: str) -> bool:
 
 def is_question(text: str) -> bool:
     return bool(_QUESTION_RE.search((text or "").strip()))
+
+
+def is_trivial(text: str) -> bool:
+    """纯标点/单字消息：「。」「……」「嗯」「哦」「哈」。
+
+    单条毫无问题，但两个 bot 对刷到最后就是靠单字符拖着不散场
+    （实测连环群以「。」「……」「。」三条收尾）。判定只在「连续多条」时才用。
+    两个字的日常话（「你好」「晚安」「在吗」）不算——那是正常聊天。
+    """
+    s = re.sub(r"\[引用:[^\]]*\]|\[CQ:[^\]]*\]", "", text or "")
+    s = re.sub(r"[\s。，、！？…~～.,!?;；:：'\"“”‘’()（）\[\]【】<>《》\-—_*#]+", "", s)
+    return len(s) <= 1
 
 
 def is_bot_name(name: str) -> bool:
@@ -184,6 +198,10 @@ class LoopGuard:
             st.rapid.clear()
         _trim(st.rapid, now, WINDOW_TURNS)
 
+        # 极短消息连击：两个 bot 对刷到词穷时全靠「。」「……」拖着不散场。
+        # 只数「连续」的：真人偶尔发个「嗯」不该被记。
+        st.trivial = st.trivial + 1 if is_trivial(body) else 0
+
         closing_replied = sum(1 for _, r in st.closing if r)
         if is_group and len(st.closing) >= 4 and closing_replied >= 3 \
                 and _mean_gap(st.closing) < 150:
@@ -203,9 +221,13 @@ class LoopGuard:
         if is_group and len(st.rapid) >= WINDOW_RAPID:
             gaps = [b[0] - a[0] for a, b in zip(st.rapid, st.rapid[1:])]
             lengths = [n for _, n in st.rapid]
-            if gaps and statistics.mean(gaps) <= 10 \
-                    and statistics.mean(lengths) <= 60:
+            # 门槛压得很紧：真人打字快也能到 8 秒一条，但连续 12 条都「引用我们」
+            # 且平均 40 字以内、间隔 8 秒内——人手点 12 次引用回复做不到。
+            if gaps and statistics.mean(gaps) <= 8 \
+                    and statistics.mean(lengths) <= 40:
                 return self._mute(key, "rapid_pingpong", now)
+        if is_group and st.trivial >= 3:
+            return self._mute(key, "trivial_loop", now)
         if bot_name and len(st.turns) >= 3:
             return self._mute(key, "bot_name", now)
         return Verdict(False)

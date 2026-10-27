@@ -2,7 +2,14 @@
 """
 import json
 
-from gateway.loop_guard import LoopGuard, containment, is_bot_name, is_closing, is_question
+from gateway.loop_guard import (
+    LoopGuard,
+    containment,
+    is_bot_name,
+    is_closing,
+    is_question,
+    is_trivial,
+)
 
 
 class Clock:
@@ -144,10 +151,45 @@ def test_rapid_pingpong_fires():
     c = Clock()
     g = _guard(c)
     muted = []
-    for i in range(11):
+    for i in range(13):
         muted.append(_turn(g, c, f"收到，第{i}条消息已经处理完毕", reply_to=f"m{i}", gap=3).muted)
     assert muted[-1] is True, muted
-    assert muted[:8] == [False] * 8, muted
+    assert muted[:10] == [False] * 10, muted
+
+
+def test_fast_human_typing_not_muted():
+    """真人打字快：8 秒回一句、40 字以上——不能因为「快」就判机器人。"""
+    c = Clock()
+    g = _guard(c)
+    for i in range(20):
+        long_text = f"第{i}条，我把这个问题的来龙去脉都说一遍：" + "因为所以" * 8
+        assert not _turn(g, c, long_text, reply_to=f"m{i}", gap=8).muted, i
+
+
+def test_trivial_punctuation_loop_fires():
+    """对刷到词穷：连续三条只剩「。」「……」「。」——真人也干不出这事。"""
+    c = Clock()
+    g = _guard(c)
+    muted = [_turn(g, c, t, gap=40).muted for t in ("。", "……", "。")]
+    assert muted == [False, False, True], muted
+    assert g.mutes()[0]["reason"] == "trivial_loop"
+
+
+def test_two_char_replies_are_normal_chat():
+    """「你好」「晚安」「在吗」是正常聊天，不能被当成复读（主人 128 轮里出现过这种连发）。"""
+    c = Clock()
+    g = _guard(c)
+    for t in ("你好", "在吗", "晚安", "嗯嗯"):
+        assert not _turn(g, c, t, gap=40).muted, t
+
+
+def test_trivial_run_broken_by_real_message():
+    c = Clock()
+    g = _guard(c)
+    assert not _turn(g, c, "。", gap=40).muted
+    assert not _turn(g, c, "。", gap=40).muted
+    assert not _turn(g, c, "帮我算一下 128*37", gap=40).muted
+    assert not _turn(g, c, "。", gap=40).muted, "被正常消息打断后重新计数"
 
 
 def test_bot_nickname_alone_is_not_enough_but_repeat_is():
