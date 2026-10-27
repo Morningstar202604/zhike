@@ -220,6 +220,9 @@ export default function Dashboard() {
         <HealthChip ok={true} on={`${t('知识库')} ${h?.kb_entries ?? '…'}`} />
         <HealthChip ok={true} on={`${t('工具')} ${h?.tool_count ?? '…'}`} />
         <HealthChip ok={true} on={`${t('护栏规则')} ${h?.injection_rules ?? '…'}`} />
+        {/* 语音转写：没有它收语音消息只能回「听不了」，运维要能一眼看到 */}
+        <HealthChip ok={h?.asr?.available !== false}
+          on={h?.asr?.available === false ? t('语音转写未启用') : t('语音转写已启用')} />
         <Link to="/settings/params" className="text-xs text-brand hover:underline ml-auto">{t('进入管理中心 →')}</Link>
       </div>
 

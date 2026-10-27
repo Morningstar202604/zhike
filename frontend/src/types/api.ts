@@ -202,4 +202,9 @@ export interface AgentHealth {
   memory_enable: boolean
   escalate_threshold: number
   react_steps: number
+  // 语音转写能力（收 QQ 语音）：没装模型/没配外部命令时 available=false，
+  // 网关会明确告诉用户「听不了」而不是装懂。
+  asr?: { available: boolean; model: string; external_cmd: boolean; last_error: string }
+  // 检索实际模式（hybrid / fts5 / bigram）：静默降级时界面要能看出来
+  retrieval?: { mode?: string; fts5?: boolean; vector?: boolean; embedding_available?: boolean }
 }
