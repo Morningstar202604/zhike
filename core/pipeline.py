@@ -2,7 +2,9 @@
 
 无 LLM 凭据或调用失败时自动降级为「规则 + 检索」，不抛错、不 500。
 """
+import asyncio
 import json
+import random
 import re
 from dataclasses import dataclass, field
 
@@ -232,6 +234,34 @@ _REMEMBER_RE = re.compile(r"^(?:请|帮我)?(?:记住|记一下|记下|存一下
 _RECALL_RE = re.compile(r"(?:你还?记得|我之前说过|我上次说|回忆一下|想起来)")
 
 
+async def _direct_emote(query: str, ctx: dict, cfg: dict) -> AgentReply | None:
+    """「发个表情包」这类请求：直接挑图并留下标记，不赌模型记不记得语法。
+
+    用户要的是图，不是一段关于图的解释。模型历史上会回「我没法发图片」，
+    多轮 prompt 修补都不稳；这里把它做成确定性路径，成功率 100%。
+    """
+    from core import intent as intent_mod
+
+    # 以本句原话为准重新定性：ctx 里的 intent 属于整轮上下文，函数被单独调用时不该依赖它
+    it = intent_mod.classify(query)
+    if it.name != intent_mod.INTENT_EMOTE:
+        return None
+    if "search_emote" not in (ctx.get("tools") or {}):
+        return None
+    kw = intent_mod.emote_keyword(query)
+    res = await tools_mod.invoke_with(ctx["tools"], "search_emote", {"keyword": kw},
+                                      ctx.get("tool_ctx") or EMPTY)
+    if not isinstance(res, dict):
+        res = {"note": str(res)[:200]}
+    if res.get("status") == "empty" or res.get("found") is False and not res.get("note"):
+        return AgentReply(text="库里还没攒到图，等我再收几张，喵～", confidence=0.6,
+                          mode="rule_react", ctx_used=ctx.get("used"))
+    lead = random.choice(["喏。", "给。", "拿去。", "接着。"])
+    marker = f"[表情包:{kw or '随便'}]"
+    return AgentReply(text=f"{lead}{marker}", tool_used="search_emote", tool_result=res,
+                      confidence=0.9, mode="rule_react", ctx_used=ctx.get("used"))
+
+
 async def _direct_tool(query: str, ctx: dict, cfg: dict) -> AgentReply | None:
     """确定性工具意图 → 直接执行，不等模型决定。
 
@@ -397,7 +427,7 @@ async def _rule_react(query: str, ctx: dict, cfg: dict) -> AgentReply:
 
 
 async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "",
-                       first: dict | None = None) -> AgentReply | None:
+                       first: dict | None = None, prefer: str = "") -> AgentReply | None:
     """单轮 LLM + 最多两轮工具回填（ReAct 的 OBSERVE 补齐）。
 
     为什么必须有这层：单轮时代模型选完工具就被当成「回答完了」，
@@ -412,6 +442,9 @@ async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "",
     tools_map = ctx.get("tools") or {}
     observations: list[str] = []
     working = dict(ctx)
+    if prefer:
+        # 择优候选的偏好通过 ctx 传下去，不改 react() 的调用签名
+        working["_prefer"] = prefer
     # 工具执行轨迹要带回 AgentReply：控制台/日志靠它证明「真的调用了搜索」，
     # 之前无论调了多少工具都写 tool_used=None，看起来像整套工具全失效。
     used_tools: list[str] = []
@@ -722,6 +755,16 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
     if query:
         # 引用回复：把用户这一句原话交给模型，避免"答非所问还答得理直气壮"
         ctx["quote_block"] = "【用户这一句原话】" + query[:300]
+        # 输入意图识别：规则先定性，再决定这一轮该用哪个档位说话。
+        # 不注入的话，模型遇到「你是谁」会背客服简历、遇到「发个表情包」会说发不了图。
+        try:
+            from core import intent as intent_mod
+
+            ctx["intent"] = intent_mod.classify(query)
+            ctx["intent_block"] = intent_mod.prompt_hint(ctx["intent"])
+        except Exception:  # 意图识别只是增强，判不出来不影响回答
+            ctx["intent"] = None
+            ctx["intent_block"] = ""
     # 工具上下文：让工具知道"谁在问、在哪个群、刚才说了什么、有没有带图"
     ctx["tool_ctx"] = ToolContext(
         visitor_id=visitor_key or "",
@@ -880,6 +923,53 @@ def _maybe_critique(reply, ctx: dict, visitor_key: str) -> None:
         pass
 
 
+async def _gate_output(reply, query: str, cfg: dict) -> None:
+    """输出判别器：规则判问题，严重问题重写一次，结果写回 reply 并记账。
+
+    与 `_maybe_critique` 分工：那边只统计「格式类」高频毛病，这边管「人设硬伤」——
+    自称 AI、把已有能力说死、承诺转人工，这些出现在群里一次就够丢人。
+    """
+    from core import quality
+
+    try:
+        issues = quality.critique(reply.text or "", query,
+                                  channel=str(cfg.get("_channel") or ""),
+                                  persona=str((cfg.get("context") or {}).get("persona") or ""))
+    except Exception:  # 判别器故障绝不影响回复
+        return
+    if not issues:
+        return
+    if quality.needs_rewrite(issues):
+        new_text = await quality.rewrite(
+            reply.text or "", issues, query=query,
+            persona=str((cfg.get("context") or {}).get("persona") or ""))
+        if new_text:
+            reply.text = new_text
+        else:
+            # 重写没成功（模型也答不出来）：至少不能把底层模型自述/英文过滤报错发出去。
+            # 这里给的是"人设兜底"而不是客服话术——宁可用一句短的猫话，也不露馅。
+            reply.text = _fallback_for(issues)
+            reply.mode = "llm_react_guarded"
+    try:
+        store.critique_add("quality", len(reply.text or ""),
+                           [f"[{i['severity']}] {i['detail']}" for i in issues])
+    except Exception:
+        pass
+
+
+def _fallback_for(issues: list[dict]) -> str:
+    codes = {i.get("code") for i in issues}
+    if "identity_no_cat" in codes:
+        return "本喵叫零，一只猫，喵～ 问这么多干嘛，先说说你是谁。"
+    if "filter_leak" in codes:
+        return "这话我接不住，换个说法，喵～"
+    if "ai_self" in codes or "model_leak" in codes:
+        return "我是零，一只猫。别的身份？你猜，猜对了也不告诉你，喵～"
+    if "capability_refusal" in codes:
+        return "能发，你要什么直接说，喵～"
+    return "这话我说不利索，换个问法，喵～"
+
+
 async def run(message: ChannelMessage, history: list[dict], visitor_key: str) -> AgentReply:
     with tracing.span("zhike.pipeline.run", {"channel": message.channel_type, "visitor": visitor_key}):
         prepared = await _prepare(message, history, visitor_key)
@@ -887,6 +977,11 @@ async def run(message: ChannelMessage, history: list[dict], visitor_key: str) ->
             return prepared
         cfg, query, ctx = prepared
         reply = await _run_body(message, history, visitor_key, cfg, query, ctx)
+        # 输出判别器：人设硬伤（自称 AI/能力否认/假转接）在这里拦一次。
+        # 只对 LLM 产物生效——规则兜底与标注答案是人写的，不该被改写。
+        if str(reply.mode or "").startswith("llm"):
+            cfg = {**cfg, "_channel": message.channel_type}
+            await _gate_output(reply, query, cfg)
         # 输出钩子统一在出口应用：所有分支（标注/直连工具/README/LLM/规则）一视同仁，
         # 分支内部各自加一遍必然会漏。
         return _apply_post_hooks(reply, cfg)
@@ -907,6 +1002,9 @@ async def _run_body(message: ChannelMessage, history: list[dict], visitor_key: s
     # 工具意图直通：提醒/记忆/待办这类语义极其明确的请求，直接执行工具，
     # 不赌模型会不会选工具。实测 LLM 在 QQ 群里经常推脱「我没这功能」——
     # 明明注册了工具，模型却宁可道歉也不调用，用户体验是致命的。
+    emote = await _direct_emote(query, ctx, cfg)
+    if emote is not None:
+        return emote
     direct = await _direct_tool(query, ctx, cfg)
     if direct is not None:
         return direct
@@ -930,7 +1028,9 @@ async def _run_body(message: ChannelMessage, history: list[dict], visitor_key: s
     if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
         with tracing.span("zhike.llm", {"model": cfg["llm"].get("model", "")}):
             try:
-                llm_reply = await _llm_answer(query, ctx, cfg, image_b64=message.image_b64)
+                llm_reply = await _llm_answer_best(query, ctx, cfg,
+                                                   image_b64=message.image_b64,
+                                                   channel=message.channel_type)
             except Exception:
                 llm_reply = None
         if llm_reply is None and mode == "llm":
@@ -941,6 +1041,67 @@ async def _run_body(message: ChannelMessage, history: list[dict], visitor_key: s
         _maybe_critique(llm_reply, ctx, visitor_key)
         return llm_reply
     return await _rule_react(query, ctx, cfg)
+
+
+async def _llm_answer_best(query: str, ctx: dict, cfg: dict, *, image_b64: str = "",
+                           channel: str = "") -> AgentReply | None:
+    """多模型择优（集群）：并行取两版，按规则打分挑更好的一版。
+
+    只在闲聊类意图开启（quality.ensemble>1 且意图在清单内），工具/知识类不走——
+    那些场景多跑一遍模型既不提升正确率，又白烧算力、拖慢响应。
+    任何一路失败都退回单路结果，不因为择优把整轮搞挂。
+    """
+    from core import ensemble, intent as intent_mod
+
+    qcfg = cfg.get("quality") or {}
+    n = int(qcfg.get("ensemble") or 1)
+    it = ctx.get("intent") or intent_mod.classify(query)
+    allowed = qcfg.get("ensemble_intents") or []
+    if n <= 1 or image_b64 or it.name not in allowed:
+        return await _llm_answer(query, ctx, cfg, image_b64=image_b64)
+
+    chain = llm_mod_chain_models(cfg)
+    if len(chain) < 2:
+        return await _llm_answer(query, ctx, cfg, image_b64=image_b64)
+
+    picks = chain[:max(2, min(n, len(chain)))]
+    tasks = [asyncio.create_task(_llm_answer(query, ctx, cfg, image_b64=image_b64, prefer=m))
+             for m in picks]
+    got: list[dict] = []
+    for t in asyncio.as_completed(tasks):
+        try:
+            r = await t
+        except Exception:
+            r = None
+        if r is not None and (r.text or "").strip():
+            got.append({"answer": r.text, "reply": r, "model": ""})
+    for t in tasks:
+        if not t.done():
+            t.cancel()
+    if not got:
+        return None
+    if len(got) == 1:
+        return got[0]["reply"]
+    best, scores = ensemble.choose(got, query, channel)
+    if best < 0:
+        return got[0]["reply"]
+    reply = got[best]["reply"]
+    try:
+        store.critique_add("ensemble", len(reply.text or ""),
+                           [f"择优：{len(got)} 版，分 {scores}"])
+    except Exception:
+        pass
+    return reply
+
+
+def llm_mod_chain_models(cfg: dict) -> list[str]:
+    """备援链里的模型名（去重、保持顺序），供择优挑选。"""
+    llm_cfg = cfg.get("llm") or {}
+    out: list[str] = []
+    for c in llm._chain(llm_cfg, llm_cfg.get("model") or ""):
+        if c["model"] not in out:
+            out.append(c["model"])
+    return out
 
 
 async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: str):
@@ -1008,6 +1169,8 @@ async def run_stream(message: ChannelMessage, history: list[dict], visitor_key: 
         final = await _rule_react(query, ctx, cfg)
         if mode == "llm" and cfg.get("llm", {}).get("has_key"):
             final.mode = "rule_fallback"
+    if str(final.mode or "").startswith("llm"):
+        await _gate_output(final, query, {**cfg, "_channel": message.channel_type})
     # 输出钩子：与非流式入口同一套规则（final.text 是权威内容，前端会以它覆盖打字机片段）
     final = _apply_post_hooks(final, cfg)
     # 已向客户端发过 delta 时不再补发 delta：

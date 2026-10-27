@@ -215,15 +215,70 @@ def split_reply(text: str, max_chunk: int = 90, max_parts: int = 3) -> list[str]
 # ---------------------------------------------------------------------------
 # 表情包收藏库：从群友聊天里学习第三方表情包（mface 商城表情 + 动画梗图）
 # ---------------------------------------------------------------------------
+
+# 情绪词 → 视觉标签同义词。模型写「开心」而库里标的是「得意」，
+# 不映射就永远匹配不上，最后只能随机甩一张完全无关的图。
+EMOTE_SYNONYMS: dict[str, list[str]] = {
+    "开心": ["开心", "得意", "微笑", "大笑", "爆笑", "比耶"],
+    "高兴": ["开心", "得意", "微笑", "大笑"],
+    "笑": ["爆笑", "大笑", "微笑", "捂嘴笑", "搞笑", "坏笑"],
+    "笑哭": ["爆笑", "大笑", "捂嘴笑", "搞笑"],
+    "无语": ["无语", "无奈", "蛤", "呆"],
+    "尴尬": ["尴尬", "无语", "流汗", "汗"],
+    "委屈": ["委屈", "快哭了", "可怜", "冒个泡"],
+    "难过": ["哭泣", "大哭", "委屈", "流泪"],
+    "生气": ["发怒", "生气", "炸毛", "怒"],
+    "惊讶": ["惊讶", "震惊", "张嘴", "问号", "疑惑"],
+    "疑惑": ["疑惑", "问号", "思考", "怀疑"],
+    "思考": ["思考", "疑惑", "怀疑", "托腮"],
+    "害羞": ["害羞", "脸红", "可爱"],
+    "可爱": ["可爱", "猫", "猫娘", "撒娇"],
+    "得意": ["得意", "傲娇", "叉腰", "比耶"],
+    "嘲讽": ["嘲讽", "得意", "坏笑", "鄙视"],
+    "困": ["睡觉", "困", "打哈欠", "躺"],
+    "累": ["躺", "打哈欠", "睡觉", "无语"],
+    "晚安": ["睡觉", "晚安", "躺"],
+    "早安": ["早上好", "比耶", "微笑"],
+    "加油": ["比耶", "奋斗", "鼓励"],
+    "吃瓜": ["吃瓜", "冒泡", "看戏"],
+    "摸鱼": ["躺", "打哈欠", "冒泡"],
+    "猫": ["猫", "猫娘"],
+    "猫咪": ["猫", "猫娘"],
+    "猫猫": ["猫", "猫娘"],
+    "小猫": ["猫", "猫娘"],
+    "狗": ["狗"],
+    "狗狗": ["狗"],
+    "熊猫": ["熊猫头"],
+    "搞笑": ["爆笑", "搞笑", "大笑", "抽象"],
+    "抽象": ["抽象", "搞笑", "熊猫头", "文字图"],
+    "可爱捏": ["可爱", "猫", "撒娇"],
+}
+
+
+def _expand_keywords(keyword: str) -> list[str]:
+    """关键词 → 同义词集合（保持原词优先）。"""
+    kw = (keyword or "").strip()
+    if not kw:
+        return []
+    out = [kw]
+    for syn in EMOTE_SYNONYMS.get(kw, []):
+        if syn not in out:
+            out.append(syn)
+    return out
+
+
 class EmoteLib:
     """群友表情包收藏：mface 参数原样回放、梗图下载到本地后以 file:// 发送。
 
     索引 JSON 持久化；超过 max_items 时按最旧淘汰（图片文件由调用方清理）。
+    视觉标签单独存 tags.json（data 路径 → 中文词），不写进 index.json：
+    网关收新图时会整份重写 index，把标签写在里面会被下一次 save 覆盖。
     """
 
-    def __init__(self, path: str, max_items: int = 300):
+    def __init__(self, path: str, max_items: int = 300, tags_path: str | None = None):
         self.path = path
         self.max_items = max_items
+        self.tags_path = tags_path or os.path.join(os.path.dirname(path) or ".", "tags.json")
         self.items: list[dict] = []
         try:
             import json as _json
@@ -231,6 +286,25 @@ class EmoteLib:
                 self.items = _json.load(f)
         except Exception:
             self.items = []
+        self._tags: dict[str, str] = {}
+        self._tags_mtime = 0.0
+        self._recent: list[str] = []
+
+    def tags(self, data: str) -> str:
+        """取某张图的视觉标签（带 mtime 缓存：打标脚本随时可增量补）。"""
+        try:
+            mtime = os.path.getmtime(self.tags_path)
+        except OSError:
+            return ""
+        if mtime != self._tags_mtime:
+            try:
+                import json as _json
+                with open(self.tags_path, encoding="utf-8") as f:
+                    self._tags = _json.load(f) or {}
+                self._tags_mtime = mtime
+            except Exception:
+                return ""
+        return self._tags.get(data, "") if isinstance(self._tags, dict) else ""
 
     def save(self) -> None:
         import json as _json
@@ -258,17 +332,57 @@ class EmoteLib:
         return True
 
     def pick(self, keyword: str = "") -> dict | None:
-        """按关键词挑一张（匹配 summary 子串）；无匹配/关键词为空则随机取最近 60 条。"""
+        """按关键词挑一张。
+
+        匹配范围：summary（群友原话/商城表情名）+ 视觉标签（tags.json）。
+        视觉标签是必需项——群里绝大多数梗图 summary 都是「[动画表情]」，
+        只看 summary 的话「猫」「无语」这类关键词永远命中不了任何一张。
+        命中后按「最近 60 张里避开刚发过的」选，防止连发同一张像复读机。
+        """
         pool = [it for it in self.items if it["kind"] in ("mface", "image")]
         if not pool:
             return None
         kw = (keyword or "").strip()
         if kw and kw not in ("随便", "任意", "随机"):
-            hits = [it for it in pool if kw in (it.get("summary") or "")]
-            pool = hits or pool[-60:]
+            kws: list[str] = []
+            for part in re.split(r"[，,、\s]+", kw):
+                for k in _expand_keywords(part):
+                    if k and k not in kws:
+                        kws.append(k)
+
+            def _hit_score(it: dict) -> int:
+                """精确词命中 2 分、子串命中 1 分。
+
+                「熊猫头」里含「猫」字，子串匹配会把熊猫当成猫；先按精确度排序，
+                同分再随机，既避免误伤又保留新鲜感。
+                """
+                summary = str(it.get("summary") or "")
+                tag_text = self.tags(str(it.get("data") or ""))
+                toks = [t for t in re.split(r"[，,、\s]+", tag_text) if t]
+                score = 0
+                for k in kws:
+                    if k in toks or k == summary.strip():
+                        score = max(score, 2)
+                    elif k in tag_text or k in summary:
+                        score = max(score, 1)
+                return score
+
+            scored = [(_hit_score(it), it) for it in pool]
+            best = max((s for s, _ in scored), default=0)
+            if best > 0:
+                pool = [it for s, it in scored if s == best]
         else:
             pool = pool[-60:]
-        return random.choice(pool)
+        if not pool:
+            pool = [it for it in self.items if it["kind"] in ("mface", "image")][-60:]
+        if len(pool) > 1:
+            fresh = [it for it in pool if str(it.get("data") or "") not in self._recent[-8:]]
+            if fresh:
+                pool = fresh
+        chosen = random.choice(pool)
+        self._recent.append(str(chosen.get("data") or ""))
+        self._recent = self._recent[-8:]
+        return chosen
 
     def render(self, text: str) -> str:
         """[表情包:关键词] → 对应 CQ 码（mface 回放 / image 本地路径）；库里空则删标记。"""

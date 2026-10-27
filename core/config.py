@@ -91,6 +91,15 @@ def _defaults() -> dict:
         },
         # 技能：注入系统提示词的「能力说明书」（内置可停用、自定义可增删）
         "skills": {"items": []},
+        # 输出质量：判别器与多模型择优（集群）
+        "quality": {
+            # 严重问题（自称 AI / 把已有能力说死 / 假转接）触发一次重写
+            "rewrite": os.environ.get("QUALITY_REWRITE", "1").lower() in ("1", "true", "yes", "on"),
+            # 多模型择优：候选数 >1 时并行出多版，按规则挑最好的一版
+            "ensemble": int(os.environ.get("QUALITY_ENSEMBLE", "1") or 1),
+            # 只在这些场景开启择优（闲聊/身份/表情包），工具与知识类不并行以免拖慢
+            "ensemble_intents": ["identity", "greeting", "banter", "chat", "insult"],
+        },
         # 钩子：管线固定位置的确定性规则（不是让模型判断，而是系统强制执行）
         "hooks": {"items": []},
         # 权限：全面放开模式下，只有核心项锁定（不可从界面改）
@@ -208,6 +217,7 @@ _SCHEMA: dict[str, dict[str, type | tuple]] = {
     "escalation": {"confidence_threshold": (int, float), "max_message_len": int, "react_steps": int, "handoff": bool},
     "channels": {"allowlist_enabled": bool, "group_allowlist": list},
     "skills": {"items": list},
+    "quality": {"rewrite": bool, "ensemble": int, "ensemble_intents": list},
     "hooks": {"items": list},
     "permissions": {"open_mode": bool, "locked": list, "audit_changes": bool},
 }

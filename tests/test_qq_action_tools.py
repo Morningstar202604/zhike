@@ -68,3 +68,28 @@ def test_avatar_and_profile_tools_registered():
 
     assert registry.REGISTRY["set_qq_avatar"].risk == 1
     assert registry.REGISTRY["set_qq_profile"].risk == 1
+
+
+def test_interaction_tools_registered():
+    """戳一戳/表情回应/精华/合并转发 都要变成模型可调用的工具。"""
+    for name in ("qq_poke", "qq_emoji_like", "qq_essence", "qq_forward"):
+        assert name in tools._ASYNC_IMPLS
+        assert name in tools.TOOL_META
+        assert tools.TOOL_META[name]["args"]
+
+
+def test_voice_tool_registered_and_privileged():
+    assert "send_voice" in tools._ASYNC_IMPLS
+    assert "send_voice" in tools.PRIVILEGED_TOOLS
+
+
+def test_voice_tool_needs_qq_context():
+    ctx = ToolContext(visitor_id="v", channel_type="webchat")
+    res = asyncio.run(tools.tool_send_voice(ctx, text="你好"))
+    assert res["status"] == "need_context"
+
+
+def test_voice_tool_rejects_empty_text():
+    ctx = ToolContext(visitor_id="v", channel_type="qq_private", channel_user_id="1")
+    res = asyncio.run(tools.tool_send_voice(ctx))
+    assert res["status"] == "need_context"

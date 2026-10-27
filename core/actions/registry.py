@@ -120,6 +120,19 @@ _SPECS: list[ActionSpec] = [
                ("file",), ("file",), group="account", timeout_s=30),
     ActionSpec("set_qq_profile", "修改机器人 QQ 昵称/签名/性别", RISK_L1,
                ("nickname", "personal_note", "sex"), (), group="account", timeout_s=20),
+
+    # ===== L1：互动（戳一戳 / 表情回应 / 群精华 / 合并转发） =====
+    ActionSpec("send_poke", "戳一戳（私聊或群内）", RISK_L1,
+               ("user_id", "group_id"), ("user_id",), group="message", timeout_s=10),
+    ActionSpec("set_msg_emoji_like", "给消息贴一个表情回应", RISK_L1,
+               ("message_id", "emoji_id", "set"), ("message_id", "emoji_id"),
+               group="message", timeout_s=10),
+    ActionSpec("set_essence_msg", "把消息设为群精华", RISK_L1,
+               ("message_id",), ("message_id",), group="group_admin", timeout_s=10),
+    ActionSpec("send_group_forward_msg", "发送合并转发消息（群）", RISK_L1,
+               ("group_id", "messages"), ("group_id", "messages"), group="message", timeout_s=20),
+    ActionSpec("send_private_forward_msg", "发送合并转发消息（私聊）", RISK_L1,
+               ("user_id", "messages"), ("user_id", "messages"), group="message", timeout_s=20),
 ]
 
 REGISTRY: dict[str, ActionSpec] = {s.name: s for s in _SPECS}

@@ -297,6 +297,9 @@ def _build_messages(query: str, ctx: dict, cfg: dict, image_b64: str = "",
     if ctx.get("quote_block"):
         # 引用回复的依据：让模型明确在回哪一句，别答非所问
         parts.append(str(ctx["quote_block"]))
+    if ctx.get("intent_block"):
+        # 意图定性放在原话之后：先看这句是什么性质，再决定档位（正经/接梗/回击）
+        parts.append(str(ctx["intent_block"]))
     if ctx.get("read_block"):
         # 已经替你打开/读到的原文。中性表述，避免模型说"系统日志/搜索结果"这类机制腔。
         parts.append(str(ctx["read_block"]))
@@ -470,8 +473,11 @@ async def _post_chat(base: str, api_key: str, payload: dict) -> str | None:
     return content
 
 
-async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict | None:
+async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "",
+                prefer: str = "") -> dict | None:
     llm_cfg = cfg.get("llm", {})
+    # 择优偏好也可以由 ctx 传入：保持 react() 的调用签名向后兼容（测试替身只认四个参数）
+    prefer = prefer or str(ctx.get("_prefer") or "")
     if not llm_cfg.get("has_key"):
         return None
     api_key = llm_cfg.get("api_key") or ""
@@ -500,8 +506,11 @@ async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "") -> dict |
     }
     # 备援链竞速：主配置 → fallback_model → providers；视觉调用只走主配置。
     # 解析并入竞速：空答案/截断 JSON 也算候选失败，自动换下一个模型。
-    parsed = await _race_chain(_chain(llm_cfg, model, vision=bool(image_b64 and vision_model)),
-                               messages, payload, parse=_parse_llm_answer)
+    chain = _chain(llm_cfg, model, vision=bool(image_b64 and vision_model))
+    if prefer:
+        # 集群择优时可以让某个候选排第一（不影响 failover 顺序的完整性）
+        chain.sort(key=lambda c: 0 if c["model"] == prefer else 1)
+    parsed = await _race_chain(chain, messages, payload, parse=_parse_llm_answer)
     _record_llm("ok" if parsed is not None else "fail")
     return parsed
 

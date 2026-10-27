@@ -286,6 +286,8 @@ _EXTRA_TOOLS: list[dict] = [
     ("now", "看时间", "查当前日期、时间和星期", {}),
     ("calc", "算数", "计算数学表达式", {"expression": "string"}),
     ("send_image", "发图片", "把一张图片发到当前会话", {"source": "string"}),
+    ("send_voice", "发语音", "把一段话合成语音发到当前会话（真发 QQ 语音）",
+     {"text": "string", "source": "string"}),
     ("generate_image", "画图", "按描述生成一张图片并发出去", {"prompt": "string", "size": "string"}),
     ("parse_document", "读文档", "解析 PDF/DOCX/XLSX/MD/TXT 并返回正文",
      {"path": "string", "url": "string"}),
@@ -315,6 +317,13 @@ _EXTRA_TOOLS: list[dict] = [
      {"file": "string"}),
     ("qq_set_profile", "改资料", "改机器人 QQ 昵称 / 签名 / 性别",
      {"nickname": "string", "personal_note": "string", "sex": "string"}),
+    ("qq_poke", "戳一戳", "戳一戳对方（群里或私聊）",
+     {"user_id": "string", "group_id": "string"}),
+    ("qq_emoji_like", "表情回应", "给某条消息贴一个表情回应",
+     {"message_id": "string", "emoji_id": "string"}),
+    ("qq_essence", "设群精华", "把一条消息设为群精华", {"message_id": "string"}),
+    ("qq_forward", "合并转发", "发合并转发的聊天记录",
+     {"group_id": "string", "messages": "string"}),
 ]
 
 

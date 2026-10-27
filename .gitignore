@@ -44,3 +44,6 @@ coverage.xml
 
 # 运行日志（默认 logs/app.log）
 logs/
+
+# 评测与自问自答产物（一次性验证数据）
+/out/

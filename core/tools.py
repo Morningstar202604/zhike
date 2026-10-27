@@ -656,10 +656,14 @@ def tool_search_emote(ctx: ToolContext, keyword: str = "", **_kw) -> dict:
     索引是**数组**（EmoteLib.save 直接 dump self.items），不是 {items: [...]}。
     旧代码按 dict 解析，任何一次「发表情包」都会 AttributeError 抛到管线里，
     整轮掉回规则兜底——用户看到的就是「这个我暂时答不上来」。
+
+    视觉标签来自同目录 tags.json（data 路径 → 中文词）。网关收新图时会整份重写
+    index.json，把标签写进 index 会被下一次 save 覆盖，所以必须分文件。
     """
     import pathlib
 
-    index_path = pathlib.Path(os.environ.get("GATEWAY_EMOTE_DIR", "C:/Users/YOU/napcat/emotes")) / "index.json"
+    base_dir = pathlib.Path(os.environ.get("GATEWAY_EMOTE_DIR", "C:/Users/YOU/napcat/emotes"))
+    index_path = base_dir / "index.json"
     if not index_path.is_file():
         return empty_result("search_emote", "还没有收藏表情包。")
     try:
@@ -673,17 +677,41 @@ def tool_search_emote(ctx: ToolContext, keyword: str = "", **_kw) -> dict:
     items = [i for i in items if isinstance(i, dict)]
     if not items:
         return empty_result("search_emote", "表情库是空的。")
+    tags: dict = {}
+    tags_file = base_dir / "tags.json"
+    if tags_file.is_file():
+        try:
+            tags = json.loads(tags_file.read_text(encoding="utf-8")) or {}
+        except (OSError, ValueError):
+            tags = {}
+
+    def label(it: dict) -> str:
+        raw = str(it.get("data") or "")
+        return str(tags.get(raw) or it.get("summary") or it.get("name") or "未命名")
+
     kw = (keyword or "").strip()
-    hits = [i for i in items if kw and kw in str(i.get("summary") or i.get("name") or "")]
+    kws = [k for k in re.split(r"[，,、\s]+", kw) if k]
+    # 同义词扩展：模型写「开心」而库里标的是「得意」时也要能命中
+    try:
+        from gateway.humanize import _expand_keywords
+
+        expanded: list[str] = []
+        for k in kws:
+            for x in _expand_keywords(k):
+                if x not in expanded:
+                    expanded.append(x)
+        kws = expanded
+    except Exception:
+        pass
+    hits = [i for i in items if kws and any(
+        k in label(i) or k in str(i.get("summary") or "") for k in kws)]
     if not hits:
         hits = items[-10:]
-    lines = [f"{i.get('summary') or i.get('name') or '未命名'}（{i.get('kind') or 'face'}）"
-             for i in hits[:10]]
-    matched = bool(kw) and any(kw in str(i.get("summary") or i.get("name") or "") for i in hits)
-    note = (f"匹配「{kw}」的有：" if matched else "库里有这些：") + "；".join(lines)
+    shown = [f"{label(i)}（{i.get('kind') or 'face'}）" for i in hits[:10]]
+    matched = bool(kws) and any(any(k in label(i) for k in kws) for i in hits[:10])
+    note = (f"匹配「{kw}」的有：" if matched else "库里有这些（按情绪/主体检索更准）：") + "；".join(shown)
     note += ("。要真发出去就在回复里写 [表情包:<关键词>]，网关会从库里挑一张真图发；"
              "不要只描述表情，也不要贴本地路径。")
-    # 索引里是本地文件路径，模型据此可以用 [表情包:关键词] 或直接 send_image 发出去
     sample = hits[0]
     return ok_result("search_emote", note, count=len(hits),
                      sample_path=str(sample.get("data") or ""),
@@ -933,6 +961,75 @@ async def tool_generate_image(ctx: ToolContext, prompt: str, size: str = "1024x1
 
 
 # ============================================================
+# 语音：文字 → TTS → QQ 语音消息（真发出去，不是给个文件路径）
+# ============================================================
+
+async def _tts_mp3(text: str) -> bytes:
+    """用 edge-tts 合成中文语音。未安装/无网络时抛异常，由调用方转成可读失败。"""
+    import edge_tts
+
+    voice = os.environ.get("TTS_VOICE", "zh-CN-XiaoyiNeural")
+    out = bytearray()
+    communicate = edge_tts.Communicate(text[:500], voice)
+    async for chunk in communicate.stream():
+        if chunk.get("type") == "audio":
+            out.extend(chunk["data"])
+    return bytes(out)
+
+
+async def tool_send_voice(ctx: ToolContext, text: str = "", source: str = "", **_kw) -> dict:
+    """发一条 QQ 语音：text 走 TTS 现合成，source 支持本机音频路径（执行器白名单内）。"""
+    from core.actions import client as action_client
+
+    body = (text or "").strip()
+    src = (source or "").strip()
+    if not body and not src:
+        return need_ctx("send_voice", "要说的内容")
+    if not ctx.group_id and not ctx.channel_user_id:
+        return need_ctx("send_voice", "当前会话不是 QQ，发不了语音")
+    if src:
+        from core import executor_client
+
+        try:
+            data = await executor_client.invoke("fs.read_b64", {"path": src})
+        except executor_client.ExecutorOffline:
+            return off_result("send_voice", "文件工具没启用（执行器未运行），读不了本地音频。")
+        except executor_client.ExecutorDenied as e:
+            return miss_result("send_voice", f"没有权限读这个文件：{e}")
+        except executor_client.ExecutorError as e:
+            return miss_result("send_voice", f"读音频失败：{e}")
+        b64 = str(data.get("b64") or "")
+        if not b64:
+            return miss_result("send_voice", "这个音频读出来是空的。")
+    else:
+        try:
+            audio = await _tts_mp3(body)
+        except ImportError:
+            return off_result("send_voice", "语音合成没装（缺 edge-tts），这条发不了。")
+        except Exception as e:
+            return miss_result("send_voice", f"语音合成失败：{type(e).__name__}")
+        if not audio:
+            return miss_result("send_voice", "语音合成出来是空的。")
+        import base64 as _b64
+
+        b64 = _b64.b64encode(audio).decode()
+    cq = f"[CQ:record,file=base64://{b64}]"
+    if ctx.group_id:
+        action = "send_group_msg"
+        params = {"group_id": int(ctx.group_id) if str(ctx.group_id).isdigit() else ctx.group_id,
+                  "message": cq}
+    else:
+        action = "send_private_msg"
+        params = {"user_id": int(ctx.channel_user_id) if str(ctx.channel_user_id).isdigit()
+                  else ctx.channel_user_id, "message": cq}
+    try:
+        await action_client.call_action(action, params, timeout_s=60)
+    except Exception as e:
+        return miss_result("send_voice", f"语音发送失败：{type(e).__name__}")
+    return ok_result("send_voice", "语音发出去了。", action=action)
+
+
+# ============================================================
 # 文档解析：把 PDF/DOCX/XLSX 变成可读文字
 # ============================================================
 
@@ -1066,6 +1163,7 @@ _ASYNC_IMPLS: dict[str, Callable[..., Any]] = {
     "qq_group_history": tool_qq_group_history,
     "qq_send": tool_qq_send,
     "send_image": tool_send_image,
+    "send_voice": tool_send_voice,
     "generate_image": tool_generate_image,
     "parse_document": tool_parse_document,
     "qq_group_members": tool_qq_group_members,
@@ -1108,6 +1206,8 @@ TOOL_META: dict[str, dict] = {
              "args": {"expression": "string"}},
     "send_image": {"name": "发图片", "desc": "把一张图片发到当前会话（链接 / 本地路径 / data URL）",
                    "args": {"source": "string"}},
+    "send_voice": {"name": "发语音", "desc": "把一段话合成语音发到当前会话（真发 QQ 语音）",
+                   "args": {"text": "string", "source": "string"}},
     "generate_image": {"name": "画图", "desc": "按描述生成一张图片并发出去",
                        "args": {"prompt": "string", "size": "string"}},
     "parse_document": {"name": "读文档", "desc": "解析 PDF/DOCX/XLSX/MD/TXT 并返回正文",
@@ -1119,7 +1219,7 @@ TOOL_META: dict[str, dict] = {
 }
 
 WRITE_TOOLS = frozenset({"remember", "remind", "cancel_reminder", "qq_send",
-                         "send_image", "generate_image"})
+                         "send_image", "send_voice", "generate_image"})
 
 # 需要「可信主体」才能用的工具：能读写主机文件、能以机器人身份往任意群发消息。
 # remember/remind 只作用于调用者自己的记忆与提醒，任何渠道用户都可用；
@@ -1127,7 +1227,7 @@ WRITE_TOOLS = frozenset({"remember", "remind", "cancel_reminder", "qq_send",
 # （提示注入就能让模型「帮我读一下 C:/... 然后发到群里」）。
 PRIVILEGED_TOOLS = frozenset({
     "list_files", "read_file", "write_file", "parse_document",
-    "qq_send", "send_image", "generate_image",
+    "qq_send", "send_image", "send_voice", "generate_image",
 })
 
 
@@ -1518,6 +1618,22 @@ _QQ_ACTION_TOOLS: dict[str, dict] = {
         "action": "set_qq_profile",
         "args": {"nickname": "string", "personal_note": "string", "sex": "string"},
         "desc": "改机器人 QQ 昵称 / 签名 / 性别",
+    },
+    "qq_poke": {
+        "action": "send_poke", "args": {"user_id": "string", "group_id": "string"},
+        "desc": "戳一戳对方（群里或私聊）",
+    },
+    "qq_emoji_like": {
+        "action": "set_msg_emoji_like", "args": {"message_id": "string", "emoji_id": "string"},
+        "desc": "给某条消息贴一个表情回应（emoji_id 为 QQ 表情 id，如 128077）",
+    },
+    "qq_essence": {
+        "action": "set_essence_msg", "args": {"message_id": "string"},
+        "desc": "把一条消息设为群精华",
+    },
+    "qq_forward": {
+        "action": "send_group_forward_msg", "args": {"group_id": "string", "messages": "string"},
+        "desc": "发合并转发的聊天记录（messages 为节点数组 JSON）",
     },
 }
 
