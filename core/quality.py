@@ -115,7 +115,9 @@ def critique(text: str, query: str = "", *, channel: str = "", persona: str = ""
                     "detail": "分段过多，像写报告"})
 
     if _IDENTITY_HINT_RE.search(q) and "猫" not in t:
-        out.append({"code": "identity_no_cat", "severity": SEV_MID,
+        # 升级为 high：用户反复吐槽的就是「你是谁」答得像 AI/客服。
+        # 这类问题一天出现不了几次，多花一次重写换掉「我是零，蹲在手机后面」值得。
+        out.append({"code": "identity_no_cat", "severity": SEV_HIGH,
                     "detail": "被问身份却没有猫的自我认知"})
 
     if q and len(t) >= 12 and t[:20] == q[:20]:
