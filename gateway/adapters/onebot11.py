@@ -59,6 +59,7 @@ class OneBot11Adapter:
             sender_id=ev.user_id,
             text=ev.text,
             images=images,
+            audio_url=getattr(ev, "record_url", "") or "",
             display_name=ev.display_name,
             message_id=ev.message_id,
             raw=raw,

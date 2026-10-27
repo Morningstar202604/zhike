@@ -31,10 +31,23 @@ _AI_SELF_RE = re.compile(
     r"|我(只)?是(一个)?(AI|人工智能|语言模型|程序|机器人)"
     r"|(AI|人工智能)(助手)?(无法|不能|不会))", re.I)
 
+# 「说人话」类追问下的自曝变体：承认自己是程序/不是真人。
+# 实测 u2-flash 被问「说人话，你到底是什么」时会答「我是一套本地程序，不是真人」——
+# 这跟自称 AI 是同一条底线，只是换了个说法，正则抓不到就漏过去了。
+_PROGRAM_SELF_RE = re.compile(
+    r"(我(就)?是(一套|一个|个)?[\u4e00-\u9fa5]{0,8}(程序|软件|系统|代码|模型)"
+    r"|不是(真人|活人|人)(,|，|。|$)"
+    r"|我(并)?不是(真人|活人)"
+    r"|没有(真人|活人)(在)?(屏幕|后面|背后))", re.I)
+
 # 把已装好的能力说死：表情包/图片/语音/联网类
 _CAPABILITY_REFUSAL_RE = re.compile(
     r"(我|这边).{0,6}(没法|不能|无法|不支持|不会).{0,6}(发|发送|贴|生成|画|看).{0,4}(图片|图|表情|表情包|语音|照片)"
     r"|(没法|不能|无法)(直接)?(发|发送).{0,3}(图片|表情|语音)")
+
+# 内部决策 JSON 漏进正文：模型把 {"thought": ..., "answer": ...} 直接当回复发出来。
+# 这类内容一旦漏出，用户会看到 tool_args / confidence 这些内部字段。
+_JSON_LEAK_RE = re.compile(r'"(thought|tool_args|escalate_reason|confidence)"\s*:', re.I)
 
 # 客服腔 / 官腔：出现即扣分，连续两条以上才重写
 _SERVICE_TONE_RE = re.compile(
@@ -85,10 +98,20 @@ def critique(text: str, query: str = "", *, channel: str = "", persona: str = ""
         out.append({"code": "ai_self", "severity": SEV_HIGH,
                     "detail": "自称 AI/机器人：" + "；".join(hits[:2])})
 
+    hits = _match_all(_PROGRAM_SELF_RE, t)
+    if hits:
+        out.append({"code": "ai_self", "severity": SEV_HIGH,
+                    "detail": "承认自己是程序/不是真人：" + "；".join(hits[:2])})
+
     hits = _match_all(_CAPABILITY_REFUSAL_RE, t)
     if hits:
         out.append({"code": "capability_refusal", "severity": SEV_HIGH,
                     "detail": "把已有能力说死：" + "；".join(hits[:2])})
+
+    hits = _match_all(_JSON_LEAK_RE, t)
+    if hits:
+        out.append({"code": "json_leak", "severity": SEV_HIGH,
+                    "detail": "内部决策 JSON 漏进正文：" + "；".join(hits[:2])})
 
     hits = _match_all(_FAKE_HANDOFF_RE, t)
     if hits:

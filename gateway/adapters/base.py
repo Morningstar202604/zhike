@@ -22,6 +22,8 @@ class NormalizedMessage:
     sender_id: str                # 发送者标识
     text: str = ""
     images: list[str] = field(default_factory=list)   # base64 或 URL
+    # 语音消息的原始地址（有它时文本可能为空，由网关下载后转写）
+    audio_url: str = ""
     display_name: str = ""
     message_id: str | None = None
     reply_to: str | None = None
@@ -33,7 +35,7 @@ class NormalizedMessage:
 
     @property
     def has_content(self) -> bool:
-        return bool(self.text.strip() or self.images)
+        return bool(self.text.strip() or self.images or self.audio_url)
 
     @property
     def identity(self) -> str:

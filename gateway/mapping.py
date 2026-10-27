@@ -30,14 +30,16 @@ class GatewayEvent:
     display_name: str = ""
     message_id: str | None = None
     image_url: str = ""
+    # 语音消息的原始下载地址（转写用）；有它时文本为空也允许进管线
+    record_url: str = ""
 
     @property
     def should_reply(self) -> bool:
-        return bool(self.text)
+        return bool(self.text or self.record_url)
 
 
 def _extract_text(message, self_id: str) -> tuple[str, bool, str]:
-    """提取纯文本 / 是否 @机器人 / 首个图片 URL（CQ 码字符串与分段两种格式统一处理）。"""
+    """兼容旧调用：只要 (文本, 是否@, 首图 URL)。语音 URL 由 _extract_media 提供。"""
     if isinstance(message, str):
         at_self = f"[CQ:at,qq={self_id}]" in message
         image_url = ""
@@ -88,6 +90,21 @@ def _extract_text(message, self_id: str) -> tuple[str, bool, str]:
     return "".join(parts), at_self, image_url
 
 
+def _record_url(message) -> str:
+    """取第一条语音的下载地址（CQ 码字符串与分段两种格式都认）。
+
+    语音必须由网关先下载再转写：NapCat 给的 url 是带 rkey 的临时直链，
+    过一会儿就失效，交给下游异步处理会 403。
+    """
+    if isinstance(message, str):
+        m = re.search(r"\[CQ:record,[^\]]*url=([^,\]]+)", message)
+        return m.group(1).replace("&amp;", "&") if m else ""
+    for seg in message or []:
+        if seg.get("type") == "record":
+            return str((seg.get("data") or {}).get("url") or "")
+    return ""
+
+
 def from_onebot_v11(event: dict) -> GatewayEvent | None:
     if event.get("post_type") != "message":
         return None
@@ -104,7 +121,10 @@ def from_onebot_v11(event: dict) -> GatewayEvent | None:
     if message_type == "group" and not at_me:
         return None
     text = text.strip()
-    if not text:
+    record_url = _record_url(event.get("message"))
+    # 只有语音、没有文字：放行（否则「发条语音问事」永远进不了管线）。
+    # 转写失败时由网关补一句人话，这里不拦。
+    if not text and not record_url:
         return None
     chat_id = str(event.get("group_id", "")) if message_type == "group" else user_id
     return GatewayEvent(
@@ -115,6 +135,7 @@ def from_onebot_v11(event: dict) -> GatewayEvent | None:
         display_name=str(event.get("sender", {}).get("nickname", "") or ""),
         message_id=str(event.get("message_id", "")) or None,
         image_url=image_url,
+        record_url=record_url,
     )
 
 

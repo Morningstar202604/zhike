@@ -1133,8 +1133,18 @@ def create_app() -> FastAPI:
             # 检索实际模式（hybrid / fts5 / bigram）：静默降级会让界面上"向量检索已开"
             # 与真实行为不符，这里给控制台一个可核对的字段。
             "retrieval": retrieval.mode(),
+            # 语音转写能力：配了模型/外部命令才算可用，否则网关会明确告诉用户听不了
+            "asr": asr_status(),
             "log_file": events_log.file_path(),
         }
+
+    def asr_status() -> dict:
+        try:
+            from core import asr
+
+            return asr.status()
+        except Exception:
+            return {"available": False, "model": "", "external_cmd": False, "last_error": "模块不可用"}
 
     # ---- 本机令牌引导（免手输管理员令牌）----
     # 只对回环地址开放：本机浏览器打开控制台时自动取令牌，等同"这台电脑的信任"。

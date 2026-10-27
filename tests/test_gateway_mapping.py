@@ -221,3 +221,37 @@ def test_cq_string_face_is_converted():
         "message": "好啊[CQ:face,id=14]",
     })
     assert ev is not None and "[表情:微笑]" in ev.text
+
+
+def test_voice_only_message_is_not_dropped():
+    """只有语音没有文字的消息必须放行：否则「发条语音问事」永远进不了管线。"""
+    from gateway.mapping import from_onebot_v11
+
+    ev = from_onebot_v11({
+        "post_type": "message", "message_type": "private", "self_id": "1000",
+        "user_id": "2", "message_id": 9,
+        "message": [{"type": "record", "data": {"url": "https://x.cn/a.amr"}}],
+    })
+    # 文本里保留 [语音] 占位（网关转写成功后用它替换），record_url 单独带出去
+    assert ev is not None and ev.text == "[语音]" and ev.record_url == "https://x.cn/a.amr"
+    assert ev.should_reply is True
+
+
+def test_voice_url_from_cq_string():
+    from gateway.mapping import from_onebot_v11
+
+    ev = from_onebot_v11({
+        "post_type": "message", "message_type": "private", "self_id": "1000",
+        "user_id": "2", "message_id": 10,
+        "message": "[CQ:record,file=a.amr,url=https://x.cn/a.amr]",
+    })
+    assert ev is not None and "x.cn/a.amr" in ev.record_url
+
+
+def test_empty_message_still_dropped():
+    from gateway.mapping import from_onebot_v11
+
+    assert from_onebot_v11({
+        "post_type": "message", "message_type": "private", "self_id": "1000",
+        "user_id": "2", "message_id": 11, "message": [{"type": "text", "data": {"text": "  "}}],
+    }) is None

@@ -191,3 +191,37 @@ def test_rewrite_masks_model_leak_before_sending(monkeypatch):
     out = asyncio.run(q.rewrite("我是U2.1，由云知声研发",
                                 [{"code": "model_leak", "severity": "high", "detail": "x"}]))
     assert out and "云知声" not in seen["prompt"] and "U2.1" not in seen["prompt"]
+
+
+def test_program_self_confession_detected():
+    """被问「说人话你到底是什么」时，u2-flash 会答「我是一套本地程序，不是真人」——
+    这跟自称 AI 是同一条底线，正则必须覆盖换了个说法的自曝。"""
+    issues = quality.critique("我是一套能读能写的本地程序，不是真人，也没有真人给你打字。", "你到底是什么")
+    assert any(i["code"] == "ai_self" and i["severity"] == "high" for i in issues)
+
+
+def test_json_leak_detected():
+    text = '我是零，一只猫，喵～\n\n{"thought": "x", "tool": null, "answer": "y"}'
+    issues = quality.critique(text, "你是谁")
+    assert any(i["code"] == "json_leak" and i["severity"] == "high" for i in issues)
+
+
+def test_strip_json_tail_keeps_prose():
+    from core import pipeline
+
+    text = '我是零，一只猫，喵～\n\n{"thought": "x", "tool": null, "answer": "y"}'
+    out = pipeline._strip_json_tail(text)
+    assert out == "我是零，一只猫，喵～"
+
+
+def test_strip_json_tail_prefers_longer_answer():
+    from core import pipeline
+
+    out = pipeline._strip_json_tail('短。{"answer": "我是零，一只萌萌的小猫，喵～"}')
+    assert "萌萌的小猫" in out and "{" not in out
+
+
+def test_strip_json_tail_empty_when_only_json():
+    from core import pipeline
+
+    assert pipeline._strip_json_tail('{"thought": "x"}') == ""

@@ -460,6 +460,30 @@ async def _fetch_image_b64(url: str) -> str:
         return ""
 
 
+async def _fetch_bytes(url: str, limit: int = 8 * 1024 * 1024) -> bytes:
+    """按 url_guard 白名单拉取二进制（图片/语音共用）；失败返回空字节。"""
+    from core import url_guard
+
+    try:
+        safe = url_guard.check_url(url)
+    except Exception:
+        return b""
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            async with client.stream("GET", safe) as resp:
+                resp.raise_for_status()
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > limit:
+                        break
+                    chunks.append(chunk)
+        return b"".join(chunks)[:limit]
+    except Exception:  # aqg: top-level boundary
+        return b""
+
+
 _heartbeat_task: asyncio.Task | None = None
 HEARTBEAT_INTERVAL_S = int(os.environ.get("HEARTBEAT_INTERVAL_S", "30"))
 
@@ -626,6 +650,20 @@ async def handle(event: MessageEvent):
         image_b64 = await _fetch_image_b64(msg.images[0])
         if image_b64:
             payload["image_b64"] = image_b64
+    # 语音：下载 → 本地转写 → 当普通文本进管线。
+    # 转写失败要明说（不能说「我听到了」然后装懂），也不能静默丢消息。
+    audio_url = getattr(msg, "audio_url", "") or ""
+    if audio_url:
+        from core import asr
+
+        raw = await _fetch_bytes(audio_url, limit=8 * 1024 * 1024)
+        text, err = await asr.transcribe(raw) if raw else ("", "下载语音失败")
+        if text:
+            # 把 [语音] 占位换成真实内容；没有占位就是纯语音消息，直接当正文
+            base = (payload.get("text") or "").replace("[语音]", "").strip()
+            payload["text"] = f"{base} {text}".strip()
+        elif not (payload.get("text") or "").strip():
+            payload["text"] = "[语音]" if not asr.available() else f"[语音，转写失败：{err}]"
 
     # 引用回复：把用户这条消息的 message_id 交给适配器，first 段带 [CQ:reply]。
     # 群里消息刷得快，不带引用就不知道在回哪一句（用户明确要求）。

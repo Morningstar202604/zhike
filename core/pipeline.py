@@ -945,21 +945,57 @@ async def _gate_output(reply, query: str, cfg: dict) -> None:
     if not issues:
         return
     if quality.needs_rewrite(issues):
-        new_text = await quality.rewrite(
-            reply.text or "", issues, query=query,
-            persona=str((cfg.get("context") or {}).get("persona") or ""))
-        if new_text:
-            reply.text = new_text
-        else:
-            # 重写没成功（模型也答不出来）：至少不能把底层模型自述/英文过滤报错发出去。
-            # 这里给的是"人设兜底"而不是客服话术——宁可用一句短的猫话，也不露馅。
-            reply.text = _fallback_for(issues)
-            reply.mode = "llm_react_guarded"
+        # 决策 JSON 漏进正文属于「可直接确定性修复」的：切掉 JSON 尾巴即可，
+        # 正文本身是好的，没必要花一次模型调用重写（重写还可能把好答案改坏）。
+        if any(i.get("code") == "json_leak" for i in issues):
+            stripped = _strip_json_tail(reply.text or "")
+            if stripped:
+                reply.text = stripped
+                issues = [i for i in issues if i.get("code") != "json_leak"]
+        if quality.needs_rewrite(issues):
+            new_text = await quality.rewrite(
+                reply.text or "", issues, query=query,
+                persona=str((cfg.get("context") or {}).get("persona") or ""))
+            if new_text:
+                reply.text = new_text
+            else:
+                # 重写没成功（模型也答不出来）：至少不能把底层模型自述/英文过滤报错发出去。
+                # 这里给的是"人设兜底"而不是客服话术——宁可用一句短的猫话，也不露馅。
+                reply.text = _fallback_for(issues)
+                reply.mode = "llm_react_guarded"
     try:
         store.critique_add("quality", len(reply.text or ""),
                            [f"[{i['severity']}] {i['detail']}" for i in issues])
     except Exception:
         pass
+
+
+def _strip_json_tail(text: str) -> str:
+    """切掉混在正文后面的决策 JSON。
+
+    实测 u2-flash 会先正常回一句，再原样贴一段
+    `{"thought": ..., "tool": null, "answer": "..."}`。整段发出去等于把内部字段
+    给用户看；正文是好答案，只需要砍掉从第一个 `{` 开始的部分。
+    """
+    t = (text or "").strip()
+    idx = t.find("{")
+    if idx <= 0:
+        return ""
+    head = t[:idx].rstrip()
+    if not head:
+        return ""
+    # JSON 里带 answer 时，用 answer 的值兜底（正文可能被截断/为空）
+    import json as _json
+
+    try:
+        tail = _json.loads(t[idx:])
+        if isinstance(tail, dict):
+            inner = str(tail.get("answer") or "").strip()
+            if inner and len(inner) > len(head):
+                return inner
+    except ValueError:
+        pass
+    return head
 
 
 def _fallback_for(issues: list[dict]) -> str:

@@ -1459,6 +1459,31 @@ def tool_args(name: str) -> list[str]:
     return list(t.get("args_json", {}).keys()) if t else []
 
 
+_CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _cn_num(text: str) -> str:
+    """把「八」「二十三」「十」这类中文数字换成阿拉伯数字。
+
+    只支持 0-99（时间/算式够用）。不做完整中文数字解析：
+    「十五」→15、「二十」→20、「二十三」→23、「八」→8。
+    不在这个范围内的（「一百」「三千」）原样留着，避免误改正文。
+    """
+    def conv(m: re.Match) -> str:
+        s = m.group(0)
+        if s in _CN_DIGITS:
+            return str(_CN_DIGITS[s])
+        if "十" in s:
+            left, _, right = s.partition("十")
+            tens = _CN_DIGITS.get(left, 1) if left else 1
+            ones = _CN_DIGITS.get(right, 0) if right else 0
+            return str(tens * 10 + ones)
+        return s
+
+    return re.sub(r"[零〇一二两三四五六七八九十]{1,3}", conv, text)
+
+
 def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict | None]:
     """规则路由：只处理高置信度的确定性问法。
 
@@ -1468,8 +1493,12 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
     """
     enabled = tools if tools is not None else active_tools({"tools": {}})
     q = query or ""
+    # 中文数字归一化：只用于「识别时间/算式」，正文仍用原句
+    q_num = _cn_num(q)
 
     # 提醒意图：先把时间片段剥出来，剩下的就是提醒内容。
+    # 注意「明天早上八点提醒我开会」这种时间在前、提醒在中间的说法：
+    # 下面按「最长可识别形态」匹配时间，再把时间片段整个删掉，剩下的自然就是正文。
     # 用「搜索 + 删除」而不是一个复杂正则：两种语序（时间在前/在后）
     # 都能正确切分，也不会因非贪婪量词把 "10分钟后" 咬成 "1"。
     if "提醒" in q and "remind" in enabled:
@@ -1480,16 +1509,20 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
             # 周期规则 + 钟点。「工作日」单独出现太容易误伤（"这个工作日"），
             # 因此 weekday 必须带钟点才算；其余规则钟点可选（「每月31号」本身够定位）。
             re.search(r"((?:每天|每日|天天|每(?:周|星期)[一二三四五六日天]|每月\s*\d{1,2}\s*[号日])"
-                      r"(?:\s*(?:早上|上午|中午|下午|晚上)?\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)?)", q)
-            or re.search(r"((?:每个|每)?工作日\s*(?:早上|上午|中午|下午|晚上)?\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)", q)
-            or re.search(r"(\d+\s*(?:分钟|小时|天|周|秒)后)", q)
-            or re.search(r"((?:明天|后天|今天|今晚)\s*(?:早上|上午|中午|下午|晚上)?\s*\d{0,2}\s*[点:：]\s*\d{0,2})", q)
-            or re.search(r"((?:早上|上午|中午|下午|晚上)\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)", q)
-            or re.search(r"((?<![\d:])\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)", q)
+                      r"(?:\s*(?:早上|上午|中午|下午|晚上)?\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)?)", q_num)
+            or re.search(r"((?:每个|每)?工作日\s*(?:早上|上午|中午|下午|晚上)?\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)", q_num)
+            or re.search(r"(\d+\s*(?:分钟|小时|天|周|秒)后)", q_num)
+            or re.search(r"((?:明天|后天|今天|今晚)\s*(?:早上|上午|中午|下午|晚上)?\s*\d{0,2}\s*[点:：]\s*\d{0,2})", q_num)
+            or re.search(r"((?:早上|上午|中午|下午|晚上)\s*\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)", q_num)
+            or re.search(r"((?<![\d:])\d{1,2}\s*[:：点]\s*(?:半|\d{1,2})?)", q_num)
         )
         if tm:
             when = tm.group(1).strip()
-            text = (q[:tm.start()] + " " + q[tm.end():]).replace("提醒我", " ").replace("提醒", " ")
+            # 用归一化串切时间，再从原句里删掉「原始写法」（可能是中文数字）
+            orig_when = tm.group(1).strip()
+            text = q.replace(orig_when, " ", 1) if orig_when in q else (
+                q[:tm.start()] + " " + q[tm.end():])
+            text = text.replace("提醒我", " ").replace("提醒", " ")
             text = text.strip(" ，,。.；;：: 请帮我设个")
             if text:
                 return "remind", {"text": text, "when": when}
@@ -1518,16 +1551,118 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
 
     # 纯算式：只认「算一下/等于几」或整句就是算式，避免把正文里的数字当计算
     if "calc" in enabled:
-        m = re.search(r"(?:算一下|算算|计算)\s*[:：]?\s*([-+*/%().\d\s^×÷]+)", q) or             re.search(r"([-+*/%().\d\s^×÷]+?)\s*(?:等于多少|等于几|=)", q)
+        # 「99 乘 99 等于多少」这类中文运算符：先归一化成符号再交给表达式解析
+        norm = (q_num.replace("乘以", "*").replace("乘", "*").replace("除以", "/")
+                .replace("加", "+").replace("减", "-"))
+        has_cn_op = bool(re.search(r"(乘|除以|加|减)", q))
+        # 有中文运算符时必须先看 norm：否则「等于多少」那条会把尾部裸数字先吃掉
+        m = (
+            (re.search(r"([\d\s+\-*/%().^]{3,})", norm) if has_cn_op else None)
+            or re.search(r"(?:算一下|算算|计算)\s*[:：]?\s*([-+*/%().\d\s^×÷]+)", q)
+            or re.search(r"([-+*/%().\d\s^×÷]+?)\s*(?:等于多少|等于几|=)", q)
+        )
         expr = m.group(1).strip() if m else ""
         if not expr and re.fullmatch(r"[\d\s+\-*/%().^×÷]+", q) and re.search(r"[\d]", q):
             expr = q.strip()
         if expr and re.search(r"[-+*/%^×÷]", expr):
             return "calc", {"expression": expr}
 
+    # 本地路径 + 动作动词 → 文件三件套（路径是强信号，比让模型猜稳得多）
+    # 先剔掉 URL，避免把 https:// 里的 s:// 当成 Windows 路径
+    q_no_url = re.sub(r"https?://[^\s，。；）)]+", " ", q)
+    local_path = re.search(r"([A-Za-z]:[\/][^\s，。；、）)】\"']+|~?/(?:Users|home|tmp|var)/[^\s，。；、）)】\"']+)", q_no_url)
+    if local_path:
+        p = local_path.group(1).rstrip("\"'")
+        if "write_file" in enabled and re.search(r"(写|写进|写入|保存|存到|追加)", q):
+            return "write_file", {"path": p, "content": "", "append": ""}
+        if "parse_document" in enabled and re.search(r"(总结|解析|提取|读一下这|全文)", q)                 and re.search(r"\.(pdf|docx?|xlsx?|md|txt)$", p, re.I):
+            return "parse_document", {"path": p, "url": ""}
+        if "list_files" in enabled and re.search(r"(列|有哪些|有什么|看看|目录|文件)", q):
+            return "list_files", {"path": p, "depth": "1"}
+        if "read_file" in enabled and re.search(r"(读|看|打开|内容)", q):
+            return "read_file", {"path": p, "max_chars": "4000"}
+
     url = re.search(r"https?://[^\s，。；）)]+", q)
     if url and ("看" in q or "读" in q or "打开" in q or "总结" in q or "内容" in q) and "read_webpage" in enabled:
         return "read_webpage", {"url": url.group(0)}
+
+    # ---- 下面这批是「模型经常不选、但用户表达极其明确」的补漏 ----
+    # 来源：scripts/tool_selection.py 实测（生产路径只到 50%，这些是失分最多的）。
+    # 判定原则：动作动词 + 对象名词同时出现才算，宁可不拦也别误伤闲聊。
+
+    # 待办列表：不只「列一下待办」，还有「我有什么待办」「看看提醒」
+    if "list_reminders" in enabled and re.search(
+            r"(待办|提醒).{0,6}(列表|清单|有什么|有啥|有哪些|查看|看看|列)" r"|"
+            r"(列|看看|查看|显示).{0,4}(待办|提醒)", q):
+        return "list_reminders", {}
+
+    # 回忆：「我上次说 / 你还记得 / 我之前说过」
+    if "recall_memory" in enabled and re.search(
+            r"(你(还)?记得|我(之前|上次|以前)(说|讲|提)过?|回忆(一下|下)?)", q):
+        return "recall_memory", {}
+
+    # 记住：「帮我记住 / 记一下 / 存一下」
+    if "remember" in enabled and re.search(r"(记住|记一下|记下|存一下)", q):
+        return "remember", {}
+
+    # 群成员 / 群列表 / 好友列表
+    if "qq_group_members" in enabled and re.search(
+            r"(群里|群内|这个群).{0,6}(几个人|多少人|成员|都有谁|有谁)", q):
+        return "qq_group_members", {}
+    if "qq_groups" in enabled and re.search(
+            r"(我|机器人|你).{0,4}(加了|在).{0,4}(哪些|几个|什么).{0,3}群"
+            r"|(群列表|群清单|有哪些群)", q):
+        return "qq_groups", {}
+    if "qq_friends" in enabled and re.search(
+            r"(好友|朋友).{0,4}(都有谁|有谁|列表|几个|多少)"
+            r"|(我的|机器人的).{0,2}好友", q):
+        return "qq_friends", {}
+
+    # 群管理四件套
+    if "qq_group_ban" in enabled and re.search(
+            r"(禁言|闭嘴|mute).{0,8}(\d+\s*(秒|分钟|小时))?"
+            r"|(把|给).{0,10}禁言", q):
+        return "qq_group_ban", {}
+    if "qq_group_rename" in enabled and re.search(
+            r"(群名|群名称).{0,6}(改|换|设)|(改|换).{0,4}群名", q):
+        return "qq_group_rename", {}
+    if "qq_group_notice" in enabled and re.search(
+            r"(群公告|公告).{0,6}(发|写|拟|来)|(发|写).{0,4}公告", q):
+        return "qq_group_notice", {}
+    if "qq_recall" in enabled and re.search(
+            r"(撤回|撤了|回收).{0,6}(刚才|刚刚|这条|那条|上面|消息)?", q):
+        return "qq_recall", {}
+    if "qq_essence" in enabled and re.search(r"(设为|设置|加).{0,4}(群)?精华", q):
+        return "qq_essence", {}
+    if "qq_poke" in enabled and re.search(r"(戳|拍)(一)?(戳|拍)?.{0,4}(他|她|你|我|一下)?", q) \
+            and "戳" in q:
+        return "qq_poke", {}
+    if "qq_emoji_like" in enabled and re.search(
+            r"(点赞|点个赞|给.{0,6}赞|表情回应|贴个表情)", q):
+        return "qq_emoji_like", {}
+
+    # 发图 / 识图 / 读文档 / 搜新闻
+    if "send_image" in enabled and re.search(
+            r"(把|将).{0,8}(图|图片|照片).{0,6}(发|传|甩)", q):
+        return "send_image", {}
+    if "describe_image" in enabled and re.search(
+            r"(这|那|刚)(张|个)?.{0,4}(图|图片|照片).{0,6}(是什么|啥|看看|看下|识别|内容)"
+            r"|(看看|看下|识别).{0,4}(这张|这个)?(图|图片|照片)", q):
+        return "describe_image", {}
+    if "parse_document" in enabled and re.search(
+            r"(总结|读|解析|看看).{0,6}(pdf|docx?|xlsx?|文档|文件)", q, re.I) \
+            and re.search(r"[A-Za-z]:[\\/]|https?://", q):
+        return "parse_document", {"path": "", "url": ""}
+    if "web_search" in enabled and re.search(
+            r"(搜一下|搜搜|搜索|查一下|查查).{0,10}(新闻|资讯|最新|今天|今天有什么)", q):
+        return "web_search", {"query": q}
+    if "generate_image" in enabled and re.search(
+            r"(画|生成|做)(一)?(张|只|个)?.{0,6}(图|猫|狗|画)", q) \
+            and not re.search(r"(漫画|动画|图画书)", q):
+        return "generate_image", {"prompt": q}
+    if "send_voice" in enabled and re.search(
+            r"(发|来|说|录).{0,4}(条|句|段)?.{0,2}(语音|声音)|用语音(说|回|来)?", q):
+        return "send_voice", {"text": ""}
 
     return None, None
 
