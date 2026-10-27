@@ -85,3 +85,28 @@ def asyncio_run(coro):
     import asyncio
 
     return asyncio.run(coro)
+
+
+def test_resolve_model_finds_snapshot_dir(monkeypatch, tmp_path):
+    """download_root 会多套 models--*/snapshots/<hash>，必须能自动找到含 model.bin 那层。"""
+    snap = tmp_path / "models--Systran--faster-whisper-small" / "snapshots" / "abc"
+    snap.mkdir(parents=True)
+    (snap / "model.bin").write_bytes(b"x")
+    monkeypatch.delenv("ASR_MODEL", raising=False)
+    monkeypatch.setattr(asr, "DEFAULT_MODEL_DIRS", [tmp_path])
+    assert asr._resolve_model() == str(snap)
+    assert asr.available() is True
+
+
+def test_resolve_model_env_takes_priority(monkeypatch, tmp_path):
+    custom = tmp_path / "custom"
+    custom.mkdir()
+    monkeypatch.setenv("ASR_MODEL", str(custom))
+    assert asr._resolve_model() == str(custom)
+
+
+def test_resolve_model_empty_when_missing(monkeypatch, tmp_path):
+    monkeypatch.delenv("ASR_MODEL", raising=False)
+    monkeypatch.setattr(asr, "DEFAULT_MODEL_DIRS", [tmp_path / "nope"])
+    assert asr._resolve_model() == ""
+    assert asr.available() is False

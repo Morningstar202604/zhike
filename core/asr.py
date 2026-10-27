@@ -19,24 +19,45 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-DEFAULT_MODEL = "C:/Users/YOU/models/whisper-small-zh/models--Systran--faster-whisper-small/snapshots/536b0662742c02347bc0e980a01041f333bce120"
+DEFAULT_MODEL_DIRS = [
+    Path.home() / "models" / "whisper-small-zh",
+    Path.home() / ".cache" / "whisper",
+]
 
 _MODEL = None
 _MODEL_LOCK = asyncio.Lock()
 _LAST_ERROR = ""
 
 
+def _resolve_model() -> str:
+    """定位 whisper 模型目录。
+
+    优先 ASR_MODEL；否则在默认目录里找含 model.bin 的那一层
+    （faster-whisper 的 download_root 会多套一层 models--Systran--.../snapshots/<hash>）。
+    找不到返回空串——不把本机绝对路径写死在仓库里。
+    """
+    env = os.environ.get("ASR_MODEL", "").strip()
+    if env:
+        return env if Path(env).exists() else ""
+    for root in DEFAULT_MODEL_DIRS:
+        if not Path(root).exists():
+            continue
+        for candidate in sorted(Path(root).rglob("model.bin")):
+            return str(candidate.parent)
+    return ""
+
+
 def available() -> bool:
     """能不能转写：有本地模型目录或配了外部命令。"""
     if os.environ.get("ASR_CMD", "").strip():
         return True
-    model = os.environ.get("ASR_MODEL", DEFAULT_MODEL)
-    return Path(model).exists()
+    return bool(_resolve_model())
 
 
 def status() -> dict:
+    model = _resolve_model()
     return {"available": available(),
-            "model": os.environ.get("ASR_MODEL", DEFAULT_MODEL),
+            "model": model or os.environ.get("ASR_MODEL", ""),
             "external_cmd": bool(os.environ.get("ASR_CMD", "").strip()),
             "last_error": _LAST_ERROR}
 
@@ -67,7 +88,9 @@ async def _load_model():
             return _MODEL
         from faster_whisper import WhisperModel
 
-        path = os.environ.get("ASR_MODEL", DEFAULT_MODEL)
+        path = _resolve_model()
+        if not path:
+            raise FileNotFoundError("语音模型未下载")
         _MODEL = await asyncio.to_thread(
             WhisperModel, path, device="cpu", compute_type="int8",
             cpu_threads=int(os.environ.get("ASR_THREADS", "4")))
