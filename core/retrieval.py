@@ -317,15 +317,42 @@ def rebuild_index_if_needed(conn: sqlite3.Connection, kb: list[dict]) -> None:
 
 # ---------- 检索：FTS5 + vec 两路 → RRF 融合 ----------
 
+_FILLER_WORDS = (
+    "请问", "帮我", "麻烦", "可以", "能不能", "怎么样", "怎么办",
+    "什么", "怎么", "如何", "为什么", "哪个", "哪些", "多少",
+    "时候", "我的", "你的", "一下", "这个", "那个", "现在", "然后", "就是",
+)
+
+
+def strip_fillers(query: str) -> str:
+    """去掉疑问/口语填充词，只留实词。
+
+    检索必须区分「主题词」和「问法」：「你怎么看中美关系」和
+    「我的订单什么时候发货」的 bigram 里都混着「怎么/什么/时候」，
+    拿它们去匹配知识库，等于用问法做检索——一个两字虚词就能召回整条
+    KB（实测「怎么看中美关系」答成「产品使用指引」）。
+    """
+    q = query or ""
+    for w in _FILLER_WORDS:
+        q = q.replace(w, " ")
+    return re.sub(r"\s+", " ", q).strip()
+
+
+def _content_bigrams(query: str) -> set[str]:
+    core = strip_fillers(query)
+    return bigrams(core) if core.strip() else set()
+
+
 def _fts_search(conn: sqlite3.Connection, query: str, top_k: int) -> list[tuple[float, str]]:
     """FTS5 BM25 检索。返回 [(bm25_score, entry_id)]，score 越小越好（BM25 原生）。
 
     查询构造与索引侧共用 bigram_text：中文 bigram、英文整词，AND 组合（避免单字 OR 过宽）。
-    索引 token 不全命中时退回 OR，保证长问句至少能捞到部分匹配。
+    索引 token 不全命中时退回 OR，并用覆盖率闸门挡住「一个虚词命中整库」。
     """
     if not _INDEX_STATE["fts5"] or not query.strip():
         return []
-    terms = list(dict.fromkeys(bigram_text(query).split()))[:10]
+    search_text = strip_fillers(query) or query
+    terms = list(dict.fromkeys(bigram_text(search_text).split()))[:10]
     if not terms:
         return []
 
@@ -337,12 +364,32 @@ def _fts_search(conn: sqlite3.Connection, query: str, top_k: int) -> list[tuple[
         ).fetchall()
         return [(float(r["score"]), r["entry_id"]) for r in rows]
 
+    # 命中覆盖率闸门：OR 兜底会用一个两字 bigram 就召回整条知识库，
+    # 「你怎么看中美关系」曾因「怎么」命中「产品使用指引」而答成操作说明。
+    # 要求命中词数 ≥ 2（查询词多时按一半），否则宁可不召回。
     try:
         hits = _query(" AND ")
         if hits:
             return hits
         # AND 全落空（长问句里总有一个 bigram 不在词表）→ OR 兜底，保留可召回性
-        return _query(" OR ")
+        or_rows = _query(" OR ")
+        if not or_rows:
+            return []
+        # 数一下每个候选真正命中了几个查询词
+        counts: dict[str, int] = {}
+        for t in terms:
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id FROM kb_fts WHERE kb_fts MATCH ?", (f'"{t}"',)
+                ).fetchall()
+            except sqlite3.Error:
+                continue
+            for r in rows:
+                counts[r["entry_id"]] = counts.get(r["entry_id"], 0) + 1
+        n_terms = len(terms)
+        need = max(2, (n_terms + 1) // 2) if n_terms > 2 else 1
+        filtered = [row for row in or_rows if counts.get(row[1], 0) >= need]
+        return filtered
     except sqlite3.Error:
         return []
 
@@ -435,13 +482,21 @@ def retrieve_scored(query: str, top_k: int, min_overlap: float, use_embedding: b
                            type(e).__name__, str(e)[:120])
 
     # ---- 兜底：纯 bigram（FTS5/vec 都不可用时） ----
-    q_big = bigrams(query)
+    # 只拿实词的 bigram 做匹配：虚词（怎么/什么/时候）命中不算数，
+    # 否则「我的订单什么时候发货」会因为没有 KB 含「怎么」直接 miss。
+    q_big = _content_bigrams(query)
+    if not q_big:
+        return []
+    need_hits = 1
+    floor = max(min_overlap, 0.2)
     scored = []
     for entry in kb:
         doc_text = _doc_text(entry)
         overlap = len(q_big & bigrams(doc_text))
-        score = overlap / max(len(q_big), 1) if overlap else 0.0
-        if score <= 0 or score < min_overlap:
+        if overlap < need_hits:
+            continue
+        score = overlap / max(len(q_big), 1)
+        if score <= 0 or score < floor:
             continue
         scored.append((score, entry))
     scored.sort(key=lambda x: x[0], reverse=True)

@@ -67,3 +67,28 @@ def test_vector_hits_below_similarity_floor_are_dropped(monkeypatch):
             return _R()
 
     assert retrieval._vec_search(_Conn(), "发个表情包", kb, 4) == []
+
+
+def test_filler_words_do_not_drive_retrieval():
+    """问法里的虚词不能当主题词：曾因「怎么」命中「产品使用指引」。"""
+    from core import retrieval
+
+    assert "怎么" not in retrieval.strip_fillers("你怎么看中美关系")
+    assert "怎么" not in retrieval.strip_fillers("这个怎么用")
+    # 实词必须保留
+    assert "退货" in retrieval.strip_fillers("退货政策是什么")
+
+
+def test_generic_question_does_not_hit_kb():
+    """纯闲聊/政治题不应该命中商品知识库。"""
+    from core import retrieval
+
+    assert retrieval.retrieve("你怎么看中美关系", top_k=3, min_overlap=0.08) == []
+    assert retrieval.retrieve("你觉得现在这个世界谁说了算", top_k=3, min_overlap=0.08) == []
+
+
+def test_business_question_still_hits():
+    from core import retrieval
+
+    hits = retrieval.retrieve("我的订单什么时候发货", top_k=3, min_overlap=0.08)
+    assert hits and hits[0]["id"] == "KB001"
