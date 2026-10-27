@@ -120,6 +120,25 @@ EXECUTOR_POLICY_PATH=/path/to/executor_policy.json EXECUTOR_BIND=127.0.0.1 EXECU
 
 `executor_policy.json` 模板见 `executor/policy.example.json`；`allow_roots` 留空 = 全部拒绝（安全默认）。
 
+### 防对刷（默认开，建议保留）
+
+两个自动回复机器人互相 @ 会形成无界对刷：实测某群另一个 bot 与本机 bot 互道「晚安」
+40+ 轮、每轮约 55 秒，核心每轮还跑两版模型择优，纯烧额度。
+
+`gateway/loop_guard.py` 用确定性规则识别（道别复读 / 回声复读 / 问题连发 / 秒回连击 /
+昵称即机器人），命中后按 (渠道, 会话, 对方) 静默 30 分钟，状态落盘、重启不丢。
+主人账号（`AUTHORIZED_QQ`）完全跳过本护栏。
+
+```bash
+GATEWAY_LOOP_GUARD=1        # 0 关闭
+GATEWAY_LOOP_MUTE_S=1800    # 静默秒数
+GATEWAY_LOOP_STATE=logs/loop_guard.json
+```
+
+运维查看/解除：`GET /internal/status` 的 `loop_guard.mutes`；
+`POST /internal/loop_guard/unmute`（body `{"chat":"qq_group:xxx","peer":"yyy"}`，需 `X-Channel-Token`）。
+细节见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md) §5.1。
+
 ## 1. 准备清单
 
 | 项目 | 必要性 | 说明 |
