@@ -66,7 +66,6 @@ async def main() -> None:
     tok = tokens()
     core = "http://127.0.0.1:8010"
     gateway = "http://127.0.0.1:8011"
-    h_admin = {"X-Admin-Token": tok.get("ADMIN_TOKEN", "")}
     h_channel = {"X-Channel-Token": tok.get("CHANNEL_TOKEN", "")}
 
     from gateway.humanize import EmoteLib, render

@@ -135,3 +135,9 @@ def test_split_reply_short_and_empty():
 
     assert split_reply("", 90, 3) == []
     assert split_reply("短回答", 90, 3) == ["短回答"]
+
+
+def test_emoji_stripped():
+    """QQ 纯文本环境：emoji 会显示异常，且绕过 [表情:名] 体系，统一剥掉。"""
+    assert render("晚安喵～ 🌙🌙 好梦") == "晚安喵～  好梦"
+    assert render("给你 [表情:得意] ✅") == f"给你 [CQ:face,id={FACES['得意']}] "

@@ -103,9 +103,20 @@ def render_images(text: str) -> str:
     return _IMG_RE.sub(sub, text or "")
 
 
+# 表情符号（emoji）清洗：QQ 纯文本里 🌙 这种字符会显示成方框或异常字体，
+# 而且模型用了 emoji 就等于绕过了 [表情:名] 的拟人体系。统一剥掉。
+_EMOJI_RE = re.compile(
+    "[" "\U0001F300-\U0001FAFF" "\U00002600-\U000027BF" "\U0001F1E6-\U0001F1FF"
+    "\U00002B00-\U00002BFF" "\U0000FE0F" "\U0000200D" "]+")
+
+
+def strip_emoji(text: str) -> str:
+    return _EMOJI_RE.sub("", text or "")
+
+
 def render(text: str) -> str:
-    """统一出口：剥 markdown → 表情/图片翻译。网关发送前调用。"""
-    return render_images(render_faces(strip_markdown(text)))
+    """统一出口：剥 emoji + markdown → 表情/图片翻译。网关发送前调用。"""
+    return render_images(render_faces(strip_markdown(strip_emoji(text))))
 
 
 # ---------------------------------------------------------------------------
@@ -351,20 +362,22 @@ class EmoteLib:
                         kws.append(k)
 
             def _hit_score(it: dict) -> int:
-                """精确词命中 2 分、子串命中 1 分。
+                """原词精确 > 原词子串 > 同义词精确 > 同义词子串。
 
-                「熊猫头」里含「猫」字，子串匹配会把熊猫当成猫；先按精确度排序，
-                同分再随机，既避免误伤又保留新鲜感。
+                「猫」的同义词里有「猫娘」——不区分优先级时，找猫可能发出猫娘图；
+                越靠前的关键词权重越高，保证原词优先，同义词只是兜底。
+                「熊猫头」里含「猫」字这种子串误伤，也靠精确匹配档位压下去。
                 """
                 summary = str(it.get("summary") or "")
                 tag_text = self.tags(str(it.get("data") or ""))
                 toks = [t for t in re.split(r"[，,、\s]+", tag_text) if t]
                 score = 0
-                for k in kws:
+                for i, k in enumerate(kws):
+                    weight = max(1, len(kws) - i)
                     if k in toks or k == summary.strip():
-                        score = max(score, 2)
+                        score = max(score, 2 * weight)
                     elif k in tag_text or k in summary:
-                        score = max(score, 1)
+                        score = max(score, weight)
                 return score
 
             scored = [(_hit_score(it), it) for it in pool]
