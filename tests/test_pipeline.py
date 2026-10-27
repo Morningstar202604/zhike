@@ -235,3 +235,21 @@ def test_tool_call_gets_observation_then_real_answer(monkeypatch):
     reply = __import__("asyncio").run(pipeline._llm_answer("查一下价格", ctx, {"llm": {"has_key": True}}))
     assert reply is not None
     assert "结论" in reply.text
+
+
+def test_rule_fallback_has_persona_not_service_tone():
+    """模型/知识库都没接住时，兜底话术也不能是客服腔（会被当成机器人）。"""
+    import asyncio
+
+    from core import pipeline, quality
+
+    class Cfg(dict):
+        def get(self, k, d=None):
+            return dict.get(self, k, d)
+
+    ctx = {"tools": {}, "tools_schema": [], "hits": [], "used": {}, "modules_on": {},
+           "memory_block": "", "kb_block": "", "summary": "", "history": [], "persona": ""}
+    reply = asyncio.run(pipeline._rule_react("随便说点什么", ctx, Cfg()))
+    assert "答不上来" not in reply.text
+    assert "喵" in reply.text
+    assert not quality.critique(reply.text, "随便说点什么")

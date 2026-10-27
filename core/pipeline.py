@@ -415,8 +415,10 @@ async def _rule_react(query: str, ctx: dict, cfg: dict) -> AgentReply:
             ctx_used=ctx["used"],
             mode="rule_react",
         )
+    # 规则兜底也不能是客服腔：模型挂了、知识库没命中时，这句话是用户唯一能看到的
+    # 内容。写成「这个我暂时答不上来」等于当场承认自己是机器人。
     return AgentReply(
-        text="这个我暂时答不上来，先把问题记下了，换个问法再试试？",
+        text="这个我真没接住，换个说法或者把背景多给两句，我再来一遍，喵～",
         confidence=0.2,
         escalate=True,
         escalate_reason="knowledge_miss",

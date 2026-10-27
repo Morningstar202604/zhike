@@ -16,11 +16,20 @@ from tests.conftest import ADMIN, create_web_session, reset_web_session_auth
 # ---------- N1 日志 handler 幂等 ----------
 
 def test_events_log_attach_is_idempotent():
-    before = len(logging.getLogger("cs.events").handlers)
+    """attach 幂等：重复调用不能让 handler 越挂越多。
+
+    不能只比「总数 +1」：第一次 attach 会同时挂内存环和落盘 handler（两个），
+    单文件跑时 before=0、全量跑时已被别的用例挂过，断言就会随执行顺序漂移。
+    按类型分别计数才是真正要守的不变量。
+    """
     for _ in range(5):
         events_log.attach()
-    after = len(logging.getLogger("cs.events").handlers)
-    assert after <= before + 1, f"attach 重复挂载泄漏 handler：{before} -> {after}"
+    handlers = logging.getLogger("cs.events").handlers
+    rings = [h for h in handlers if isinstance(h, events_log.RingHandler)]
+    files = [h for h in handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
+    assert len(rings) == 1, f"内存环 handler 重复挂载：{len(rings)}"
+    assert len(files) <= 1, f"文件 handler 重复挂载：{len(files)}"
+    assert len(handlers) == len(rings) + len(files)
 
 
 def test_events_log_no_duplicate_entries():
