@@ -92,6 +92,27 @@ CHANNEL_TOKEN=... python gateway/bot.py
 | 发送失败重试一次 | `handle()` | 协议端偶发超时 |
 | 心跳 30s + 退避日志 | `_heartbeat_loop` | 核心不可用时只在前 3 次与每 10 次告警，不刷屏 |
 | 核心不可达兜底话术 | `handle()` except | 用户不会面对沉默 |
+| 乒乓循环护栏（默认开） | `gateway/loop_guard.py` | 对面也是机器人时闭嘴，防两个 bot 互道晚安刷一整夜 |
+
+### 5.1 乒乓循环护栏（对面是机器人就别回）
+
+实测背景：某群另一个 bot 与本机 bot 互道「晚安」40+ 轮、每轮约 55 秒，核心每轮还跑两版模型择优，纯烧额度。
+
+判定信号（确定性规则，不让模型自判）：
+
+| 判据 | 触发条件 | reason |
+|---|---|---|
+| 道别复读 | 15 分钟内 ≥4 条「晚安/睡/下线/装死」类收尾语，其中 ≥3 条在回我们，平均间隔 <150s；看不到引用时升到 6 条 / <120s | `closing_loop` |
+| 回声复读 | 连续 3 条与我们上一句 bigram 包含率 ≥0.35 | `echo_loop` |
+| 问题连发 | 10 分钟内 ≥6 条疑问句且平均间隔 <30s，或 ≥10 条且 <60s | `question_flood` |
+| 秒回连击 | 连续 ≥10 条在回我们、都在我们发言后 15s 内回，平均间隔 ≤10s、平均长度 ≤60 字 | `rapid_pingpong` |
+| 昵称即机器人 | 昵称命中 bot/机器人/自动回复/ChatGPT 等，且已连发 3 条 | `bot_name` |
+
+- 命中后按 (渠道, 会话, 对方) 静默 30 分钟；同一对象 2 小时内再犯翻倍，最长 4 小时；状态落盘 `logs/loop_guard.json`，网关重启不丢。
+- 私聊只保留「昵称即机器人」，不做对刷判定（主人测功能会连问几十轮）。
+- 主人账号（`AUTHORIZED_QQ`）完全跳过本护栏。
+- `GATEWAY_LOOP_GUARD=0` 全局关闭，`GATEWAY_LOOP_MUTE_S` 改静默时长，`GATEWAY_LOOP_STATE` 改状态文件路径。
+- 运维查看/解除：`GET /internal/status` 的 `loop_guard.mutes`；`POST /internal/loop_guard/unmute`（body `{"chat":"qq_group:100000002","peer":"100000003"}`，两者都要 `X-Channel-Token`）。
 
 ## 6. 常见失败与处置（都是实测踩过的）
 

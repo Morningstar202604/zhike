@@ -26,6 +26,7 @@ from nonebot.rule import to_me
 from gateway.adapters import OneBot11Adapter, bus, registry
 from gateway.adapters.bus import EV_ACTION_DONE, EV_MESSAGE_IN, EV_REPLY_OUT
 from gateway.humanize import EmoteLib, GroupThrottle, render, send_delay, split_reply
+from gateway.loop_guard import LoopGuard
 
 logger = logging.getLogger("gateway")
 
@@ -152,6 +153,16 @@ _GROUP_THROTTLE = GroupThrottle(
     min_gap=_env_f("GATEWAY_GROUP_MIN_GAP", 10.0),
     hourly_cap=int(_env_f("GATEWAY_GROUP_HOURLY_CAP", 120)),
 )
+
+# 乒乓循环护栏：对面也是机器人在互相 @ 时直接闭嘴（判定依据见 loop_guard.py）。
+# 默认开启；GATEWAY_LOOP_GUARD=0 关闭，GATEWAY_LOOP_MUTE_S 调静默时长。
+_LOOP_GUARD_ENABLED = os.environ.get("GATEWAY_LOOP_GUARD", "1").lower() not in ("0", "false", "no", "off")
+_LOOP_GUARD = LoopGuard(
+    os.environ.get("GATEWAY_LOOP_STATE", os.path.join("logs", "loop_guard.json")),
+    mute_s=_env_f("GATEWAY_LOOP_MUTE_S", 1800.0),
+)
+# 主人账号：它的指令必须遵守，也不参与循环判定（主人在群里连发晚安不该被静音）
+_OWNER_QQ = {q.strip() for q in os.environ.get("AUTHORIZED_QQ", "").split(",") if q.strip()}
 
 matcher = on_message(rule=to_me(), priority=5, block=False)
 
@@ -424,7 +435,22 @@ def _register_action_endpoint() -> None:
             "connected": bot is not None,
             "self_id": str(bot.self_id) if bot is not None else "",
             "bots": len(nonebot.get_bots()),
+            # 静默中的对刷对象：运维可直接看到「谁被判定成机器人、还剩多久」
+            "loop_guard": {"enabled": _LOOP_GUARD_ENABLED, "mutes": _LOOP_GUARD.mutes()},
         }
+
+    @app.post("/internal/loop_guard/unmute")
+    async def _loop_unmute(req: Request):
+        if not _authorized(req):
+            return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+        try:
+            body = await req.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+        chat, peer = str(body.get("chat") or ""), str(body.get("peer") or "")
+        if not chat or not peer:
+            return JSONResponse({"ok": False, "error": "chat/peer required"}, status_code=400)
+        return {"ok": True, "unmuted": _LOOP_GUARD.unmute(chat, peer)}
 
     logger.info("internal action endpoint registered at /internal/action")
 
@@ -625,6 +651,19 @@ async def handle(event: MessageEvent):
         logger.info("duplicate message skipped: %s", msg.message_id)
         return
 
+    # 乒乓循环护栏：对面也是机器人（道别复读/回声/问题连发/对刷超量）就闭嘴，
+    # 连核心都不进——两个 bot 互相 @ 能刷一整夜，纯烧模型额度。
+    if _LOOP_GUARD_ENABLED and msg.sender_id not in _OWNER_QQ:
+        verdict = _LOOP_GUARD.inspect(
+            channel=msg.channel, chat_id=msg.chat_id, peer_id=msg.sender_id,
+            text=msg.text, name=msg.display_name, is_group=msg.is_group,
+        )
+        if verdict.muted:
+            logger.warning("loop guard muted peer %s in %s: %s (%.0fs left)",
+                           msg.sender_id, msg.chat_id, verdict.reason,
+                           max(0.0, verdict.until - time.time()))
+            return
+
     await bus.publish(EV_MESSAGE_IN, {
         "channel": msg.channel, "chat_id": msg.chat_id,
         "sender": msg.sender_id, "text": msg.text[:100],
@@ -729,6 +768,10 @@ async def handle(event: MessageEvent):
                 await asyncio.sleep(_env_f("GATEWAY_SPLIT_GAP", 2.5) + random.random() * 2.0)
             await asyncio.sleep(send_delay(len(seg), msg.is_group) * (1.0 if i == 0 else 0.6))
             result = await adapter.send(msg, seg, quote=quote_id)
+            if result.ok:
+                # 记下我们发出的 message_id 与内容：对面引用它 = 在回我们（循环护栏的判据之一）
+                _LOOP_GUARD.record_outgoing(f"{msg.channel}:{msg.chat_id}",
+                                            result.message_id, seg)
             if msg.is_group:
                 _GROUP_THROTTLE.record(msg.chat_id)
             if not result.ok:
