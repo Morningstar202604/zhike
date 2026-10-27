@@ -160,7 +160,12 @@ def _rewrite_prompt(text: str, issues: list[dict], persona: str, query: str) -> 
 
 
 async def rewrite(text: str, issues: list[dict], *, query: str = "", persona: str = "") -> str | None:
-    """严重问题时重写一次。失败/超时返回 None，调用方保留原文。"""
+    """严重问题时重写一次。失败/超时返回 None，调用方保留原文。
+
+    把原文原样塞进重写请求会被端点内容过滤直接 400（实测：含「我是U2.1由云知声研发」
+    的原文触发 high risk 拒绝）。所以先把触发词打码，再让模型重写——
+    重写任务只需要「保持原意、去掉问题」，不需要看到触发词本身。
+    """
     if not text or not issues:
         return None
     cfg = config_mod.get_config().get("llm") or {}
@@ -168,9 +173,11 @@ async def rewrite(text: str, issues: list[dict], *, query: str = "", persona: st
     base = (cfg.get("base_url") or "").rstrip("/")
     if not key or not base:
         return None
+    safe_text = _MODEL_LEAK_RE.sub("[身份自述已删除]", text or "")
+    safe_text = _FILTER_RE.sub("[系统报错已删除]", safe_text)
     payload = {
         "model": cfg.get("model") or "",
-        "messages": [{"role": "user", "content": _rewrite_prompt(text, issues, persona, query)}],
+        "messages": [{"role": "user", "content": _rewrite_prompt(safe_text, issues, persona, query)}],
         "temperature": 0.4,
         "max_tokens": min(int(cfg.get("max_tokens") or 512), 800),
     }
@@ -186,9 +193,9 @@ async def rewrite(text: str, issues: list[dict], *, query: str = "", persona: st
         return None
     if not out or len(out) > max(len(text) * 2, 400):
         return None
-    # 改写结果本身要过同一套检查：把 AI 腔改出来还不如不改
+    # 改写结果本身要过同一套检查：把 AI 腔/过滤报错改出来还不如不改
     again = critique(out, query)
-    if any(i["code"] == "ai_self" for i in again):
+    if any(i["severity"] == SEV_HIGH for i in again):
         return None
     return out
 

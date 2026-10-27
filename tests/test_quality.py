@@ -140,3 +140,54 @@ def test_emoji_flagged_as_mid():
     assert any(i["code"] == "emoji" for i in issues)
     assert not quality.needs_rewrite(issues)
     assert not any(i["code"] == "emoji" for i in quality.critique("晚安喵～"))
+
+
+def test_rewrite_rejects_filter_error_output(monkeypatch):
+    """端点把过滤报错当成"改写结果"返回时（实测出现过），不能把它当答案。"""
+    from core import config
+    from core import quality as q
+
+    monkeypatch.setattr(config, "get_config",
+                        lambda: {"llm": {"api_key": "k", "base_url": "https://x.cn/v1", "model": "m"}})
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": "The request was rejected because it was considered high risk"}}]}
+
+    class _Client:
+        async def post(self, *a, **k):
+            return _Resp()
+
+    monkeypatch.setattr(q, "get_client", lambda *a, **k: _Client())
+    out = asyncio.run(q.rewrite("我是U2.1", [{"code": "model_leak", "severity": "high", "detail": "x"}]))
+    assert out is None
+
+
+def test_rewrite_masks_model_leak_before_sending(monkeypatch):
+    """原文里的模型自述会触发端点内容过滤（400），发出去前必须打码。"""
+    from core import config
+    from core import quality as q
+
+    monkeypatch.setattr(config, "get_config",
+                        lambda: {"llm": {"api_key": "k", "base_url": "https://x.cn/v1", "model": "m"}})
+    seen = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": "我是零，一只猫，喵～"}}]}
+
+    class _Client:
+        async def post(self, url, headers=None, json=None):
+            seen["prompt"] = json["messages"][0]["content"]
+            return _Resp()
+
+    monkeypatch.setattr(q, "get_client", lambda *a, **k: _Client())
+    out = asyncio.run(q.rewrite("我是U2.1，由云知声研发",
+                                [{"code": "model_leak", "severity": "high", "detail": "x"}]))
+    assert out and "云知声" not in seen["prompt"] and "U2.1" not in seen["prompt"]
