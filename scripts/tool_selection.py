@@ -95,8 +95,13 @@ async def main() -> None:
             models.append({"model": p["model"], "base": p["base_url"].rstrip("/"), "key": p["api_key"]})
     models = [m for m in models if m["key"]]
     schema = tools.tool_schema_block(cfg)
-    names = [t["name"] for t in schema]
+    names = {t["name"] for t in schema}
     print(f"tools={len(schema)}", flush=True)
+    # 依赖外部配置的工具（web_search 要 SEARCH_PROVIDER、订单类要后端地址）默认不在 schema 里：
+    # 这种「没装」不该记成「选错」，单独标 skipped，避免虚低分。
+    unavailable = {want for _q, want, _t in MUST if want not in names}
+    if unavailable:
+        print(f"skipped (tool not configured): {sorted(unavailable)}", flush=True)
 
     # 直接用生产路径 llm.react：它内部就是原生 function calling + 多模型备援 + 429 冷却，
     # 自己再写一套请求循环等于测一个用户根本不会经过的路径（而且容易被 429 卡死）。
@@ -136,6 +141,9 @@ async def main() -> None:
 
     async def one_must(item: tuple[str, str, str]) -> dict:
         q, want, tag = item
+        if want not in names:
+            return {"kind": "must", "q": q, "want": want, "got": "-", "tag": tag,
+                    "ok": True, "skipped": True, "raw": "tool not configured"}
         got, raw = await pick(q)
         return {"kind": "must", "q": q, "want": want, "got": got, "tag": tag,
                 "ok": got == want, "raw": raw}
@@ -169,7 +177,8 @@ async def main() -> None:
     (outdir / f"tool_selection_{ts}.json").write_text(
         json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    must = [r for r in results if r["kind"] == "must"]
+    must = [r for r in results if r["kind"] == "must" and not r.get("skipped")]
+    skipped = [r for r in results if r.get("skipped")]
     never = [r for r in results if r["kind"] == "never"]
     m_ok = sum(1 for r in must if r["ok"])
     n_ok = sum(1 for r in never if r["ok"])
@@ -178,7 +187,11 @@ async def main() -> None:
              f"工具池 {len(names)} 个；模型 {" | ".join(f'{m["model"]}' for m in models)}。", "",
              "| 类别 | 通过 | 合计 | 准确率 |", "|---|---|---|---|",
              f"| 必须选中（must） | {m_ok} | {len(must)} | {m_ok / len(must):.1%} |",
-             f"| 不能乱选（never） | {n_ok} | {len(never)} | {n_ok / len(never):.1%} |", "",
+             f"| 不能乱选（never） | {n_ok} | {len(never)} | {n_ok / len(never):.1%} |", ""]
+    if skipped:
+        lines += [f"> 跳过 {len(skipped)} 条：工具未配置（{', '.join(r['want'] for r in skipped)}）。"
+                  "环境问题，不计入准确率。", ""]
+    lines += [
              "## 选错的（must）", "", "| 用户原话 | 应选 | 实际 | 场景 |", "|---|---|---|---|"]
     for r in must:
         if not r["ok"]:

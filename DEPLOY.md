@@ -66,6 +66,30 @@ pip install -r requirements-voice.txt
 - Hub 名称（默认 `BAAI/bge-small-zh-v1.5`）：首次需联网下载，之后走本地缓存。
 - 本地目录（`USER_EMB_MODEL=/path/to/bge-small-zh-v1.5`，推荐离线部署）：代码自动置 `HF_HUB_OFFLINE=1`，不触网；也可显式设该变量，缺网时立即降级为字面检索，而不是卡在 Hub 重试上。
 
+### 语音输入（收 QQ 语音消息）
+
+QQ 语音是 AMR 格式，whisper 解不了，链路是「ffmpeg 转 16k PCM → faster-whisper 本地转写」。
+
+```bash
+# 1) 装依赖（可选；不装时收到语音会明确回「语音听不了，打字吧」）
+pip install -r requirements-asr.txt
+# 2) 装 ffmpeg（Windows 可用 winget install ffmpeg；Linux apt install ffmpeg）
+# 3) 下载模型（约 460MB，只需一次）
+HF_ENDPOINT=https://hf-mirror.com python -c "from faster_whisper import WhisperModel;   WhisperModel('small', download_root='C:/Users/YOU/models/whisper-small-zh')"
+# 4) 把 ASR_MODEL 指向 snapshots 下的具体目录（含 model.bin 的那层）
+```
+
+实测数据（本机 CPU，16 核 / int8 / 4 线程）：
+
+| 环节 | 耗时 |
+|---|---|
+| 冷启动加载模型 | 2.8s |
+| 8 秒语音转写（热） | 3.0s |
+
+热词：`core/asr.py` 的 `initial_prompt` 里带了「零、本喵、喵～、提醒」，否则 small 模型会把「零」听成「林」。
+
+也支持外部命令：`ASR_CMD="python my_asr.py {wav}"`，stdout 即转写文本。
+
 ### 秘书工具集（默认全开，缺后端会诚实说明）
 
 | 工具 | 作用 | 依赖 |

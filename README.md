@@ -282,7 +282,7 @@ MIT. NapCat is an unofficial protocol client under a custom non-commercial licen
 | 输出判别器 | `core/quality.py` | 检测自称 AI、报模型名、把已有能力说死、假转接、markdown、客服腔；严重问题重写一次，重写失败走猫味兜底 |
 | 多模型择优 | `core/ensemble.py` | 闲聊类意图并行两版（u2-flash + agnes-3.0-flash），规则打分挑硬伤更少的 |
 
-评测结果与坑的完整记录见 `docs/PERSONA-EVAL.md`（320 题 A/B 评分、1200 题压力扫描、真机自问自答、表情包闭环）。脚本都在 `scripts/`，产物写 `out/`，不入库：
+评测结果与坑的完整记录见 `docs/PERSONA-EVAL.md`（320 题 A/B 评分、3000 题压力扫描含判别器前后对比、15 关多轮对话、39 工具选择、真机自问自答、表情包闭环、语音识别实测）。脚本都在 `scripts/`，产物写 `out/`，不入库：
 
 ```bash
 # 人设 A/B：同题两版人设各生成一次，双模型裁判打分
@@ -302,4 +302,10 @@ MIT. NapCat is an unofficial protocol client under a custom non-commercial licen
 # 知识补充（幂等，重复跑只更新不重复加）
 .venv/Scripts/python.exe scripts/seed_extra_kb.py
 .venv/Scripts/python.exe scripts/seed_lexicon.py
+
+# 多轮对话：15 关（记忆/指代/纠正/态度切换/越狱/长上下文）
+.venv/Scripts/python.exe scripts/persona_multiturn.py
+
+# 工具选择：39 个工具里选对那一个（测生产路径，不是裸模型）
+.venv/Scripts/python.exe scripts/tool_selection.py --workers 2
 ```

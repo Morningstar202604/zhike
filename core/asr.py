@@ -118,7 +118,10 @@ async def transcribe(audio: bytes) -> tuple[str, str]:
         # 这里给 180s 上限，超时如实说听不清，不让整轮对话卡死。
         segments, _info = await asyncio.wait_for(
             asyncio.to_thread(lambda: model.transcribe(
-                audio_arr, language="zh", beam_size=1, vad_filter=True)),
+                audio_arr, language="zh", beam_size=1, vad_filter=True,
+                # 把机器人自己的名字与常用词塞进 initial_prompt：
+                # 实测 small 模型会把「零」听成「林」，热词能显著拉回来。
+                initial_prompt="零、本喵、喵～、提醒、设个提醒")),
             timeout=180)
         text = "".join(s.text for s in segments).strip()
         if not text:
