@@ -27,6 +27,9 @@ class ToolContext:
     image_b64: str = ""
     # 会话内最近若干条消息（role/content），工具可据此回答「我刚说了什么」
     history: tuple[dict, ...] = ()
+    # 触发这条回复的那条用户消息 id（OneBot message_id）。
+    # 「给这条点个赞 / 撤回这条 / 设成精华」都要用到它——没有它只能回「我不知道是哪条」。
+    message_id: str = ""
     # 触发者主体（格式同 actions.authz.parse_principal：qq:123 / admin / operator:x）。
     # 写类工具（改文件、发消息、生图）必须靠它做权限判定与审计——
     # 工具层原来完全绕过动作层的档位/审批，等于给提示注入留了一个后门。

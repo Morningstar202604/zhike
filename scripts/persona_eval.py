@@ -105,7 +105,12 @@ def _judge_text(q: str, a: str) -> str:
 
 
 class Pool:
-    """模型池：每个模型一个并发上限；429 退避后换下一个模型重试。"""
+    """模型池：每个模型一个并发上限；429 按 Retry-After 退避，失败换下一个模型。
+
+    429 不是「模型坏了」而是「这一秒的配额用完了」：实测 12 并发下 u2-flash
+    有 44% 请求 429，如果当成失败直接跳过，评测里的「空回复」全是假数据。
+    这里按 Retry-After（没有就指数退避）等够再发，并把 429 单独计数。
+    """
 
     def __init__(self, models: list[dict], workers: int):
         self.models = models
@@ -113,7 +118,7 @@ class Pool:
         self.client = httpx.AsyncClient(timeout=180)
         self.calls = {m["model"]: 0 for m in models}
         self.fails = {m["model"]: 0 for m in models}
-        self._rr = 0
+        self.rate_limited = {m["model"]: 0 for m in models}
 
     async def chat(self, messages: list[dict], *, max_tokens: int = 900,
                    temperature: float = 0.75, prefer: str = "",
@@ -121,7 +126,7 @@ class Pool:
         order = list(self.models)
         if prefer:
             order.sort(key=lambda m: 0 if m["model"] == prefer else 1)
-        for attempt in range(4):
+        for attempt in range(6):
             for m in order:
                 async with self.sems[m["model"]]:
                     try:
@@ -140,11 +145,17 @@ class Pool:
                     content = (msg.get("content") or "").strip()
                     if content:
                         return content
-                    # 200 但 content 为空（推理模型把预算花在 reasoning 上，或端点抖动）：
-                    # 等一下重发，而不是把空串当答案记进评测结果。
                     await asyncio.sleep(0.6 + attempt * 0.8)
                     continue
-                if r.status_code in (429, 500, 502, 503, 504):
+                if r.status_code == 429:
+                    self.rate_limited[m["model"]] += 1
+                    try:
+                        wait = float(r.headers.get("retry-after") or 0)
+                    except (TypeError, ValueError):
+                        wait = 0.0
+                    await asyncio.sleep(wait or (2.0 * (attempt + 1) + random.random()))
+                    continue
+                if r.status_code in (500, 502, 503, 504):
                     await asyncio.sleep(1.5 * (attempt + 1) + random.random())
                     continue
                 break

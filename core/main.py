@@ -372,6 +372,8 @@ def create_app() -> FastAPI:
         # 群聊氛围：@ 之前群里最近几条闲聊（网关收集）；群名由网关 get_group_info 提供
         ambient: list[str] | None = None
         group_name: str = ""
+        # 触发消息的 OneBot message_id（模型可以用它做「点赞这条/撤回这条/设精华」）
+        message_id: str = ""
 
     # ---- 入参体积护栏 ----
     def _check_payload(text: str | None, image_b64: str | None) -> None:
@@ -464,7 +466,7 @@ def create_app() -> FastAPI:
                               web_search: bool = False,
                               ambient: list[str] | None = None, group_name: str = "",
                               channel_type: str = "", channel_user_id: str = "",
-                              group_id: str | None = None):
+                              group_id: str | None = None, message_id: str = ""):
         _preflight(sid, text, visitor_key)
         ev.info(f"ingest visitor={visitor_key} text={text[:60]}")
         # 管线只需要最近若干轮：全量读取会让长会话的上下文构建从 18ms 涨到 37ms。
@@ -486,7 +488,7 @@ def create_app() -> FastAPI:
                                         ambient=ambient or [], group_name=group_name,
                                         channel_type=channel_type or "webchat",
                                         channel_user_id=channel_user_id or visitor_key,
-                                        group_id=group_id),
+                                        group_id=group_id, message_id=message_id),
                 history,
                 visitor_key,
             )
@@ -584,7 +586,7 @@ def create_app() -> FastAPI:
             sid, text, body.image_b64, identity,
             ambient=body.ambient or [], group_name=body.group_name or "",
             channel_type=body.channel_type, channel_user_id=body.channel_user_id,
-            group_id=body.group_id)
+            group_id=body.group_id, message_id=body.message_id)
         return {
             "session_id": sid,
             "message_id": msg_id,

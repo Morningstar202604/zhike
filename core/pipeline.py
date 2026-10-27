@@ -28,6 +28,8 @@ class ChannelMessage:
     ambient: list[str] = field(default_factory=list)
     # 群名（网关 get_group_info 提供），注入场景感知
     group_name: str = ""
+    # 触发消息的 OneBot message_id（「给这条点赞/撤回这条」要用）
+    message_id: str = ""
 
 
 @dataclass
@@ -778,6 +780,7 @@ async def _prepare(message: ChannelMessage, history: list[dict], visitor_key: st
         message_text=query,
         image_b64=message.image_b64 or "",
         history=tuple(history or ()),
+        message_id=str(getattr(message, "message_id", "") or ""),
         # 工具层的权限主体：QQ 渠道按触发者 QQ 号，其余按访客身份。
         # 只有管理员/授权 QQ（AUTHORIZED_QQ）能触达读写主机文件、以机器人身份发消息。
         # channel_type 实际取值是 qq_group / qq_private（不是 "qq"）：旧判断用

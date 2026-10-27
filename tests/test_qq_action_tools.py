@@ -93,3 +93,20 @@ def test_voice_tool_rejects_empty_text():
     ctx = ToolContext(visitor_id="v", channel_type="qq_private", channel_user_id="1")
     res = asyncio.run(tools.tool_send_voice(ctx))
     assert res["status"] == "need_context"
+
+
+def test_message_id_defaults_to_current_message(monkeypatch):
+    """「给这条点赞」不能要求模型自己知道 message_id——工具层应自动补当前消息 id。"""
+    from core.actions import service as actions_service
+
+    seen = {}
+
+    async def fake_execute(action, params, principal_raw, session_id=None, **kw):
+        seen.update(params)
+        return {"status": "executed", "result": {"ok": True}}
+
+    monkeypatch.setattr(actions_service, "execute", fake_execute)
+    ctx = ToolContext(visitor_id="v", principal="admin", message_id="777",
+                      channel_type="qq_private", channel_user_id="1")
+    asyncio.run(tools.invoke("qq_emoji_like", {"emoji_id": "128077"}, ctx))
+    assert seen["message_id"] == "777"

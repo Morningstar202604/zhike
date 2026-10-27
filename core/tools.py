@@ -1552,6 +1552,10 @@ def _qq_tool(action: str, tool_name: str, desc: str, args: dict[str, str]):
             params["group_id"] = ctx.group_id
         if ctx.channel_user_id and "user_id" in args and "user_id" not in params:
             params["user_id"] = ctx.channel_user_id
+        # 「给这条点赞 / 撤回这条 / 设成精华」：模型经常只传空，直接用当前消息 id。
+        # 让模型自己记 message_id 不现实——它根本看不到这个数字。
+        if ctx.message_id and "message_id" in args and "message_id" not in params:
+            params["message_id"] = ctx.message_id
         try:
             result = await actions_service.execute(
                 action=action, params=params,
