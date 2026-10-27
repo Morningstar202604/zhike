@@ -105,7 +105,8 @@ CHANNEL_TOKEN=... python gateway/bot.py
 | 道别复读 | 15 分钟内 ≥4 条「晚安/睡/下线/装死」类收尾语，其中 ≥3 条在回我们，平均间隔 <150s；看不到引用时升到 6 条 / <120s | `closing_loop` |
 | 回声复读 | 连续 3 条与我们上一句 bigram 包含率 ≥0.35 | `echo_loop` |
 | 问题连发 | 10 分钟内 ≥6 条疑问句且平均间隔 <30s，或 ≥10 条且 <60s | `question_flood` |
-| 秒回连击 | 连续 ≥10 条在回我们、都在我们发言后 15s 内回，平均间隔 ≤10s、平均长度 ≤60 字 | `rapid_pingpong` |
+| 秒回连击 | 连续 ≥12 条在回我们、都在我们发言后 15s 内回，平均间隔 ≤8s、平均长度 ≤40 字 | `rapid_pingpong` |
+| 极短连击 | 连续 3 条去掉标点后 ≤1 个字（「。」「……」「嗯」，对刷词穷时靠单字符拖场） | `trivial_loop` |
 | 昵称即机器人 | 昵称命中 bot/机器人/自动回复/ChatGPT 等，且已连发 3 条 | `bot_name` |
 
 - 命中后按 (渠道, 会话, 对方) 静默 30 分钟；同一对象 2 小时内再犯翻倍，最长 4 小时；状态落盘 `logs/loop_guard.json`，网关重启不丢。
@@ -113,6 +114,7 @@ CHANNEL_TOKEN=... python gateway/bot.py
 - 主人账号（`AUTHORIZED_QQ`）完全跳过本护栏。
 - `GATEWAY_LOOP_GUARD=0` 全局关闭，`GATEWAY_LOOP_MUTE_S` 改静默时长，`GATEWAY_LOOP_STATE` 改状态文件路径。
 - 运维查看/解除：`GET /internal/status` 的 `loop_guard.mutes`；`POST /internal/loop_guard/unmute`（body `{"chat":"qq_group:100000002","peer":"100000003"}`，两者都要 `X-Channel-Token`）。
+- 端到端自验：`.venv/Scripts/python.exe scripts/loop_guard_e2e.py`（假 NapCat + 假 core，不碰真 QQ、不调模型）。实测 6 条道别语里前 3 条有回复、第 4 条起命中 `closing_loop`。
 
 ## 6. 常见失败与处置（都是实测踩过的）
 

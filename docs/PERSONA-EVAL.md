@@ -289,13 +289,17 @@ markdown 88、emoji 5、service_tone 2 —— 这些是「不像群聊」而不�
 | `closing_loop` | 15 分钟内 ≥4 条收尾语且 ≥3 条在回我们、平均间隔 <150s（无引用时 6 条/<120s） |
 | `echo_loop` | 连续 3 条与我们上一句 bigram 包含率 ≥0.35 |
 | `question_flood` | 10 分钟内 ≥6 条疑问句且平均 <30s，或 ≥10 条且 <60s |
-| `rapid_pingpong` | 连续 ≥10 条在回我们、15s 内回、平均 ≤10s 且 ≤60 字 |
+| `rapid_pingpong` | 连续 ≥12 条在回我们、15s 内回、平均间隔 ≤8s 且平均 ≤40 字 |
+| `trivial_loop` | 连续 3 条去掉标点后 ≤1 个字（「。」「……」「嗯」） |
 | `bot_name` | 昵称命中 bot/机器人/ChatGPT 等且连发 3 条 |
 
 - 静默 30 分钟起，惯犯翻倍（上限 4 小时），状态落盘 `logs/loop_guard.json`。
 - 私聊只留 `bot_name`；`AUTHORIZED_QQ` 完全跳过（主人连问几十轮不会被静音）。
 - 运维：`GET /internal/status` 看 `loop_guard.mutes`，`POST /internal/loop_guard/unmute` 解除。
+- 端到端自验：`scripts/loop_guard_e2e.py`（假 NapCat + 假 core，不碰真 QQ、不调模型）。
 
-**真实会话回放**（`out/` 之外的临时脚本，已删）：连环群第 8 轮命中 `closing_loop`；
-主人私聊 128 轮零误判；其余 8 个历史会话全部不触发。`tests/test_loop_guard.py` 19 条。
-初版「20 分钟 ≥18 轮且 70% 在回我们」的判据会把主人 128 轮正常测功能打成对刷，已删。
+**真实会话回放**：连环群第 8 轮命中 `closing_loop`；主人私聊 128 轮零误判；
+其余 8 个历史会话全部不触发。`tests/test_loop_guard.py` 23 条。
+初版两条判据都在回放里翻过车、已修：「20 分钟 ≥18 轮且 70% 在回我们」会把主人
+128 轮正常测功能打成对刷；「≥10 条 / ≤10s / ≤60 字」会在主人群聊第 41 轮误判，
+收紧成 12 条 / 8s / 40 字后归零。
