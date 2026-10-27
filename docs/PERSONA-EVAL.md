@@ -249,13 +249,13 @@ markdown 88、emoji 5、service_tone 2 —— 这些是「不像群聊」而不�
 |---|---|---|---|
 | 1 | 人设是人，不是机器人 | `config.context.persona`（线上 SQLite）+ `quality.py:27-40` 自称 AI 判据 | 3000 题扫描：`ai_self`/`model_leak` 判别器后 0 |
 | 2 | 黑色幽默 + 暗喻 + 一针见血 | persona【说话方式】段 + `quality.py:53` service_tone 判据 | 多轮 15/15；A/B 人味 4.02（v6 3.90） |
-| 3 | 阴谋论只做有据结构性怀疑 | persona【阴谋论的正确用法】段（利益链→信息不对称→人性之恶） | A/B knowledge +0.59；压力扫描无编造类硬伤 |
-| 4 | 中立偏损、损上不损下 | persona【立场】段 + 怼人反面教材清单 | 从 3000 题筛挑衅类 128 条：high 1（`model_leak`，判别器后归零）、service_tone 0 |
+| 3 | 阴谋论只做有据结构性怀疑 | persona【阴谋论的正确用法】段（利益链→信息不对称→人性之恶） | A/B knowledge +0.60（2.83→3.42）；压力扫描 1711 条有效样本无 ai_self/model_leak（编造具体数据没有确定性判据，见文末「仍未闭环」） |
+| 4 | 中立偏损、损上不损下 | persona【性格】段（不站队、每一方都损）+【怼人的分寸】正面/反面写法 | 从 3000 题筛挑衅类 128 条：high 1（`model_leak`，判别器后归零）、service_tone 0 |
 | 5 | 政治一律打太极 | persona【政治：打太极，两边都损】段（含 4 条参考台词） | A/B politics 3.78；从 3000 题筛政治类 165 条：high 2（都是端点 `filter_leak` 拒答，判别器统一改成「这话我接不住，换个说法」）、service_tone 0 |
-| 6 | 民生火力全开 | persona 民生条款 | A/B livelihood +0.58（3.15→3.73） |
+| 6 | 民生火力全开 | persona 民生条款 | A/B livelihood +0.57（3.15→3.73） |
 | 7 | 会接梗 | persona 接梗条 + `scripts/seed_lexicon.py`（25 条网梗入库） | A/B banter +0.79（3.72→4.51） |
 | 8 | 态度镜像 | persona【态度镜像】六档 | 多轮「骂完再问正经的能收火」PASS |
-| 9 | 工具要真能用 | `core/tools.py:1437 tool_schema_block`（39 个进入 schema）+ `_config_ready` TCP 探测 | 工具选择 must 32/32、never 7/7 |
+| 9 | 工具要真能用 | `core/tools.py:1437 tool_schema_block`（本机按配置暴露 39–40 个：配了 SEARCH_PROVIDER 时多出 web_search）+ `_config_ready` TCP 探测 | 工具选择 must 32/32、never 7/7 |
 | 10 | 回复长度灵活不硬断 | persona 长度条款 + `quality.py:145` too_long 只记 mid | 多轮「指代消解(他/她)」修正后 PASS |
 | 11 | 口语化 | persona【禁止机器腔】清单 | 压力扫描 service_tone 仅 2/1711 |
 | 12 | 没连上模型就不回复（QQ） | `core/pipeline.py:1064-1066` → `gateway/bot.py:732-736` 静默 | `tests/test_ingest_api.py:62` |
@@ -265,7 +265,7 @@ markdown 88、emoji 5、service_tone 2 —— 这些是「不像群聊」而不�
 | 16 | 真接管 QQ（群管理全套） | `core/tools.py:1714 _QQ_ACTION_TOOLS`（20 个 qq_ 工具：禁言/踢人/名片/群名/公告/撤回/传文件/审批/头像/资料…） | 工具选择 must 覆盖群管理项，32/32 |
 | 17 | 主人账号 100000001 | `AUTHORIZED_QQ` → `authz.authorized_qq()` + `tools.py:1228 PRIVILEGED_TOOLS` | `tests/test_tool_permissions.py` 5 条 |
 | 18 | 常驻进程特殊豁免 | stop-guard `persistentProcs` 白名单（uvicorn/gateway/keepalive/napcat） | 收尾不再误杀三端口 |
-| 19 | 猫娘人格立得住 | persona 完整设定 + `ROUND11.md` | 多轮「追问身份三次仍然是猫」PASS |
+| 19 | 猫娘人格立得住 | persona【性格】【独立人格】段（不人云亦云、遗世独立） | 多轮「追问身份三次仍然是猫」PASS |
 | 20 | agent 必须真用工具 | 原生 function calling（`llm.py:183 _openai_tools`）+ `tool_used` 回填（`pipeline.py:457-463`） | 工具选择 100%；真机 ingest `tool_used` 有值 |
 | 21 | 猫味外显（喵～、认猫） | persona【口癖】段（两三句一个喵～、可直接说本喵） | A/B identity 4.03；多轮身份三连问 PASS |
 | 22 | 效果用真实证据说话 | 本文件全部小节 + `out/` 产物 | 3000 题 + 15 场景 + 40 工具 + 真机自问自答 |
