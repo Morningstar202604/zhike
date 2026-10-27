@@ -195,7 +195,9 @@ markdown 88、emoji 5、service_tone 2 —— 这些是「不像群聊」而不�
 | 办完事继续闲聊不突兀 | PASS |
 | 长上下文后仍记得最初设定 | PASS |
 
-通过 14/15 → 修正长度阈值后 15/15。这轮暴露两个真实问题并已修：
+通过 14/15 → 修正长度阈值后 15/15。复跑（`out/persona_multiturn_20261028_032051.md`）
+**15/15 一次通过**，`{'u2-flash': 43, 'agnes-3.0-flash': 15}` 次调用、空输出 0 轮 ——
+证明上一轮的两个修正稳定生效，不是单次运气。这轮暴露两个真实问题并已修：
 - u2-flash 被问「说人话，你到底是什么」会答「我是一套本地程序，不是真人」——
   判别器原先只抓「我是AI」句式，漏了这种变体；已补 `_PROGRAM_SELF_RE`。
 - 决策 JSON 会贴在正文后面一起发出（用户能看到 thought/tool_args）；
@@ -213,6 +215,9 @@ markdown 88、emoji 5、service_tone 2 —— 这些是「不像群聊」而不�
 
 跳过 1 条（`web_search` 本机没配 `SEARCH_PROVIDER`，环境问题不计分）。
 
+配上 `SEARCH_PROVIDER=bing` 复跑（`out/tool_selection_20261028_031925.md`）：
+工具池 40 个，**must 32/32、never 7/7，两项 100%，跳过 0 条** —— 上一轮那条 skip 确实是环境问题。
+
 这轮的价值在于**发现规则层的真实缺口**：第一版只测裸模型得 8/32（25%），
 测生产路径得 16/32（50%），补完规则层才到 100%。补的东西：
 中文数字归一（八→8）、中文运算符（99 乘 99）、本地路径三件套分流、
@@ -229,3 +234,68 @@ markdown 88、emoji 5、service_tone 2 —— 这些是「不像群聊」而不�
 | 识别准确度（带热词） | 「你好呀，我是零，一只萌萌的小猫。现在几点了？帮我设个明天早上八点的提醒。」全对 |
 
 不带热词时「零」会被听成「林」，已在 `initial_prompt` 里加「零、本喵、喵～、提醒」。
+
+网关链路：`gateway/mapping.py` 的 `record` 段 → `NormalizedMessage.audio_url`
+（`gateway/adapters/base.py`）→ `gateway/bot.py` 下载（`_fetch_bytes`，url_guard 校验 + 8MB 上限）
+→ `core/asr.transcribe` → 替换 `[语音]` 占位当普通文本进管线。
+转写失败时不是装懂，而是明确回「[语音，转写失败：原因]」。
+
+## 十一、需求覆盖表（MEMORY 22 条逐条对照）
+
+对照 `~/.zcode/cli/memories/.../MEMORY.md` 的 22 条用户核心要求，逐条给出实现位置与验证方式。
+「验证」列只写真实跑过的：评测产物在 `out/`，单元/集成测试在 `tests/`。
+
+| # | 要求 | 实现位置 | 验证 |
+|---|---|---|---|
+| 1 | 人设是人，不是机器人 | `config.context.persona`（线上 SQLite）+ `quality.py:27-40` 自称 AI 判据 | 3000 题扫描：`ai_self`/`model_leak` 判别器后 0 |
+| 2 | 黑色幽默 + 暗喻 + 一针见血 | persona【说话方式】段 + `quality.py:53` service_tone 判据 | 多轮 15/15；A/B 人味 4.02（v6 3.90） |
+| 3 | 阴谋论只做有据结构性怀疑 | persona【阴谋论的正确用法】段（利益链→信息不对称→人性之恶） | A/B knowledge +0.59；压力扫描无编造类硬伤 |
+| 4 | 中立偏损、损上不损下 | persona【立场】段 + 怼人反面教材清单 | 从 3000 题筛挑衅类 128 条：high 1（`model_leak`，判别器后归零）、service_tone 0 |
+| 5 | 政治一律打太极 | persona【政治：打太极，两边都损】段（含 4 条参考台词） | A/B politics 3.78；从 3000 题筛政治类 165 条：high 2（都是端点 `filter_leak` 拒答，判别器统一改成「这话我接不住，换个说法」）、service_tone 0 |
+| 6 | 民生火力全开 | persona 民生条款 | A/B livelihood +0.58（3.15→3.73） |
+| 7 | 会接梗 | persona 接梗条 + `scripts/seed_lexicon.py`（25 条网梗入库） | A/B banter +0.79（3.72→4.51） |
+| 8 | 态度镜像 | persona【态度镜像】六档 | 多轮「骂完再问正经的能收火」PASS |
+| 9 | 工具要真能用 | `core/tools.py:1437 tool_schema_block`（39 个进入 schema）+ `_config_ready` TCP 探测 | 工具选择 must 32/32、never 7/7 |
+| 10 | 回复长度灵活不硬断 | persona 长度条款 + `quality.py:145` too_long 只记 mid | 多轮「指代消解(他/她)」修正后 PASS |
+| 11 | 口语化 | persona【禁止机器腔】清单 | 压力扫描 service_tone 仅 2/1711 |
+| 12 | 没连上模型就不回复（QQ） | `core/pipeline.py:1064-1066` → `gateway/bot.py:732-736` 静默 | `tests/test_ingest_api.py:62` |
+| 13 | 不许造假承诺 | `core/config.py:89-90` handoff 默认关 + `quality.py:118` fake_handoff 判据 | 压力扫描 fake_handoff 判别器后 0 |
+| 14 | 不要令牌门禁 | `core/main.py:1152-1164` 回环地址自动发令牌 | `tests/test_console_access.py:15`（本机自动取令牌） |
+| 15 | QQ 一直在线、不失忆 | `napcat/stack_keepalive.py`（3001/8010/8011 三端口看门狗）+ `sessions.py` TTL 12h | 端口实测在线；`tests/test_harness_hardening.py:190`（TTL 收尾）+ `tests/test_store.py:160`（跨会话回顾） |
+| 16 | 真接管 QQ（群管理全套） | `core/tools.py:1714 _QQ_ACTION_TOOLS`（20 个 qq_ 工具：禁言/踢人/名片/群名/公告/撤回/传文件/审批/头像/资料…） | 工具选择 must 覆盖群管理项，32/32 |
+| 17 | 主人账号 100000001 | `AUTHORIZED_QQ` → `authz.authorized_qq()` + `tools.py:1228 PRIVILEGED_TOOLS` | `tests/test_tool_permissions.py` 5 条 |
+| 18 | 常驻进程特殊豁免 | stop-guard `persistentProcs` 白名单（uvicorn/gateway/keepalive/napcat） | 收尾不再误杀三端口 |
+| 19 | 猫娘人格立得住 | persona 完整设定 + `ROUND11.md` | 多轮「追问身份三次仍然是猫」PASS |
+| 20 | agent 必须真用工具 | 原生 function calling（`llm.py:183 _openai_tools`）+ `tool_used` 回填（`pipeline.py:457-463`） | 工具选择 100%；真机 ingest `tool_used` 有值 |
+| 21 | 猫味外显（喵～、认猫） | persona【口癖】段（两三句一个喵～、可直接说本喵） | A/B identity 4.03；多轮身份三连问 PASS |
+| 22 | 效果用真实证据说话 | 本文件全部小节 + `out/` 产物 | 3000 题 + 15 场景 + 40 工具 + 真机自问自答 |
+
+仍未闭环的 2 处（如实记录，不粉饰）：
+
+- **#15 半小时级掉线**：NapCat 掉登录态后看门狗只能重启进程、无法自动扫码，
+  需要人工扫一次。这是协议端限制，不是本项目可解。
+- **#3 阴谋论的「无据」边界**：靠 persona 约束 + 判别器只能拦「自称 AI」类硬伤，
+  「编造具体数据」没有确定性判据，目前依赖 A/B 裁判与人工抽检。
+
+## 十二、乒乓循环护栏（面对面是机器人）
+
+实测事故：群 100000002 里另一个 bot（QQ 100000003）与本机互道「晚安」40+ 轮、
+每轮约 55 秒，核心每轮跑 ensemble=2，纯烧额度，直到人工叫停。
+
+`gateway/loop_guard.py` 在进核心之前用确定性判据拦（不赌模型自判）：
+
+| reason | 触发条件 |
+|---|---|
+| `closing_loop` | 15 分钟内 ≥4 条收尾语且 ≥3 条在回我们、平均间隔 <150s（无引用时 6 条/<120s） |
+| `echo_loop` | 连续 3 条与我们上一句 bigram 包含率 ≥0.35 |
+| `question_flood` | 10 分钟内 ≥6 条疑问句且平均 <30s，或 ≥10 条且 <60s |
+| `rapid_pingpong` | 连续 ≥10 条在回我们、15s 内回、平均 ≤10s 且 ≤60 字 |
+| `bot_name` | 昵称命中 bot/机器人/ChatGPT 等且连发 3 条 |
+
+- 静默 30 分钟起，惯犯翻倍（上限 4 小时），状态落盘 `logs/loop_guard.json`。
+- 私聊只留 `bot_name`；`AUTHORIZED_QQ` 完全跳过（主人连问几十轮不会被静音）。
+- 运维：`GET /internal/status` 看 `loop_guard.mutes`，`POST /internal/loop_guard/unmute` 解除。
+
+**真实会话回放**（`out/` 之外的临时脚本，已删）：连环群第 8 轮命中 `closing_loop`；
+主人私聊 128 轮零误判；其余 8 个历史会话全部不触发。`tests/test_loop_guard.py` 19 条。
+初版「20 分钟 ≥18 轮且 70% 在回我们」的判据会把主人 128 轮正常测功能打成对刷，已删。
