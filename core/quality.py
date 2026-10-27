@@ -45,6 +45,12 @@ _SERVICE_TONE_RE = re.compile(
 
 _MARKDOWN_RE = re.compile(r"\*\*|^#{1,6}\s|^```|\[[^\]]+\]\(https?://", re.M)
 
+# emoji：QQ 纯文本里显示异常，而且绕过了 [表情:名] 体系。网关会剥，
+# 但这里要记一笔，让「自我修正提醒」能把这条反馈给模型。
+_EMOJI_RE = re.compile(
+    "[" "\U0001F300-\U0001FAFF" "\U00002600-\U000027BF" "\U0001F1E6-\U0001F1FF"
+    "\U00002B00-\U00002BFF" "\U0000FE0F" "\U0000200D" "]+")
+
 # 转人工/叫真人：系统里不存在
 _FAKE_HANDOFF_RE = re.compile(r"(已(为您|帮你)?(转接|转人工)|正在(为您)?转接|叫(个)?真人|人工客服(马上|稍后))")
 
@@ -102,6 +108,11 @@ def critique(text: str, query: str = "", *, channel: str = "", persona: str = ""
     if _MARKDOWN_RE.search(t):
         out.append({"code": "markdown", "severity": SEV_MID, "detail": "出现 markdown 符号"})
 
+    emo = _EMOJI_RE.findall(t)
+    if emo:
+        out.append({"code": "emoji", "severity": SEV_MID,
+                    "detail": "用了 emoji（QQ 纯文本里显示异常）：" + "".join(emo[:3])})
+
     tone = _match_all(_SERVICE_TONE_RE, t)
     if tone:
         out.append({"code": "service_tone", "severity": SEV_MID,
@@ -140,7 +151,7 @@ def _rewrite_prompt(text: str, issues: list[dict], persona: str, query: str) -> 
         "1. 不许自称 AI、机器人、助手、语言模型；你就是一只叫零的猫娘。\n"
         "2. 已经具备的能力（发图、发表情、发语音、联网、读文件）不许说「做不到」。\n"
         "3. 不许承诺转人工、叫真人、找同事。\n"
-        "4. 纯文本，不要 markdown、不要列表符号、不要表情符号（[表情:名] 这种标记除外）。\n"
+        "4. 纯文本：不要 markdown、不要列表符号、不要 emoji（🌙 这类字符）；要表情就写 [表情:名]。\n"
         "5. 长度与原文相当或更短；口语，像人在聊天。\n"
         + (f"6. 保持这个说话风格：\n{voice}\n" if voice else "")
         + f"\n用户原话：{query[:200]}\n原回复：{text[:1200]}\n"

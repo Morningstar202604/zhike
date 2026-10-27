@@ -133,3 +133,10 @@ def test_quality_group_is_writable():
     assert "ensemble" in config._SCHEMA["quality"]
     config.validate_patch({"quality": {"rewrite": True, "ensemble": 2,
                                         "ensemble_intents": ["chat"]}})
+
+
+def test_emoji_flagged_as_mid():
+    issues = quality.critique("晚安喵～ 🌙")
+    assert any(i["code"] == "emoji" for i in issues)
+    assert not quality.needs_rewrite(issues)
+    assert not any(i["code"] == "emoji" for i in quality.critique("晚安喵～"))
