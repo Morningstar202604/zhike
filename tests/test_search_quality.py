@@ -46,3 +46,24 @@ def test_rss_items_parse_cdata_links(monkeypatch):
     assert items and items[0]["url"] == "https://example.com/a"
     assert items[0]["title"] == "某芯片发布"
     assert "<![CDATA[" not in items[0]["url"]
+
+
+def test_vector_hits_below_similarity_floor_are_dropped(monkeypatch):
+    """闲聊不能从知识库里捞满无关条目（曾导致「发表情包」答成「发票开具」）。"""
+    from core import retrieval
+
+    kb = [{"id": "KB1", "title": "发票开具", "text": "发票 抬头", "tags": []}]
+    monkeypatch.setattr(retrieval, "_INDEX_STATE", {"vec": True})
+    monkeypatch.setattr(retrieval, "_get_encoder", lambda: type(
+        "E", (), {"encode": lambda self, xs, normalize_embeddings=True: [[0.0] * 4]})())
+    monkeypatch.setattr(retrieval, "_kb_rowid", lambda eid: 1)
+
+    class _Conn:
+        def execute(self, sql, params=None):
+            class _R:
+                def fetchall(self):
+                    # distance=1.3 → cos = 1-1.69/2 = 0.155 < 0.48
+                    return [{"rowid": 1, "distance": 1.3}]
+            return _R()
+
+    assert retrieval._vec_search(_Conn(), "发个表情包", kb, 4) == []

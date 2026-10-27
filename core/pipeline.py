@@ -179,6 +179,10 @@ def build_context(query: str, history: list[dict], cfg: dict, visitor_id: str) -
 
 _URL_RE = re.compile(r"https?://[^\s，。；、）)\]】>]+")
 _READ_HINT = re.compile(r"看|读|总结|内容|讲了|说了|是什么|介绍|分析|打开|翻译")
+# 模型声明「发不了图」的典型句式：要表情包时出现这些就等于把功能说死了
+_EMOTE_REFUSAL_RE = re.compile(
+    r"(没法|不能|无法|没办法|不会)(直接)?(发|发送|贴|给你发).{0,6}(图片|图|表情)|"
+    r"(我|这边).{0,6}(发不了|不能发|不支持发).{0,4}(图|表情)")
 
 
 _FILE_RE = re.compile(
@@ -431,8 +435,16 @@ async def _llm_answer(query: str, ctx: dict, cfg: dict, image_b64: str = "",
         tool_name = str(data.get("tool") or "").strip()
         if tool_name and tool_name in visible and tool_name in tools_map:
             args = data.get("tool_args") or {}
-            result = await tools_mod.invoke_with(tools_map, tool_name, args,
-                                                 ctx.get("tool_ctx") or EMPTY)
+            # 单个工具的异常绝不能打断整轮对话：历史上 search_emote 按 dict 解析
+            # 数组索引抛 AttributeError，整轮直接掉回「这个我暂时答不上来」。
+            try:
+                result = await tools_mod.invoke_with(tools_map, tool_name, args,
+                                                     ctx.get("tool_ctx") or EMPTY)
+            except Exception as exc:  # aqg: tool boundary
+                result = {"tool": tool_name, "status": "error",
+                          "note": f"工具执行出错（{type(exc).__name__}），换个方式回答用户。"}
+            if not isinstance(result, dict):
+                result = {"tool": tool_name, "note": str(result)[:500]}
             note = str((result or {}).get("note") or "")
             observations.append(f"[{tool_name}] {note[:1500]}")
             used_tools.append(tool_name)
@@ -502,8 +514,14 @@ async def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
             tool_name = None
     if tool_name and tool_name in tools:
         args = parsed.tool_args or {}
-        tool_result = await tools_mod.invoke_with(ctx.get("tools"), tool_name, args,
-                                                  ctx.get("tool_ctx") or EMPTY)
+        try:
+            tool_result = await tools_mod.invoke_with(ctx.get("tools"), tool_name, args,
+                                                      ctx.get("tool_ctx") or EMPTY)
+        except Exception as exc:  # aqg: tool boundary
+            tool_result = {"tool": tool_name, "status": "error",
+                           "note": f"工具执行出错（{type(exc).__name__}）。"}
+        if not isinstance(tool_result, dict):
+            tool_result = {"tool": tool_name, "note": str(tool_result)[:500]}
         if tool_result.get("status") == "bad_args":
             tool_result = {"tool": tool_name, "status": "bad_args", "note": "工具参数不合法。"}
         # 工具「没接入/没配置」时不能把它的提示当最终答复发给用户：
@@ -521,6 +539,16 @@ async def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
         tool_missed = not benign and (
             (tool_result or {}).get("connected") is False
             or (tool_result or {}).get("found") is False)
+        if tool_name == "search_emote" and not tool_missed:
+            # 表情包必须在正文里留下 [表情包:关键词]，网关才会真的挑图发出去。
+            # 模型拿到库清单后仍会说「我没法发图片」（实测 u2-flash 稳定复现），
+            # 于是用户要表情包，得到一句道歉——这就是「表情包发不出去」的真相。
+            kw = str((parsed.tool_args or {}).get("keyword") or "").strip()
+            if "[表情包" not in (parsed.answer or ""):
+                if _EMOTE_REFUSAL_RE.search(parsed.answer or ""):
+                    parsed.answer = ""
+                marker = f"[表情包:{kw or '猫咪'}]"
+                parsed.answer = ((parsed.answer or "").strip() + " " + marker).strip()
 
     # 输出侧护栏：LLM 回答若泄露系统提示/Key，替换为安全话术并标记升级
     bad_output = guardrail.detect_output(parsed.answer)

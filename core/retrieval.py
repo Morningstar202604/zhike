@@ -113,6 +113,11 @@ def _detect_dim() -> int:
 
 EMBED_DIM = _detect_dim()
 _COS_FLOOR, _COS_CEIL = 0.55, 0.90
+# 向量召回的绝对相关性闸门：cos 相似度低于此值的命中直接丢弃。
+# 没有闸门时，任何一句闲聊都会从 6 条知识库里捞出 top_k 条无关条目
+# （distance 全在 1.1~1.3，cos≈0.4 以下），RRF 归一化后照样给 0.5 分，
+# 于是「发个表情包」被塞进「发票开具」的答案——实测就是这么答非所问的。
+_EMB_MIN_COS = float(os.environ.get("USER_EMB_MIN_COS") or "0.48")
 _EMB_STATE: dict = {"model": None, "failed": False}
 _BGE_QUERY_PREFIX = "为这个句子生成表示以检索相关文章："
 
@@ -343,7 +348,12 @@ def _fts_search(conn: sqlite3.Connection, query: str, top_k: int) -> list[tuple[
 
 
 def _vec_search(conn: sqlite3.Connection, query: str, kb: list[dict], top_k: int) -> list[tuple[float, str]]:
-    """向量检索。返回 [(distance, entry_id)]，distance 越小越好。"""
+    """向量检索。返回 [(distance, entry_id)]，distance 越小越好。
+
+    vec0 的 L2 distance 在归一化向量上等于 sqrt(2-2cos)，据此换算成余弦相似度
+    并丢掉低于 _EMB_MIN_COS 的命中——无闸门的话任何闲聊都会捞满 top_k，
+    RRF 融合后把无关条目排进知识库块，模型就会答非所问。
+    """
     if not _INDEX_STATE["vec"]:
         return []
     encoder = _get_encoder()
@@ -358,7 +368,17 @@ def _vec_search(conn: sqlite3.Connection, query: str, kb: list[dict], top_k: int
             (q_bytes, top_k * 3),
         ).fetchall()
         rid_map = {_kb_rowid(e["id"]): e["id"] for e in kb}
-        return [(float(r["distance"]), rid_map.get(r["rowid"], "")) for r in rows if r["rowid"] in rid_map]
+        out: list[tuple[float, str]] = []
+        for r in rows:
+            eid = rid_map.get(r["rowid"])
+            if not eid:
+                continue
+            distance = float(r["distance"])
+            cos = 1.0 - (distance * distance) / 2.0
+            if cos < _EMB_MIN_COS:
+                continue
+            out.append((distance, eid))
+        return out
     except Exception:
         return []
 

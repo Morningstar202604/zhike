@@ -504,7 +504,10 @@ async def tool_list_files(path: str, depth: str = "1", **_kw) -> dict:
     except executor_client.ExecutorError as e:
         return miss_result("list_files", f"列目录失败：{e}", path=path)
 
-    entries = data.get("entries") or data.get("items") or []
+    if not isinstance(data, dict):
+        return miss_result("list_files", "执行器返回格式不对。", path=path)
+    entries = [e for e in (data.get("entries") or data.get("items") or [])
+               if isinstance(e, dict)]
     if not entries:
         return miss_result("list_files", "这个目录是空的或不存在。", path=path)
     lines = []
@@ -648,7 +651,12 @@ async def tool_describe_image(ctx: ToolContext, source: str = "", question: str 
 
 
 def tool_search_emote(ctx: ToolContext, keyword: str = "", **_kw) -> dict:
-    """搜机器人自己收藏的表情包（网关侧 EmoteLib 的索引文件）。"""
+    """搜机器人自己收藏的表情包（网关侧 EmoteLib 的索引文件）。
+
+    索引是**数组**（EmoteLib.save 直接 dump self.items），不是 {items: [...]}。
+    旧代码按 dict 解析，任何一次「发表情包」都会 AttributeError 抛到管线里，
+    整轮掉回规则兜底——用户看到的就是「这个我暂时答不上来」。
+    """
     import pathlib
 
     index_path = pathlib.Path(os.environ.get("GATEWAY_EMOTE_DIR", "C:/Users/YOU/napcat/emotes")) / "index.json"
@@ -658,16 +666,28 @@ def tool_search_emote(ctx: ToolContext, keyword: str = "", **_kw) -> dict:
         data = json.loads(index_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return empty_result("search_emote", "表情包索引读不出来。")
-    items = data.get("items") or data.get("emotes") or []
+    if isinstance(data, dict):
+        items = data.get("items") or data.get("emotes") or []
+    else:
+        items = data if isinstance(data, list) else []
+    items = [i for i in items if isinstance(i, dict)]
     if not items:
         return empty_result("search_emote", "表情库是空的。")
     kw = (keyword or "").strip()
     hits = [i for i in items if kw and kw in str(i.get("summary") or i.get("name") or "")]
     if not hits:
-        hits = items[:10]
-    lines = [f"{i.get('summary') or i.get('name') or '?'}（{i.get('kind') or 'face'}）" for i in hits[:10]]
-    note = (f"匹配「{kw}」的有：" if kw and hits and kw in str(hits[0]) else "库里有这些：") + "；".join(lines)
-    return ok_result("search_emote", note, count=len(hits))
+        hits = items[-10:]
+    lines = [f"{i.get('summary') or i.get('name') or '未命名'}（{i.get('kind') or 'face'}）"
+             for i in hits[:10]]
+    matched = bool(kw) and any(kw in str(i.get("summary") or i.get("name") or "") for i in hits)
+    note = (f"匹配「{kw}」的有：" if matched else "库里有这些：") + "；".join(lines)
+    note += ("。要真发出去就在回复里写 [表情包:<关键词>]，网关会从库里挑一张真图发；"
+             "不要只描述表情，也不要贴本地路径。")
+    # 索引里是本地文件路径，模型据此可以用 [表情包:关键词] 或直接 send_image 发出去
+    sample = hits[0]
+    return ok_result("search_emote", note, count=len(hits),
+                     sample_path=str(sample.get("data") or ""),
+                     kind=str(sample.get("kind") or ""))
 
 
 # ============================================================
