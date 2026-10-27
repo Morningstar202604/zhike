@@ -34,7 +34,7 @@
 ### 功能
 
 - **对话**：SSE 流式、图片多模态、Markdown、停止生成、重新生成、逐条删除
-- **37 个内置工具**：看/生/发图、联网搜索、读网页、读文档（PDF/DOCX/XLSX）、算数、时间、长期记忆、提醒、群记录/群成员/好友、主动发消息、群管理（禁言/改名片/改群名/公告/传文件/撤回/入群与好友审批）
+- **42 个内置工具**：看/生/发图、发语音（TTS）、联网搜索、读网页、读文档（PDF/DOCX/XLSX）、算数、时间、长期记忆、提醒、群记录/群成员/好友、主动发消息、戳一戳/表情回应/群精华/合并转发、群管理（禁言/改名片/改群名/公告/传文件/撤回/入群与好友审批）
 - **提醒待办**：`10 分钟后`/`明天 9 点`/`每天 8 点`/`每个工作日 9 点`，按本地时区调度并推回原渠道
 - **RAG 知识库**：Markdown/PDF/Word/Excel 导入、分块、试召回、标注回复（命中即秒回）
 - **协作台**：待接管队列、内部备注、快捷话术、SLA 首响计时、答案回流知识库
@@ -271,3 +271,29 @@ docs/       QQ setup (QQ-LOGIN.md) and screenshots
 ### License
 
 MIT. NapCat is an unofficial protocol client under a custom non-commercial license — review its LICENSE and Tencent's risk-control policy before commercial use.
+
+## 输出质量与评测
+
+三道闸门保证「像人不像 AI」：
+
+| 层 | 位置 | 作用 |
+|---|---|---|
+| 意图识别 | `core/intent.py` | 12 类规则分流（身份/表情/挑衅/政治/民生/工具/注入…），结论注入 system prompt，决定这一轮用哪个档位说话 |
+| 输出判别器 | `core/quality.py` | 检测自称 AI、报模型名、把已有能力说死、假转接、markdown、客服腔；严重问题重写一次，重写失败走猫味兜底 |
+| 多模型择优 | `core/ensemble.py` | 闲聊类意图并行两版（u2-flash + agnes-3.0-flash），规则打分挑硬伤更少的 |
+
+评测脚本（都在 `scripts/`，产物写 `out/`，不入库）：
+
+```bash
+# 人设 A/B：同题两版人设各生成一次，双模型裁判打分
+.venv/Scripts/python.exe scripts/persona_eval.py --n 320 --workers 5
+
+# 千条压力扫描：只跑生成，规则统计硬伤率（快、可复现）
+.venv/Scripts/python.exe scripts/persona_stress.py --n 2000 --workers 10
+
+# 真机自问自答：核心出答案 → 网关渲染 → NapCat 真发到主人账号
+.venv/Scripts/python.exe scripts/qq_selfqa.py
+
+# 表情包视觉打标（按 data 路径增量补，网关换库后仍可用）
+.venv/Scripts/python.exe scripts/tag_emotes.py
+```
