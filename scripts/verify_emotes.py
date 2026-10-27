@@ -39,13 +39,15 @@ def tokens() -> dict:
 
 
 async def describe(client: httpx.AsyncClient, b64: bytes) -> str:
-    cfg = config.get_config()["llm"]
+    full = config.get_config()
+    cfg = full["llm"]
+    vision = (full.get("multimodal") or {}).get("vision_model") or "u2-med"
     data = base64.b64encode(b64).decode()
     mime = "image/gif" if b64[:3] == b"GIF" else ("image/png" if b64[:4] == b"\x89PNG" else "image/jpeg")
     try:
         r = await client.post(f"{cfg['base_url'].rstrip('/')}/chat/completions",
                               headers={"Authorization": f"Bearer {cfg['api_key']}"},
-                              json={"model": "u2-med", "messages": [{"role": "user", "content": [
+                              json={"model": vision, "messages": [{"role": "user", "content": [
                                   {"type": "text", "text": "用不超过 8 个中文词描述这张图：主体、情绪、动作或文字。只给词。"},
                                   {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}]}],
                                   "max_tokens": 60, "temperature": 0.1})

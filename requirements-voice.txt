@@ -1,0 +1,3 @@
+# 语音回复（send_voice 工具）：文字 → edge-tts 合成 → QQ 语音消息。
+# 可选依赖：不装时 send_voice 会明确回「语音合成没装」，不影响其他工具。
+edge-tts~=7.3

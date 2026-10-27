@@ -54,6 +54,8 @@ USER_VISION_MODEL=glm-4v-flash
 ```bash
 # 向量语义检索（BGE 中文小模型，CPU 可跑；1G 内存小机别装，用默认字面检索）
 pip install -r requirements-embedding.txt
+# 语音回复（send_voice 工具，edge-tts 走微软在线语音，约 1s 合成一句）
+pip install -r requirements-voice.txt
 # 模型需先在本机缓存（或把 USER_EMB_MODEL 指向已下载的目录）。
 # 默认不联网下载：HF 默认重试会让首次检索阻塞 80 秒以上，需要下载时临时设 USER_EMB_ALLOW_DOWNLOAD=1。
 ```
@@ -76,8 +78,10 @@ pip install -r requirements-embedding.txt
 | `generate_image` / `send_image` | 文生图并发出、把图片发到当前会话 | LLM Key（`USER_IMAGE_MODEL`）/ 网关在线 |
 | `parse_document` | 解析 PDF/DOCX/XLSX/MD/TXT | 无（本机走执行器，链接走公网抓取） |
 | `now` / `calc` | 当前时间、数学计算 | 无 |
-| `search_emote` | 搜收藏的表情包 | NapCat 表情目录 |
+| `search_emote` | 搜收藏的表情包（视觉标签来自同目录 `tags.json`） | NapCat 表情目录（`GATEWAY_EMOTE_DIR`） |
+| `send_voice` | 把一段话合成语音真发到会话 | `pip install -r requirements-voice.txt`（edge-tts）+ 网关在线 |
 | `qq_group_history` / `qq_group_members` / `qq_groups` / `qq_friends` / `qq_send` | 读群记录、查成员/群/好友、主动发消息 | 网关在线 |
+| `qq_poke` / `qq_emoji_like` / `qq_essence` / `qq_forward` | 戳一戳、表情回应、群精华、合并转发 | 网关在线（动作层判权限） |
 
 安全边界：
 - `read_webpage` 只允许公网 http/https，内网/回环/元数据地址在**建连之前**就被拒绝（`core/url_guard.py`）。

@@ -289,11 +289,17 @@ MIT. NapCat is an unofficial protocol client under a custom non-commercial licen
 .venv/Scripts/python.exe scripts/persona_eval.py --n 320 --workers 5
 
 # 千条压力扫描：只跑生成，规则统计硬伤率（快、可复现）
-.venv/Scripts/python.exe scripts/persona_stress.py --n 2000 --workers 10
+# workers 必须 <= 2：u2-flash 4 并发就 82% 429，跑出来的"空回复"全是假数据
+.venv/Scripts/python.exe scripts/persona_stress.py --n 1200 --workers 2
 
 # 真机自问自答：核心出答案 → 网关渲染 → NapCat 真发到主人账号
 .venv/Scripts/python.exe scripts/qq_selfqa.py
 
-# 表情包视觉打标（按 data 路径增量补，网关换库后仍可用）
+# 表情包：视觉打标（按 data 路径增量补）+ 发出去后下载回来复检
 .venv/Scripts/python.exe scripts/tag_emotes.py
+.venv/Scripts/python.exe scripts/verify_emotes.py --count 12
+
+# 知识补充（幂等，重复跑只更新不重复加）
+.venv/Scripts/python.exe scripts/seed_extra_kb.py
+.venv/Scripts/python.exe scripts/seed_lexicon.py
 ```
