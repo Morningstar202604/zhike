@@ -8,6 +8,7 @@ import random
 import re
 from dataclasses import dataclass, field
 
+from core import persona as persona_mod
 from core import config, guardrail, llm, memory as memory_mod, retrieval, store, tools as tools_mod
 from core.schemas import LlmReply
 from core import tracing
@@ -175,7 +176,7 @@ def build_context(query: str, history: list[dict], cfg: dict, visitor_id: str) -
         "memory": mem,
         "history": rel_hist,
         "summary": summary,
-        "persona": ctx_cfg.get("persona", "你是知客，用户的私人秘书。"),
+        "persona": ctx_cfg.get("persona") or persona_mod.default_persona(),
         "modules_on": modules_on,
         "used": used,
     }

@@ -3,6 +3,7 @@ import json
 import os
 import threading
 
+from core import persona as persona_mod
 from core import store
 from core import crypto
 
@@ -46,10 +47,8 @@ def _defaults() -> dict:
             "persona": True,
             "summary": True,
         },
-        "persona": "你是知客，用户的私人秘书。语气友好、可靠，用中文回答。"
-                   "会记事、设提醒、查资料、读文件、看网页；不确定时如实说明。"
-                   "回复以口语为主，长度看内容：一句话能说清就一句话，需要展开就展开，"
-                   "不要为了短而把话说一半，也不要把简单事写成长报告。",
+        # 内置角色：猫娘「零」。环境变量 USER_PERSONA 可覆盖，控制台也能改（落 SQLite）
+        "persona": persona_mod.default_persona(),
     },
     "memory": {
         "enable": True,
