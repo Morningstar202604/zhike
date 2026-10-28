@@ -1,4 +1,6 @@
 """联网搜索质量回归：口语指令必须先洗成检索词，否则必应返回百科词条。"""
+import pytest
+
 from core import websearch
 
 
@@ -50,6 +52,7 @@ def test_rss_items_parse_cdata_links(monkeypatch):
 
 def test_vector_hits_below_similarity_floor_are_dropped(monkeypatch):
     """闲聊不能从知识库里捞满无关条目（曾导致「发表情包」答成「发票开具」）。"""
+    pytest.importorskip("numpy")
     from core import retrieval
 
     kb = [{"id": "KB1", "title": "发票开具", "text": "发票 抬头", "tags": []}]

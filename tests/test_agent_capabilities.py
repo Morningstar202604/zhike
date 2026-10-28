@@ -320,7 +320,7 @@ def test_delete_message_endpoint(client):
 
 def test_encoder_does_not_block_on_hub_when_cache_missing(monkeypatch):
     """修复前：Hub 模型 id 在缓存缺失时会联网重试 5 次，首次检索阻塞 85 秒。"""
-    import sentence_transformers
+    sentence_transformers = pytest.importorskip("sentence_transformers")
 
     class _Stub:
         def __init__(self, name, **kw):

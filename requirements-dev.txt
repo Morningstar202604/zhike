@@ -1,0 +1,7 @@
+# 开发与 CI 依赖：只用于跑测试与审计，不进生产镜像
+-r requirements.txt
+pytest~=9.0
+pytest-cov~=7.0
+pytest-asyncio~=1.0
+ruff~=0.17
+pip-audit~=2.10
