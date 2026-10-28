@@ -11,5 +11,5 @@ pypdf~=6.21
 python-docx~=1.2
 openpyxl>=3.1
 # LLM API Key 落库加密（Fernet）
-# 43.x 有已公开 CVE（pip-audit 报 10 条），必须 46+；Fernet API 未变
-cryptography~=46.0
+# 43.x / 46.x 都有已公开 CVE（pip-audit 可查），修复版本在 50.0；Fernet API 未变
+cryptography~=50.0
