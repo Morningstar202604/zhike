@@ -2,13 +2,14 @@
 
 <div align="center">
 
-[中文](#中文) · [English](#english)
+[中文](README.md) · [English](README.en.md) · [English in-page](#english)
 
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
-![Tests](https://img.shields.io/badge/tests-714%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-814%20passed-brightgreen)
+![CI](https://github.com/badhope/zhike/actions/workflows/ci.yml/badge.svg)
 
 </div>
 
@@ -34,13 +35,14 @@
 ### 功能
 
 - **对话**：SSE 流式、图片多模态、Markdown、停止生成、重新生成、逐条删除
-- **42 个内置工具**（本机按配置暴露 39 个，缺后端的会隐藏而不是让模型去撞墙）：看/生/发图、发语音（TTS）、**收语音（faster-whisper 本地转写）**、联网搜索、读网页、读文档（PDF/DOCX/XLSX）、算数、时间、长期记忆、提醒、群记录/群成员/好友、主动发消息、戳一戳/表情回应/群精华/合并转发、群管理（禁言/改名片/改群名/公告/传文件/撤回/入群与好友审批）
+- **42 个内置工具**（按配置暴露 35–40 个，缺后端的会隐藏而不是让模型去撞墙）：看/生/发图、发语音（TTS）、**收语音（faster-whisper 本地转写）**、联网搜索、读网页、读文档（PDF/DOCX/XLSX）、算数、时间、长期记忆、提醒、群记录/群成员/好友、主动发消息、戳一戳/表情回应/群精华/合并转发、群管理（禁言/改名片/改群名/公告/传文件/撤回/入群与好友审批）
 - **乒乓循环护栏**：对面也是机器人（道别复读/回声/问题连发/秒回连击）就静默 30 分钟，防两个 bot 互刷一整夜（`gateway/loop_guard.py`，默认开）
 - **提醒待办**：`10 分钟后`/`明天 9 点`/`每天 8 点`/`每个工作日 9 点`，按本地时区调度并推回原渠道
 - **RAG 知识库**：Markdown/PDF/Word/Excel 导入、分块、试召回、标注回复（命中即秒回）
 - **协作台**：待接管队列、内部备注、快捷话术、SLA 首响计时、答案回流知识库
 - **中英双语**：侧栏切换 `中 / EN`，界面框架全量翻译；业务数据保持原语言
-- **QQ 全量接管**：收到 face/mface 表情转成可读标记、群里回帖带引用、用户与群自动建档、群黑话自动沉淀、视觉模型独立配置（u2-med 实测可看图）
+- **QQ 全量接管**：收到 face/mface 表情转成可读标记、群里回帖带引用、用户与群自动建档、群黑话自动沉淀、视觉模型独立配置（已实测可看图）
+- **内置角色**：猫娘「零」作为默认人设随仓库分发（`core/persona.py`），控制台预设逐字节同步；可用 `USER_PERSONA` 覆盖
 - **渠道**：QQ（NapCat + OneBot v11 + NoneBot2 网关）、Web；企业微信/公众号适配骨架
 
 ### 镜像仓库
@@ -50,6 +52,8 @@
 - GitHub：[badhope/zhike](https://github.com/badhope/zhike) · [X33834/zhike](https://github.com/X33834/zhike) · [Morningstar202604/zhike](https://github.com/Morningstar202604/zhike)
 - Gitee：[badhope/zhike](https://gitee.com/badhope/zhike)
 - GitCode：[badhope/zhike](https://gitcode.com/badhope/zhike)
+
+项目主页（英文落地页）：[badhope.github.io/zhike](https://badhope.github.io/zhike/)
 
 ### 快速开始
 
@@ -72,6 +76,7 @@ QQ 接入见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md)，Docker / 反代 / 免费部�
 | 变量 | 说明 | 默认 |
 |---|---|---|
 | `USER_LLM_API_KEY/BASE_URL/MODEL` | OpenAI 兼容端点（DeepSeek / GLM / Qwen） | 空（规则模式） |
+| `USER_PERSONA` | 覆盖内置人设（留空用内置「零」） | 空 |
 | `ADMIN_TOKEN` | 管理接口令牌，**生产必填** | 空（开发模式，启动告警） |
 | `CHANNEL_TOKEN` | 渠道共享密钥，`/v1/ingest` 与网关心跳需带 | 空（开发模式） |
 | `AGENT_TIER` / `ALLOW_TIER3` | Agent 自主度 0–3；T3 需双开关 | 1 / 关 |
@@ -114,7 +119,7 @@ QQ 接入见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md)，Docker / 反代 / 免费部�
 ### 测试
 
 ```bash
-python -m pytest tests -q                      # 714 passed
+python -m pytest tests -q                      # 814 passed
 ruff check core executor gateway scripts --select E9,F63,F7,F82,F401,F841
 cd frontend && npx tsc --noEmit && npm test && npm run build
 ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010
@@ -135,7 +140,7 @@ core/       FastAPI 服务：管线、工具、检索、记忆、提醒、动作
 gateway/    NoneBot2 + OneBot v11 网关：QQ 消息、拟人节奏、群节流
 executor/   独立电脑执行器：路径白名单、命令白名单、删除默认进回收站
 frontend/   React 控制台（Vite + TS/JSX + ECharts + react-i18next）
-tests/      714 条 pytest 回归
+tests/      814 条 pytest 回归
 docs/       QQ 接入路径（QQ-LOGIN.md）与截图
 ```
 
@@ -165,12 +170,14 @@ MIT。NapCat 为自定义非商用许可的非官方协议端，商用前请自�
 ### Features
 
 - **Chat**: SSE streaming, image multimodal, Markdown, stop/regenerate, per-message delete
-- **35 built-in tools**: image read/generate/send, web search, page reader, document parsing (PDF/DOCX/XLSX), calculator, clock, long-term memory, reminders, group history/members/friends, proactive messaging, and group admin (mute, card, rename, notice, upload, recall, join/friend approvals)
+- **42 built-in tools** (35–40 exposed depending on configuration): image read/generate/send, voice reply (TTS), **voice input (local faster-whisper transcription)**, web search, page reader, document parsing (PDF/DOCX/XLSX), calculator, clock, long-term memory, reminders, group history/members/friends, proactive messaging, and group admin (mute, card, rename, notice, upload, recall, join/friend approvals)
 - **Reminders**: `in 10 minutes` / `tomorrow at 9` / `daily at 8` / `weekdays at 9`, scheduled in local time and delivered to the originating channel
 - **RAG knowledge base**: Markdown/PDF/Word/Excel import, chunking, retrieval test, canned answers (instant reply on hit)
 - **Operator desk**: takeover queue, internal notes, canned replies, first-response SLA, one-click save to KB
 - **Bilingual UI**: switch `中 / EN` in the sidebar; all interface chrome is translated, business data stays as-is
 - **QQ, fully wired**: face/mface emoji become readable tokens, group replies quote the message, per-user/per-group profiles, auto-learned group slang, dedicated vision model (u2-med verified)
+- **Bot-to-bot loop guard**: if the peer is also a bot (goodbye loops, echoes, question floods, instant ping-pong), the gateway goes silent for 30 minutes (`gateway/loop_guard.py`, on by default)
+- **Built-in persona**: the catgirl "Zero" ships as a first-class default (`core/persona.py`), mirrored byte-for-byte by the console preset; override with `USER_PERSONA`
 - **Channels**: QQ (NapCat + OneBot v11 + NoneBot2 gateway) and Web; adapter skeleton for WeCom / official accounts
 
 ### Mirrors
@@ -180,6 +187,8 @@ The same code is published to five public repositories (pick any):
 - GitHub: [badhope/zhike](https://github.com/badhope/zhike) · [X33834/zhike](https://github.com/X33834/zhike) · [Morningstar202604/zhike](https://github.com/Morningstar202604/zhike)
 - Gitee: [badhope/zhike](https://gitee.com/badhope/zhike)
 - GitCode: [badhope/zhike](https://gitcode.com/badhope/zhike)
+
+Landing page: [badhope.github.io/zhike](https://badhope.github.io/zhike/)
 
 ### Quick start
 
@@ -244,7 +253,7 @@ Screenshots are captured against a demo database from `scripts/seed_demo.py` usi
 ### Tests
 
 ```bash
-python -m pytest tests -q                      # 714 passed
+python -m pytest tests -q                      # 814 passed
 ruff check core executor gateway scripts --select E9,F63,F7,F82,F401,F841
 cd frontend && npx tsc --noEmit && npm test && npm run build
 ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010
@@ -265,7 +274,7 @@ core/       FastAPI service: pipeline, tools, retrieval, memory, reminders, acti
 gateway/    NoneBot2 + OneBot v11 gateway: QQ messages, human-like pacing, group throttling
 executor/   Standalone computer executor: path allowlist, command allowlist, trash-by-default delete
 frontend/   React console (Vite + TS/JSX + ECharts + react-i18next)
-tests/      714 pytest regressions
+tests/      814 pytest regressions
 docs/       QQ setup (QQ-LOGIN.md) and screenshots
 ```
 
@@ -307,6 +316,6 @@ MIT. NapCat is an unofficial protocol client under a custom non-commercial licen
 # 多轮对话：15 关（记忆/指代/纠正/态度切换/越狱/长上下文）
 .venv/Scripts/python.exe scripts/persona_multiturn.py
 
-# 工具选择：39 个工具里选对那一个（测生产路径，不是裸模型）
+# 工具选择：从当前暴露的工具池里选对那一个（测生产路径，不是裸模型）
 .venv/Scripts/python.exe scripts/tool_selection.py --workers 2
 ```

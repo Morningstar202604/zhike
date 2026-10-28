@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Zhike · Self-hosted AI personal assistant (QQ + Web, MCP, ReAct, RAG)</title>
+<meta name="description" content="Zhike is a self-hosted agent harness for personal assistants: OpenAI function calling, MCP, ReAct loop, hybrid RAG, long-term memory, reminders, tiered permissions and audit chain. QQ group/private chat and Web console. MIT licensed." />
+<meta name="keywords" content="self-hosted, personal assistant, AI agent, agent harness, LLM agent, OpenAI function calling, MCP, Model Context Protocol, ReAct, RAG, hybrid search, SQLite FTS5, vector search, long-term memory, reminder scheduler, QQ bot, NoneBot2, OneBot v11, NapCat, chatbot, FastAPI, React, TypeScript, bilingual UI, audit log, MIT" />
+<meta name="author" content="badhope" />
+<meta name="robots" content="index, follow" />
+<link rel="canonical" href="https://badhope.github.io/zhike/" />
+<link rel="alternate" hreflang="en" href="https://badhope.github.io/zhike/" />
+<link rel="alternate" hreflang="zh-CN" href="https://badhope.github.io/zhike/?lang=zh" />
+<link rel="alternate" hreflang="x-default" href="https://badhope.github.io/zhike/" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Zhike" />
+<meta property="og:title" content="Zhike · Self-hosted AI personal assistant" />
+<meta property="og:description" content="QQ + Web agent harness with OpenAI function calling, MCP, ReAct, hybrid RAG, reminders, permissions and audit. Runs without an LLM key. MIT." />
+<meta property="og:url" content="https://badhope.github.io/zhike/" />
+<meta property="og:image" content="https://badhope.github.io/zhike/screenshots/dashboard.png" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:locale:alternate" content="zh_CN" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Zhike · Self-hosted AI personal assistant" />
+<meta name="twitter:description" content="QQ + Web agent harness with OpenAI function calling, MCP, ReAct, hybrid RAG, reminders, permissions and audit." />
+<meta name="twitter:image" content="https://badhope.github.io/zhike/screenshots/dashboard.png" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%230E5C55'/%3E%3Ctext x='32' y='45.5' text-anchor='middle' font-size='38' font-weight='600' fill='%23F7F5F0' font-family='Songti SC,STSong,SimSun,serif'%3E知%3C/text%3E%3C/svg%3E" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Zhike",
+  "alternateName": "知客",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows, Linux, macOS, Docker",
+  "description": "Self-hosted agent harness for personal assistants: OpenAI function calling, MCP, ReAct loop, hybrid RAG, reminders, permissions and audit, with QQ and Web channels.",
+  "url": "https://badhope.github.io/zhike/",
+  "codeRepository": "https://github.com/badhope/zhike",
+  "license": "https://opensource.org/licenses/MIT",
+  "programmingLanguage": ["Python", "TypeScript"],
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "sameAs": [
+    "https://github.com/badhope/zhike",
+    "https://github.com/X33834/zhike",
+    "https://github.com/Morningstar202604/zhike",
+    "https://gitee.com/badhope/zhike",
+    "https://gitcode.com/badhope/zhike"
+  ]
+}
+</script>
+<style>
+  :root{
+    --bg:#f7f5f0; --fg:#14211f; --muted:#5b6b67; --brand:#0e5c55; --brand-2:#12756b;
+    --card:#ffffff; --line:#e2ded4; --accent:#c2452d; --code:#0f1b19; --code-fg:#d8efe9;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0d1513; --fg:#e9f2ef; --muted:#93a8a2; --card:#131f1c; --line:#22322e; --code:#08100e; --code-fg:#cfe9e2; }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  a{color:var(--brand-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 22px}
+  header.top{position:sticky;top:0;z-index:10;backdrop-filter:saturate(1.2) blur(10px);background:color-mix(in srgb,var(--bg) 86%,transparent);border-bottom:1px solid var(--line)}
+  .top .wrap{display:flex;align-items:center;gap:18px;height:62px}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.2px}
+  .logo .mark{width:30px;height:30px;border-radius:9px;background:var(--brand);color:#f7f5f0;display:grid;place-items:center;font-size:17px}
+  .top nav{margin-left:auto;display:flex;gap:16px;align-items:center;font-size:14px;color:var(--muted)}
+  .top nav a{color:var(--muted)}
+  .lang{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+  .lang button{border:0;background:transparent;color:var(--muted);padding:5px 12px;font:inherit;font-size:13px;cursor:pointer}
+  .lang button[aria-pressed="true"]{background:var(--brand);color:#fff}
+  .hero{padding:72px 0 40px;border-bottom:1px solid var(--line)}
+  .hero h1{font-size:clamp(30px,5vw,52px);line-height:1.1;margin:0 0 16px;letter-spacing:-.5px}
+  .hero p.lead{font-size:clamp(16px,2.1vw,20px);color:var(--muted);max-width:760px;margin:0 0 26px}
+  .badges{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:26px}
+  .badges img{height:22px}
+  .cta{display:flex;flex-wrap:wrap;gap:12px}
+  .btn{display:inline-flex;align-items:center;gap:8px;border-radius:10px;padding:11px 18px;font-weight:600;font-size:15px;border:1px solid var(--line);background:var(--card);color:var(--fg)}
+  .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+  .btn.primary:hover{background:var(--brand-2);text-decoration:none}
+  .btn:hover{text-decoration:none;border-color:var(--brand)}
+  section{padding:56px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:clamp(22px,3vw,30px);margin:0 0 8px;letter-spacing:-.3px}
+  .sub{color:var(--muted);margin:0 0 26px;max-width:780px}
+  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .card h3{margin:0 0 6px;font-size:16px}
+  .card p{margin:0;color:var(--muted);font-size:14.5px}
+  table{width:100%;border-collapse:collapse;font-size:14.5px;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-weight:600;background:color-mix(in srgb,var(--brand) 7%,var(--card))}
+  tr:last-child td{border-bottom:0}
+  pre{background:var(--code);color:var(--code-fg);padding:18px 20px;border-radius:14px;overflow:auto;font-size:13.5px;line-height:1.6}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+  .shots{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .shots figure{margin:0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card)}
+  .shots img{display:block;width:100%;height:auto}
+  .shots figcaption{padding:8px 12px;font-size:13px;color:var(--muted)}
+  .mirrors{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+  .mirror{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:14.5px}
+  footer{padding:36px 0 56px;color:var(--muted);font-size:13.5px}
+  .zh{display:none}
+  html[data-lang="zh"] .en{display:none}
+  html[data-lang="zh"] .zh{display:block}
+  html[data-lang="zh"] span.zh{display:inline}
+  .kicker{display:inline-block;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand-2);font-weight:700;margin-bottom:10px}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="logo" href="#top"><span class="mark">知</span><span>Zhike<span class="zh"> 知客</span></span></a>
+    <nav>
+      <a href="#features" class="en">Features</a><a href="#features" class="zh">功能</a>
+      <a href="#design" class="en">Design</a><a href="#design" class="zh">设计</a>
+      <a href="#start" class="en">Quick start</a><a href="#start" class="zh">快速开始</a>
+      <a href="#mirrors" class="en">Mirrors</a><a href="#mirrors" class="zh">镜像</a>
+      <a href="https://github.com/badhope/zhike">GitHub</a>
+      <div class="lang" role="group" aria-label="Language">
+        <button type="button" data-set-lang="en" aria-pressed="true">EN</button>
+        <button type="button" data-set-lang="zh" aria-pressed="false">中文</button>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="hero">
+    <div class="wrap">
+      <span class="kicker en">Self-hosted · MIT · QQ + Web</span>
+      <span class="kicker zh">可自托管 · MIT · QQ + Web</span>
+      <h1 class="en">Your personal assistant, self-hosted.</h1>
+      <h1 class="zh">你的私人秘书，自己托管。</h1>
+      <p class="lead en">Zhike is an agent harness for personal assistants: OpenAI function calling, MCP, a ReAct loop, hybrid retrieval (FTS5 + vectors with RRF), long-term memory, reminders, tiered action permissions and an append-only audit chain — wired to QQ group/private chat and a Web console.</p>
+      <p class="lead zh">知客是一套可自托管的个人助理 Agent 底座：原生 function calling、MCP、ReAct 循环、混合检索（FTS5 + 向量 RRF）、长期记忆、提醒调度、动作权限分级与哈希链审计，QQ 群/私聊与 Web 控制台双渠道。</p>
+      <div class="badges">
+        <img src="https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white" alt="Python 3.12+" />
+        <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
+        <img src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black" alt="React 18" />
+        <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License" />
+        <img src="https://img.shields.io/badge/tests-814%20passed-brightgreen" alt="814 tests passed" />
+      </div>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/badhope/zhike">GitHub Repository</a>
+        <a class="btn en" href="https://github.com/badhope/zhike/blob/main/README.en.md">Read the docs</a>
+        <a class="btn" href="https://github.com/badhope/zhike/blob/main/README.md">中文 README</a>
+        <a class="btn" href="https://github.com/badhope/zhike/blob/main/README.en.md">English README</a>
+      </div>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <h2 class="en">What you get</h2><h2 class="zh">能做什么</h2>
+      <p class="sub en">Everything below is implemented and covered by tests — no roadmap items dressed up as features.</p>
+      <p class="sub zh">下面每条都已实现并有回归测试覆盖，不把路线图当成已完成功能。</p>
+      <div class="grid">
+        <div class="card"><h3 class="en">Real tool calling</h3><h3 class="zh">真工具调用</h3><p class="en">OpenAI function calling with automatic JSON fallback; 42 tools with backends that hide themselves when unconfigured.</p><p class="zh">原生 function calling，端点不支持时自动退 JSON；42 个工具，缺后端时自动隐藏而不是让模型撞墙。</p></div>
+        <div class="card"><h3 class="en">Hybrid retrieval</h3><h3 class="zh">混合检索</h3><p class="en">SQLite FTS5 BM25 plus optional BGE vectors, fused by RRF, with lexical fallback when the index fails.</p><p class="zh">SQLite FTS5 BM25 + 可选 BGE 向量，RRF 融合；索引故障自动退回字面检索。</p></div>
+        <div class="card"><h3 class="en">Permissions and audit</h3><h3 class="zh">权限与审计</h3><p class="en">L0/L1/L2 action tiers, forced approval for destructive actions, SHA-256 hash-chained audit verifiable in the console.</p><p class="zh">L0/L1/L2 动作分级，破坏性动作强制审批，SHA-256 哈希链审计可在控制台校验。</p></div>
+        <div class="card"><h3 class="en">QQ, fully wired</h3><h3 class="zh">QQ 深度接管</h3><p class="en">NapCat + OneBot v11 + NoneBot2: mute, kick, card, rename, notice, upload, recall, approvals, poke, essence, forward.</p><p class="zh">NapCat + OneBot v11 + NoneBot2：禁言、踢人、名片、群名、公告、传文件、撤回、审批、戳一戳、精华、合并转发。</p></div>
+        <div class="card"><h3 class="en">Bot-to-bot loop guard</h3><h3 class="zh">乒乓循环护栏</h3><p class="en">Deterministic rules detect goodbye loops, echoes, question floods and instant ping-pong, then mute the peer.</p><p class="zh">确定性判据识别道别复读、回声、问题连发与秒回连击，命中即静默对方。</p></div>
+        <div class="card"><h3 class="en">Runs without a key</h3><h3 class="zh">没 Key 也能跑</h3><p class="en">No LLM key? The pipeline degrades to rule plus retrieval answering instead of failing.</p><p class="zh">不配 LLM Key 也能跑：自动降级为规则 + 检索应答，不是直接报错。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="design">
+    <div class="wrap">
+      <h2 class="en">Design</h2><h2 class="zh">核心设计</h2>
+      <p class="sub en">Boring parts done properly: each layer names the standard it follows.</p>
+      <p class="sub zh">把不性感的部分做扎实：每一层都标明依据的成熟标准。</p>
+      <table>
+        <thead><tr><th class="en">Component</th><th class="zh">部件</th><th class="en">Implementation</th><th class="zh">实现</th><th class="en">Standard</th><th class="zh">依据</th></tr></thead>
+        <tbody>
+          <tr><td class="en">Tool calling</td><td class="zh">工具调用</td><td class="en">OpenAI function calling, JSON fallback</td><td class="zh">OpenAI function calling，自动退 JSON</td><td>OpenAI API spec</td></tr>
+          <tr><td class="en">Tool exposure</td><td class="zh">工具暴露</td><td class="en"><code>core/mcp_server.py</code></td><td class="zh"><code>core/mcp_server.py</code></td><td>Model Context Protocol</td></tr>
+          <tr><td class="en">Multi-step</td><td class="zh">多步执行</td><td class="en">ReAct PLAN → ACT → OBSERVE with budgets</td><td class="zh">ReAct PLAN → ACT → OBSERVE + 预算</td><td>ReAct + Agent SDK budgeting</td></tr>
+          <tr><td class="en">Retrieval</td><td class="zh">检索</td><td class="en">FTS5 BM25 + vectors, RRF fusion</td><td class="zh">FTS5 BM25 + 向量，RRF 融合</td><td>BM25 / RRF</td></tr>
+          <tr><td class="en">Observability</td><td class="zh">可观测</td><td class="en">Optional OTel GenAI spans, metrics, structured logs</td><td class="zh">可选 OTel GenAI span、指标、结构化日志</td><td>OTel GenAI conventions</td></tr>
+          <tr><td class="en">Audit</td><td class="zh">审计</td><td class="en">SHA-256 hash chain</td><td class="zh">SHA-256 哈希链</td><td>Append-only audit chain</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="wrap">
+      <h2 class="en">Quick start</h2><h2 class="zh">快速开始</h2>
+      <p class="sub en">One address serves both the console and the API.</p>
+      <p class="sub zh">一个地址 = 控制台 + API。</p>
+      <pre><code>git clone https://github.com/badhope/zhike &amp;&amp; cd zhike
+python -m venv .venv &amp;&amp; .venv/Scripts/pip install -r requirements.txt
+cp .env.example .env                    # fill USER_LLM_* / ADMIN_TOKEN as needed
+
+cd frontend &amp;&amp; npm ci &amp;&amp; npm run build &amp;&amp; cd ..
+CS_AGENT_STATIC_DIR=frontend/dist python -m uvicorn core.main:app --port 8010
+# → http://localhost:8010</code></pre>
+      <p class="sub en" style="margin-top:18px">QQ setup: <a href="https://github.com/badhope/zhike/blob/main/docs/QQ-LOGIN.md">docs/QQ-LOGIN.md</a> · Docker and deployment: <a href="https://github.com/badhope/zhike/blob/main/DEPLOY.md">DEPLOY.md</a></p>
+      <p class="sub zh" style="margin-top:18px">QQ 接入见 <a href="https://github.com/badhope/zhike/blob/main/docs/QQ-LOGIN.md">docs/QQ-LOGIN.md</a>，Docker / 反代 / 免费部署见 <a href="https://github.com/badhope/zhike/blob/main/DEPLOY.md">DEPLOY.md</a></p>
+    </div>
+  </section>
+
+  <section id="screenshots">
+    <div class="wrap">
+      <h2 class="en">Screenshots</h2><h2 class="zh">界面截图</h2>
+      <p class="sub en">Captured against a generated demo database, not hand-drawn mockups.</p>
+      <p class="sub zh">基于独立演示库实拍，不是手绘 mockup。</p>
+      <div class="shots">
+        <figure><img src="screenshots/dashboard.png" alt="Zhike console overview dashboard with message volume, session trend and channel split" loading="lazy" /><figcaption>Overview / 运行总览</figcaption></figure>
+        <figure><img src="screenshots/sessions.png" alt="Zhike conversations console" loading="lazy" /><figcaption>Conversations / 会话中心</figcaption></figure>
+        <figure><img src="screenshots/operator.png" alt="Zhike operator desk" loading="lazy" /><figcaption>Operator desk / 协作台</figcaption></figure>
+        <figure><img src="screenshots/en-dashboard.png" alt="Zhike console in English" loading="lazy" /><figcaption>English UI / 英文界面</figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <section id="mirrors">
+    <div class="wrap">
+      <h2 class="en">Mirrors</h2><h2 class="zh">镜像仓库</h2>
+      <p class="sub en">The same tree, published to five repositories. Pick whichever is fastest for you.</p>
+      <p class="sub zh">同一套代码同步到五个公开仓库，哪个快用哪个。</p>
+      <div class="mirrors">
+        <a class="mirror" href="https://github.com/badhope/zhike"><span>GitHub · badhope/zhike</span><span>→</span></a>
+        <a class="mirror" href="https://github.com/X33834/zhike"><span>GitHub · X33834/zhike</span><span>→</span></a>
+        <a class="mirror" href="https://github.com/Morningstar202604/zhike"><span>GitHub · Morningstar202604/zhike</span><span>→</span></a>
+        <a class="mirror" href="https://gitee.com/badhope/zhike"><span>Gitee · badhope/zhike</span><span>→</span></a>
+        <a class="mirror" href="https://gitcode.com/badhope/zhike"><span>GitCode · badhope/zhike</span><span>→</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p class="en">Zhike is MIT licensed. NapCat is an unofficial protocol client under its own non-commercial license — review it and Tencent's risk-control policy before commercial use.</p>
+    <p class="zh">知客采用 MIT 许可。NapCat 为自定义非商用许可的非官方协议端，商用前请自行复核其 LICENSE 与腾讯风控政策。</p>
+    <p>© 2026 badhope · <a href="https://github.com/badhope/zhike">GitHub</a> · <a href="https://gitee.com/badhope/zhike">Gitee</a> · <a href="https://gitcode.com/badhope/zhike">GitCode</a></p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var html = document.documentElement;
+  var params = new URLSearchParams(location.search);
+  var saved = params.get('lang') || localStorage.getItem('zhike-site-lang') || 'en';
+  setLang(saved === 'zh' ? 'zh' : 'en');
+  document.querySelectorAll('[data-set-lang]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var lang = btn.getAttribute('data-set-lang');
+      setLang(lang);
+      localStorage.setItem('zhike-site-lang', lang);
+      var url = new URL(location.href);
+      url.searchParams.set('lang', lang);
+      history.replaceState(null, '', url);
+    });
+  });
+  function setLang(lang) {
+    html.setAttribute('data-lang', lang);
+    html.setAttribute('lang', lang === 'zh' ? 'zh-CN' : 'en');
+    document.querySelectorAll('[data-set-lang]').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-set-lang') === lang));
+    });
+  }
+})();
+</script>
+</body>
+</html>
