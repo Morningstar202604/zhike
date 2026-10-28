@@ -31,7 +31,7 @@ from gateway.loop_guard import LoopGuard
 logger = logging.getLogger("gateway")
 
 # 群友表情包收藏库（第三方表情包学习）：mface 回放 + 梗图本地缓存
-_EMOTE_DIR = os.environ.get("GATEWAY_EMOTE_DIR", "C:/Users/YOU/napcat/emotes")
+_EMOTE_DIR = os.environ.get("GATEWAY_EMOTE_DIR") or str(Path.home() / "napcat" / "emotes")
 _EMOTE_LIB = EmoteLib(os.path.join(_EMOTE_DIR, "index.json"))
 os.makedirs(_EMOTE_DIR, exist_ok=True)
 # 梗图下载限流：每小时最多 30 张、并发 2——别把带宽和磁盘搞爆

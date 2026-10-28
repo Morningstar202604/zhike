@@ -13,6 +13,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import pathlib
 import sys
 
@@ -23,9 +24,10 @@ import httpx  # noqa: E402
 
 from core import config  # noqa: E402
 
-TOKENS = pathlib.Path("C:/Users/YOU/napcat/local_tokens.txt")
-MASTER = "100000001"
-EMOTE_DIR = pathlib.Path("C:/Users/YOU/napcat/emotes")
+NAPCAT_HOME = pathlib.Path(os.environ.get("NAPCAT_HOME") or pathlib.Path.home() / "napcat")
+TOKENS = NAPCAT_HOME / "local_tokens.txt"
+MASTER = (os.environ.get("AUTHORIZED_QQ") or "").split(",")[0].strip()
+EMOTE_DIR = NAPCAT_HOME / "emotes"
 
 
 def tokens() -> dict:

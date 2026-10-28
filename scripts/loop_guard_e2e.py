@@ -3,7 +3,7 @@
 拓扑：假 NapCat(WS:3099) -> 被测 gateway(8091) -> 假 core(HTTP:8095)
 不碰真实 QQ、不碰真实 core、不调模型。
 
-对面（100000003）连续 6 条道别语，每条都引用我们上一条回复的 message_id：
+对面（987654321）连续 6 条道别语，每条都引用我们上一条回复的 message_id：
 预期前 3 条有回复、第 4 条起被判 closing_loop 静默（不再发 send_group_msg），
 且 gateway 日志出现 loop guard muted。
 
@@ -27,8 +27,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SELF_ID = 100000004
-PEER = 100000003
-GROUP = 100000002
+PEER = 987654321
+GROUP = 123456789
 WS_PORT = 3099
 CORE_PORT = 8095
 GW_PORT = 8091

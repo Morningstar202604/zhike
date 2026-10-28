@@ -244,13 +244,13 @@ def test_repeat_offender_gets_longer_mute():
 def test_manual_unmute_and_listing():
     c = Clock()
     g = _guard(c)
-    g.mute("qq_group:100000002", "100000003")
+    g.mute("qq_group:123456789", "987654321")
     items = g.mutes()
-    assert items and items[0]["chat"] == "qq_group:100000002"
-    assert items[0]["peer"] == "100000003"
-    assert g.unmute("qq_group:100000002", "100000003") is True
+    assert items and items[0]["chat"] == "qq_group:123456789"
+    assert items[0]["peer"] == "987654321"
+    assert g.unmute("qq_group:123456789", "987654321") is True
     assert g.mutes() == []
-    assert g.unmute("qq_group:100000002", "100000003") is False
+    assert g.unmute("qq_group:123456789", "987654321") is False
 
 
 def test_owner_private_chat_not_muted_by_volume():

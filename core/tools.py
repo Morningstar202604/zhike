@@ -662,7 +662,8 @@ def tool_search_emote(ctx: ToolContext, keyword: str = "", **_kw) -> dict:
     """
     import pathlib
 
-    base_dir = pathlib.Path(os.environ.get("GATEWAY_EMOTE_DIR", "C:/Users/YOU/napcat/emotes"))
+    base_dir = pathlib.Path(
+        os.environ.get("GATEWAY_EMOTE_DIR") or (pathlib.Path.home() / "napcat" / "emotes"))
     index_path = base_dir / "index.json"
     if not index_path.is_file():
         return empty_result("search_emote", "还没有收藏表情包。")

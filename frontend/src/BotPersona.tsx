@@ -495,7 +495,7 @@ export default function BotPersona() {
             if (!d.channels) d.channels = { allowlist_enabled: false, group_allowlist: [] }
             d.channels.group_allowlist = e.target.value.split('\n').map((s) => s.trim()).filter(Boolean)
           })}
-          placeholder={'每行一个群号，如：\n100000002\n100000005'}
+          placeholder={'每行一个群号，如：\n123456789\n987654321'}
         />
         <div className="bp-hint">
           群号可在 QQ 群设置里查看；机器人所在的群不在名单内时收到 @ 也不会回复，防止被拉进陌生群后被滥用。

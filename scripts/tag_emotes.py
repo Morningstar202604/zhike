@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import base64
 import json
+import os
 import pathlib
 import sys
 
@@ -62,7 +63,8 @@ async def main() -> None:
     ap.add_argument("--workers", type=int, default=6)
     args = ap.parse_args()
 
-    emote_dir = pathlib.Path("C:/Users/YOU/napcat/emotes")
+    emote_dir = pathlib.Path(os.environ.get("GATEWAY_EMOTE_DIR")
+                             or pathlib.Path.home() / "napcat" / "emotes")
     idx_file, tags_file = emote_dir / "index.json", emote_dir / "tags.json"
     items = json.loads(idx_file.read_text(encoding="utf-8")) if idx_file.is_file() else []
     tags = json.loads(tags_file.read_text(encoding="utf-8")) if tags_file.is_file() else {}

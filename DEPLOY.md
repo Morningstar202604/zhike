@@ -75,7 +75,7 @@ QQ 语音是 AMR 格式，whisper 解不了，链路是「ffmpeg 转 16k PCM →
 pip install -r requirements-asr.txt
 # 2) 装 ffmpeg（Windows 可用 winget install ffmpeg；Linux apt install ffmpeg）
 # 3) 下载模型（约 460MB，只需一次）
-HF_ENDPOINT=https://hf-mirror.com python -c "from faster_whisper import WhisperModel;   WhisperModel('small', download_root='C:/Users/YOU/models/whisper-small-zh')"
+HF_ENDPOINT=https://hf-mirror.com python -c "from faster_whisper import WhisperModel;   WhisperModel('small', download_root='./models/whisper-small-zh')"
 # 4) 把 ASR_MODEL 指向 snapshots 下的具体目录（含 model.bin 的那层）
 ```
 

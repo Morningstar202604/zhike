@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import pathlib
 import sys
 import time
@@ -21,8 +22,10 @@ sys.path.insert(0, str(ROOT))
 
 import httpx  # noqa: E402
 
-TOKENS = pathlib.Path("C:/Users/YOU/napcat/local_tokens.txt")
-MASTER = "100000001"
+# 路径可用 NAPCAT_HOME 覆盖；主人账号从 AUTHORIZED_QQ 读（真机测试只用它）
+NAPCAT_HOME = pathlib.Path(os.environ.get("NAPCAT_HOME") or pathlib.Path.home() / "napcat")
+TOKENS = NAPCAT_HOME / "local_tokens.txt"
+MASTER = (os.environ.get("AUTHORIZED_QQ") or "").split(",")[0].strip()
 
 
 def tokens() -> dict:
@@ -70,7 +73,7 @@ async def main() -> None:
 
     from gateway.humanize import EmoteLib, render
 
-    emote_dir = "C:/Users/YOU/napcat/emotes"
+    emote_dir = NAPCAT_HOME / "emotes"
     lib = EmoteLib(pathlib.Path(emote_dir) / "index.json")
 
     qs = QUESTIONS[: args.limit] if args.limit else QUESTIONS

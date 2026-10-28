@@ -113,7 +113,7 @@ CHANNEL_TOKEN=... python gateway/bot.py
 - 私聊只保留「昵称即机器人」，不做对刷判定（主人测功能会连问几十轮）。
 - 主人账号（`AUTHORIZED_QQ`）完全跳过本护栏。
 - `GATEWAY_LOOP_GUARD=0` 全局关闭，`GATEWAY_LOOP_MUTE_S` 改静默时长，`GATEWAY_LOOP_STATE` 改状态文件路径。
-- 运维查看/解除：`GET /internal/status` 的 `loop_guard.mutes`；`POST /internal/loop_guard/unmute`（body `{"chat":"qq_group:100000002","peer":"100000003"}`，两者都要 `X-Channel-Token`）。
+- 运维查看/解除：`GET /internal/status` 的 `loop_guard.mutes`；`POST /internal/loop_guard/unmute`（body `{"chat":"qq_group:123456789","peer":"987654321"}`，两者都要 `X-Channel-Token`）。
 - 端到端自验：`.venv/Scripts/python.exe scripts/loop_guard_e2e.py`（假 NapCat + 假 core，不碰真 QQ、不调模型）。实测 6 条道别语里前 3 条有回复、第 4 条起命中 `closing_loop`。
 
 ## 6. 常见失败与处置（都是实测踩过的）

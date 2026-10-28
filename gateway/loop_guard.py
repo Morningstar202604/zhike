@@ -260,7 +260,7 @@ class LoopGuard:
         return out
 
     def unmute(self, chat: str, peer: str) -> bool:
-        """chat 形如 qq_group:100000002。"""
+        """chat 形如 qq_group:123456789。"""
         key = f"{chat}:{peer}"
         found = self._mutes.pop(key, None) is not None
         self._state.pop(key, None)

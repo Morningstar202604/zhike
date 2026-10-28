@@ -84,7 +84,7 @@ identity 只 +0.04 —— 因为 v6 也会自称「零」，真正的差别在**
 
 ## 三、真机自问自答（三轮各 20 条）
 
-`scripts/qq_selfqa.py`：核心出答案 → 网关同一套渲染 → NapCat 真发到主人账号 100000001。
+`scripts/qq_selfqa.py`：核心出答案 → 网关同一套渲染 → NapCat 真发到主人账号（`AUTHORIZED_QQ` 里配的号）。
 
 - 三轮共 60 条，发送成功率 60/60。
 - 工具真调用：`search_emote`（3 次）、`now`、`remind`、`send_voice`、`web_search`。
@@ -203,7 +203,7 @@ markdown 88、emoji 5、service_tone 2 —— 这些是「不像群聊」而不�
 - 决策 JSON 会贴在正文后面一起发出（用户能看到 thought/tool_args）；
   已补 `json_leak` 检测 + `_strip_json_tail` 确定性剥离（不浪费一次重写）。
 
-## 九、工具选择评测（39 个工具）
+## 九、工具选择评测（评测时工具池 40 个）
 
 `scripts/tool_selection.py`：32 条必须选中 + 7 条禁止乱选，**测生产路径**
 （规则层 `detect_tool` → 表情包意图直通 → 模型原生 function calling）。
@@ -216,7 +216,7 @@ markdown 88、emoji 5、service_tone 2 —— 这些是「不像群聊」而不�
 跳过 1 条（`web_search` 本机没配 `SEARCH_PROVIDER`，环境问题不计分）。
 
 配上 `SEARCH_PROVIDER=bing` 复跑（`out/tool_selection_20261028_031925.md`）：
-工具池 40 个，**must 32/32、never 7/7，两项 100%，跳过 0 条** —— 上一轮那条 skip 确实是环境问题。
+评测时工具池 40 个，**must 32/32、never 7/7，两项 100%，跳过 0 条** —— 上一轮那条 skip 确实是环境问题。
 
 这轮的价值在于**发现规则层的真实缺口**：第一版只测裸模型得 8/32（25%），
 测生产路径得 16/32（50%），补完规则层才到 100%。补的东西：
@@ -247,28 +247,28 @@ markdown 88、emoji 5、service_tone 2 —— 这些是「不像群聊」而不�
 
 | # | 要求 | 实现位置 | 验证 |
 |---|---|---|---|
-| 1 | 人设是人，不是机器人 | `config.context.persona`（线上 SQLite）+ `quality.py:27-40` 自称 AI 判据 | 3000 题扫描：`ai_self`/`model_leak` 判别器后 0 |
-| 2 | 黑色幽默 + 暗喻 + 一针见血 | persona【说话方式】段 + `quality.py:53` service_tone 判据 | 多轮 15/15；A/B 人味 4.02（v6 3.90） |
+| 1 | 人设是人，不是机器人 | 内置角色 `core/persona.py` + 运行时 `config.context.persona`（SQLite）+ `quality.py` 自称 AI 判据 | 3000 题扫描：`ai_self`/`model_leak` 判别器后 0 |
+| 2 | 黑色幽默 + 暗喻 + 一针见血 | persona【说话方式】段 + `quality.py` service_tone 判据 | 多轮 15/15；A/B 人味 4.02（v6 3.90） |
 | 3 | 阴谋论只做有据结构性怀疑 | persona【阴谋论的正确用法】段（利益链→信息不对称→人性之恶） | A/B knowledge +0.60（2.83→3.42）；压力扫描 1711 条有效样本无 ai_self/model_leak（编造具体数据没有确定性判据，见文末「仍未闭环」） |
 | 4 | 中立偏损、损上不损下 | persona【性格】段（不站队、每一方都损）+【怼人的分寸】正面/反面写法 | 从 3000 题筛挑衅类 128 条：high 1（`model_leak`，判别器后归零）、service_tone 0 |
 | 5 | 政治一律打太极 | persona【政治：打太极，两边都损】段（含 4 条参考台词） | A/B politics 3.78；从 3000 题筛政治类 165 条：high 2（都是端点 `filter_leak` 拒答，判别器统一改成「这话我接不住，换个说法」）、service_tone 0 |
 | 6 | 民生火力全开 | persona 民生条款 | A/B livelihood +0.57（3.15→3.73） |
 | 7 | 会接梗 | persona 接梗条 + `scripts/seed_lexicon.py`（25 条网梗入库） | A/B banter +0.79（3.72→4.51） |
 | 8 | 态度镜像 | persona【态度镜像】六档 | 多轮「骂完再问正经的能收火」PASS |
-| 9 | 工具要真能用 | `core/tools.py:1437 tool_schema_block`（本机按配置暴露 39–40 个：配了 SEARCH_PROVIDER 时多出 web_search）+ `_config_ready` TCP 探测 | 工具选择 must 32/32、never 7/7 |
-| 10 | 回复长度灵活不硬断 | persona 长度条款 + `quality.py:145` too_long 只记 mid | 多轮「指代消解(他/她)」修正后 PASS |
+| 9 | 工具要真能用 | `core/tools.py` 的 `tool_schema_block()`（按配置暴露 35–40 个：配了 SEARCH_PROVIDER 时多出 web_search）+ `_config_ready` TCP 探测 | 工具选择 must 32/32、never 7/7 |
+| 10 | 回复长度灵活不硬断 | persona 长度条款 + `quality.py` 的 too_long 只记 mid | 多轮「指代消解(他/她)」修正后 PASS |
 | 11 | 口语化 | persona【禁止机器腔】清单 | 压力扫描 service_tone 仅 2/1711 |
-| 12 | 没连上模型就不回复（QQ） | `core/pipeline.py:1064-1066` → `gateway/bot.py:732-736` 静默 | `tests/test_ingest_api.py:62` |
-| 13 | 不许造假承诺 | `core/config.py:89-90` handoff 默认关 + `quality.py:118` fake_handoff 判据 | 压力扫描 fake_handoff 判别器后 0 |
-| 14 | 不要令牌门禁 | `core/main.py:1152-1164` 回环地址自动发令牌 | `tests/test_console_access.py:15`（本机自动取令牌） |
+| 12 | 没连上模型就不回复（QQ） | `core/pipeline.py` 的 `mode="no_model"` → `gateway/bot.py` 静默分支 | `tests/test_ingest_api.py:62` |
+| 13 | 不许造假承诺 | `core/config.py` 的 handoff 默认关 + `quality.py` fake_handoff 判据 | 压力扫描 fake_handoff 判别器后 0 |
+| 14 | 不要令牌门禁 | `core/main.py` 的 `/api/bootstrap/local-token`（只对回环地址发放） | `tests/test_console_access.py:15`（本机自动取令牌） |
 | 15 | QQ 一直在线、不失忆 | `napcat/stack_keepalive.py`（3001/8010/8011 三端口看门狗）+ `sessions.py` TTL 12h | 端口实测在线；`tests/test_harness_hardening.py:190`（TTL 收尾）+ `tests/test_store.py:160`（跨会话回顾） |
-| 16 | 真接管 QQ（群管理全套） | `core/tools.py:1714 _QQ_ACTION_TOOLS`（20 个 qq_ 工具：禁言/踢人/名片/群名/公告/撤回/传文件/审批/头像/资料…） | 工具选择 must 覆盖群管理项，32/32 |
-| 17 | 主人账号 100000001 | `AUTHORIZED_QQ` → `authz.authorized_qq()` + `tools.py:1228 PRIVILEGED_TOOLS` | `tests/test_tool_permissions.py` 5 条 |
+| 16 | 真接管 QQ（群管理全套） | `core/tools.py` 的 `_QQ_ACTION_TOOLS`（15 个 qq_ 工具：禁言/踢人/名片/群名/公告/撤回/传文件/审批/头像/资料…） | 工具选择 must 覆盖群管理项，32/32 |
+| 17 | 主人账号（`AUTHORIZED_QQ`） | `AUTHORIZED_QQ` → `authz.authorized_qq()` + `core/tools.py` 的 `PRIVILEGED_TOOLS` | `tests/test_tool_permissions.py` 5 条 |
 | 18 | 常驻进程特殊豁免 | stop-guard `persistentProcs` 白名单（uvicorn/gateway/keepalive/napcat） | 收尾不再误杀三端口 |
 | 19 | 猫娘人格立得住 | persona【性格】【独立人格】段（不人云亦云、遗世独立） | 多轮「追问身份三次仍然是猫」PASS |
-| 20 | agent 必须真用工具 | 原生 function calling（`llm.py:183 _openai_tools`）+ `tool_used` 回填（`pipeline.py:457-463`） | 工具选择 100%；真机 ingest `tool_used` 有值 |
+| 20 | agent 必须真用工具 | 原生 function calling（`core/llm.py` 的 `_openai_tools`）+ `tool_used` 回填（`core/pipeline.py` 的 `_with_tools`） | 工具选择 100%；真机 ingest `tool_used` 有值 |
 | 21 | 猫味外显（喵～、认猫） | persona【口癖】段（两三句一个喵～、可直接说本喵） | A/B identity 4.03；多轮身份三连问 PASS |
-| 22 | 效果用真实证据说话 | 本文件全部小节 + `out/` 产物 | 3000 题 + 15 场景 + 40 工具 + 真机自问自答 |
+| 22 | 效果用真实证据说话 | 本文件全部小节 + `out/` 产物 | 3000 题 + 15 场景 + 工具选择 + 真机自问自答 |
 
 仍未闭环的 2 处（如实记录，不粉饰）：
 
@@ -279,7 +279,7 @@ markdown 88、emoji 5、service_tone 2 —— 这些是「不像群聊」而不�
 
 ## 十二、乒乓循环护栏（面对面是机器人）
 
-实测事故：群 100000002 里另一个 bot（QQ 100000003）与本机互道「晚安」40+ 轮、
+实测事故：某个群里另一个 bot（对方也是机器人）与本机互道「晚安」40+ 轮、
 每轮约 55 秒，核心每轮跑 ensemble=2，纯烧额度，直到人工叫停。
 
 `gateway/loop_guard.py` 在进核心之前用确定性判据拦（不赌模型自判）：
