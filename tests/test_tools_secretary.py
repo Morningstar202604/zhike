@@ -587,7 +587,18 @@ def test_parse_repeat_strips_rule_from_text():
     assert "每天" not in cleaned
 
 
-def test_next_due_daily_and_weekday():
+def test_next_due_daily_and_weekday(monkeypatch):
+    """锚点必须晚于“现在”，否则会因为推进到未来而改日期；这里冻结时间保证可复现。"""
+    from datetime import datetime as _dt, timezone as _tz
+
+    from core import reminders
+
+    class _Frozen(_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _dt(2026, 10, 30, 8, 0, tzinfo=_tz.utc)
+
+    monkeypatch.setattr(reminders, "datetime", _Frozen)
     from core.reminders import next_due
 
     base = "2026-10-30T09:00:00+00:00"  # 周五
@@ -595,10 +606,19 @@ def test_next_due_daily_and_weekday():
     assert next_due("weekday", base).startswith("2026-11-02")  # 跳过周末
 
 
-def test_next_due_weekly_lands_on_target_weekday():
-    from core.reminders import next_due
+def test_next_due_weekly_lands_on_target_weekday(monkeypatch):
+    """周日锚点 → 下周三。必须冻结“现在”，否则过完 10-28 09:00 这条断言就过期。"""
+    from datetime import datetime as _dt, timezone as _tz
 
-    nxt = next_due("weekly:2", "2026-10-25T09:00:00+00:00")  # 周日 → 下周三
+    from core import reminders
+
+    class _Frozen(_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return _dt(2026, 10, 26, 8, 0, tzinfo=_tz.utc)
+
+    monkeypatch.setattr(reminders, "datetime", _Frozen)
+    nxt = reminders.next_due("weekly:2", "2026-10-25T09:00:00+00:00")  # 周日 → 下周三
     assert nxt.startswith("2026-10-28")
 
 
