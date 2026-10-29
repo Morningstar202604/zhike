@@ -812,3 +812,22 @@ def test_weekday_rule_requires_clock_to_avoid_false_positive():
     assert tools.detect_tool("工作日好累啊", enabled)[0] is None
     assert tools.detect_tool("工作日上午9点提醒我打卡", enabled) == (
         "remind", {"text": "打卡", "when": "工作日上午9点"})
+
+
+def test_detect_remember_returns_key_and_value():
+    """回归：detect_tool 曾对「记住…」返回空参数，导致工具抛
+    TypeError（missing 2 required positional arguments），用户看到「参数不对」。
+
+    规则路由必须把 key/value 一起解出来，否则宁可不拦（让上层追问）。
+    """
+    from core import tools
+
+    name, args = tools.detect_tool("记住我喜欢喝美式", {"remember": None})
+    assert name == "remember"
+    assert args and args.get("key") and args.get("value")
+    assert args["key"] == "喜欢"
+    assert "美式" in args["value"]
+
+    # 无实义的宾语不能硬塞成记忆（会污染长期记忆）
+    for q in ("记住这个", "记住一下"):
+        assert tools.detect_tool(q, {"remember": None}) == (None, None)

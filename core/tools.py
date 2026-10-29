@@ -1510,6 +1510,27 @@ def _cn_num(text: str) -> str:
     return re.sub(r"[零〇一二两三四五六七八九十]{1,3}", conv, text)
 
 
+_MEMORY_KEY_RE = re.compile(r"^(?:我)?(喜欢|爱|讨厌|不吃|吃|喝|住|在|的|叫|是)(.+)$")
+_MEMORY_KEY_RE2 = re.compile(r"^([^，,。]{1,6}?)(?:是|在|要|有)(.+)$")
+
+
+def _split_memory_pair(pair: str) -> tuple[str, str]:
+    """「我喜欢喝美式」→ (喜欢喝, 美式)；「我下周三出差」→ (下周三, 出差)。
+
+    与 pipeline._split_memory 同一套规则（不反向 import，避免 tools ← pipeline 循环依赖）。
+    """
+    text = (pair or "").strip("，,。. ")
+    if not text:
+        return "", ""
+    m = _MEMORY_KEY_RE.match(text)
+    if m:
+        return m.group(1), m.group(2).strip()
+    m = _MEMORY_KEY_RE2.match(text)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return "备注", text
+
+
 def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict | None]:
     """规则路由：只处理高置信度的确定性问法。
 
@@ -1633,8 +1654,17 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
         return "recall_memory", {}
 
     # 记住：「帮我记住 / 记一下 / 存一下」
+    # 这里必须把 key/value 一起解析出来再返回，不能只返回空参数：
+    # 空参数会让 tool_remember 抛 TypeError，用户看到的是「参数不对：
+    # tool_remember() missing 2 required positional arguments」——实测就是这样暴露的。
+    # 解析不出来（例如只说「记住这个」）就返回 None，交给上层追问，别硬塞空参。
     if "remember" in enabled and re.search(r"(记住|记一下|记下|存一下)", q):
-        return "remember", {}
+        m = re.match(r"^(?:请|帮我|麻烦)?\s*(?:记住|记一下|记下|存一下)[:：，,\s]*(.+)$", q)
+        if m:
+            key, value = _split_memory_pair(m.group(1).strip())
+            # 代词/空内容没有记忆价值（「记住这个」「记住一下」）：交给上层追问
+            if key and value and value not in ("这个", "那个", "一下", "它") and len(value) >= 2:
+                return "remember", {"key": key, "value": value}
 
     # 群成员 / 群列表 / 好友列表
     if "qq_group_members" in enabled and re.search(
