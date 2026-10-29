@@ -7,8 +7,8 @@ import json
 
 import pytest
 
-from core import config, guardrail, pipeline, store
-from core.actions import authz, service
+from core import pipeline, store
+from core.actions import authz
 from core.schemas import LlmReply
 from tests.conftest import ADMIN, CHANNEL, create_web_session
 

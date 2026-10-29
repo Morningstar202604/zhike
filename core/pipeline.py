@@ -1063,9 +1063,16 @@ async def _run_body(message: ChannelMessage, history: list[dict], visitor_key: s
 
     # 没接通模型时不要用规则话术硬撑着回 QQ：那等于对外宣称"我是机器人但我不懂"。
     # mode="no_model" 让网关直接静默（Web 端仍保留兜底话术，不影响网页访客体验）。
-    if str(message.channel_type or "").startswith("qq") and not cfg.get("llm", {}).get("has_key"):
-        return AgentReply(text="", confidence=0.0, mode="no_model", ctx_used=ctx["used"])
+    #
+    # 但管理员显式把 engine.mode 设成 "rule" 时必须照做：那是「无模型部署」的
+    # 正式配置（e2e 体检、内网纯知识库场景都靠它），不是模型故障降级。
+    # 之前这里只看 has_key，导致显式 rule 模式在 QQ 渠道被静默吞掉，
+    # 体检里 6 条 KB/工具用例全部 FAIL（已复现）。
     mode = cfg.get("engine", {}).get("mode", "auto")
+    if (mode != "rule"
+            and str(message.channel_type or "").startswith("qq")
+            and not cfg.get("llm", {}).get("has_key")):
+        return AgentReply(text="", confidence=0.0, mode="no_model", ctx_used=ctx["used"])
     llm_reply = None
     if mode in ("llm", "auto") and cfg.get("llm", {}).get("has_key"):
         with tracing.span("zhike.llm", {"model": cfg["llm"].get("model", "")}):

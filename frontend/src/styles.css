@@ -372,6 +372,12 @@ body {
 .bp-flask { color: var(--brand); }
 
 /* 预设卡片 */
+.bp-preset-group { margin-bottom: 12px; }
+.bp-preset-group:last-child { margin-bottom: 0; }
+.bp-preset-cat {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 6px 2px;
+}
 .bp-presets {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px;
 }

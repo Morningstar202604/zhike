@@ -1,14 +1,10 @@
 """阶段 2：电脑动作集成 —— 执行器路由、拒绝路径、T3 阈值、执行器离线。"""
 import json
-import os
-import tempfile
-from pathlib import Path
 
 import pytest
 
 from core import executor_client, store
-from core.actions import computer, service
-from tests.conftest import ADMIN
+from core.actions import computer
 
 
 @pytest.fixture()

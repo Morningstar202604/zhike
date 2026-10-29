@@ -3,21 +3,19 @@ import asyncio
 import json
 import logging
 import os
-import re
 import secrets
-import contextlib
-import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from core import config, events_log, executor_client, guardrail, llm, memory as memory_mod, net, pipeline, ratelimit, retrieval, security, sessions, store, tools as tools_mod
+from core.api import deps
 from core.actions import authz as actions_authz
 from core.actions import client as actions_client
 from core.actions import registry as actions_registry
@@ -74,81 +72,9 @@ def _parse_kb_blocks(raw: str) -> list[tuple[str, str]]:
     return [(t, a) for t, a in blocks if t]
 
 
-class Hub:
-    def __init__(self):
-        self.visitor_conns: dict[str, set] = {}
-        self.operator_conns: set = set()
-
-    # 单连接发送超时：卡住的客户端不能拖住整批广播。
-    # 取 2 秒：正常 WS 发送是毫秒级，2 秒足够排完本地缓冲；
-    # 真卡住的连接直接放弃并清理，不让它拖累其他用户。
-    SEND_TIMEOUT_S = 2.0
-
-    async def _send_one(self, ws, payload: dict, timeout: float) -> bool:
-        """给单个连接发消息，返回是否成功。超时/异常都算失败（会被清理）。"""
-        try:
-            await asyncio.wait_for(ws.send_json(payload), timeout=timeout)
-            return True
-        except (asyncio.TimeoutError, Exception):
-            return False
-
-    async def publish(self, session_id: str, payload: dict):
-        """推送给某个会话的所有访客连接（并发发送）。
-
-        原实现串行 await：一个慢客户端会阻塞其余所有连接
-        （实测 11 个连接、其中 1 个卡 3 秒 → 整批耗时 3150ms）。
-        改为 gather 并发 + 单连接超时。
-        """
-        conns = list(self.visitor_conns.get(session_id, ()))
-        if not conns:
-            return
-        results = await asyncio.gather(
-            *(self._send_one(ws, payload, self.SEND_TIMEOUT_S) for ws in conns),
-            return_exceptions=True,
-        )
-        for ws, ok in zip(conns, results):
-            if ok is not True:
-                self.visitor_conns.get(session_id, set()).discard(ws)
-
-    async def broadcast_to_operators(self, payload: dict):
-        """广播给所有坐席连接（并发发送，单个失败不影响其他人）。"""
-        conns = list(self.operator_conns)
-        if not conns:
-            return
-        results = await asyncio.gather(
-            *(self._send_one(ws, payload, self.SEND_TIMEOUT_S) for ws in conns),
-            return_exceptions=True,
-        )
-        for ws, ok in zip(conns, results):
-            if ok is not True:
-                self.operator_conns.discard(ws)
-
-    async def _hold(self, ws: WebSocket, on_close):
-        """挂住连接直到断开。任何异常路径都必须执行清理，否则死连接会永久占用注册表。"""
-        try:
-            while True:
-                await ws.receive_text()
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:  # 客户端异常断开/协议错误：同样要清理
-            ev.info("ws closed abnormally: %s: %s", type(e).__name__, str(e)[:80])
-        finally:
-            on_close()
-
-    async def connect(self, session_id: str, ws: WebSocket, already_accepted: bool = False):
-        if not already_accepted:
-            await ws.accept()
-        self.visitor_conns.setdefault(session_id, set()).add(ws)
-        await self._hold(ws, lambda: self.visitor_conns.get(session_id, set()).discard(ws))
-
-    async def connect_operator(self, ws: WebSocket, already_accepted: bool = False):
-        if not already_accepted:
-            await ws.accept()
-        self.operator_conns.add(ws)
-        await self._hold(ws, lambda: self.operator_conns.discard(ws))
-
-
-hub = Hub()
+# WebSocket 连接中心已抽到 core/ws_hub.py；这里保留同名导出保证既有引用（
+# tests/test_performance.py 直接 import Hub / hub）与调用方无需改动。
+from core.ws_hub import Hub, hub  # noqa: E402,F401  (Hub 供既有测试/调用方 import)
 
 
 def require_admin(x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")):
@@ -274,18 +200,40 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def _metrics_mw(request: Request, call_next):
         import time as _time
-        from core import metrics as _metrics
 
+        from core import metrics as _metrics
+        from core import request_id as _rid
+
+        rid = _rid.set_request_id(request.headers.get("X-Request-ID"))
         started = _time.perf_counter()
+        _metrics.IN_FLIGHT.inc()
         try:
             response = await call_next(request)
         except Exception:
             _metrics.record_request(request.method, request.url.path, 500,
                                     _time.perf_counter() - started)
             raise
+        finally:
+            _metrics.IN_FLIGHT.dec()
         _metrics.record_request(request.method, request.url.path, response.status_code,
                                 _time.perf_counter() - started)
+        # 回写关联 ID：前端报错提示可带上，服务端日志可按它精确定位
+        response.headers["X-Request-ID"] = rid
         return response
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exc(request: Request, exc: Exception):
+        """未捕获异常统一出口：日志带 request_id，响应不回显堆栈（防信息泄露）。"""
+        from core import request_id as _rid
+
+        rid = _rid.current_request_id()
+        ev.error("unhandled %s %s rid=%s: %s: %s", request.method, request.url.path,
+                 rid, type(exc).__name__, str(exc)[:300])
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "服务内部错误", "request_id": rid},
+            headers={"X-Request-ID": rid},
+        )
 
     @app.get("/metrics", include_in_schema=False)
     def metrics_endpoint():
@@ -375,15 +323,8 @@ def create_app() -> FastAPI:
         # 触发消息的 OneBot message_id（模型可以用它做「点赞这条/撤回这条/设精华」）
         message_id: str = ""
 
-    # ---- 入参体积护栏 ----
-    def _check_payload(text: str | None, image_b64: str | None) -> None:
-        if text and len(text) > MAX_TEXT_CHARS:
-            raise HTTPException(413, f"文本过长（上限 {MAX_TEXT_CHARS} 字符）")
-        if image_b64:
-            if len(image_b64) > MAX_IMAGE_B64_CHARS:
-                raise HTTPException(413, f"图片过大（base64 上限 {MAX_IMAGE_B64_CHARS} 字符）")
-            if image_b64.startswith("data:") and "," not in image_b64:
-                raise HTTPException(400, "图片 data URL 格式不合法")
+    # ---- 入参体积护栏（统一实现见 core/api/deps.py）----
+    _check_payload = deps.check_payload
 
     class HeartbeatIn(BaseModel):
         gateway: str
@@ -402,7 +343,52 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz")
     def healthz():
+        """存活探针（liveness）：只证明进程还在跑，不碰 DB/网络。
+
+        容器编排用它判断"要不要重启"；把依赖检查放进来会导致
+        DB 抖动时容器被反复杀掉重启（存活探针语义被误用，业界典型事故）。
+        """
         return {"ok": True}
+
+    def _search_available() -> bool:
+        try:
+            from core import websearch
+
+            return websearch.available()
+        except Exception:
+            return False
+
+    @app.get("/readyz")
+    def readyz():
+        """就绪探针（readiness）：检查 DB 可读写、静态资源、调度器等真实依赖。
+
+        失败返回 503，编排侧据此把实例从负载均衡摘掉，而不是重启它。
+        """
+        from fastapi.responses import JSONResponse
+
+        checks: dict[str, object] = {}
+        ok = True
+        try:
+            with store.get_conn() as conn:
+                conn.execute("SELECT 1").fetchone()
+            checks["db"] = {"ok": True, "schema_version": store.schema_version()}
+        except Exception as e:
+            ok = False
+            checks["db"] = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}
+        try:
+            checks["kb"] = {"ok": True, "entries": len(retrieval.load_kb())}
+        except Exception as e:
+            ok = False
+            checks["kb"] = {"ok": False, "error": type(e).__name__}
+        try:
+
+            checks["metrics"] = {"ok": True, "backend": "prometheus_client"}
+        except Exception:
+            checks["metrics"] = {"ok": False}
+        checks["llm"] = {"configured": bool(config.get_config().get("llm", {}).get("has_key"))}
+        checks["search"] = {"configured": _search_available()}
+        body = {"ok": ok, "checks": checks}
+        return JSONResponse(body, status_code=200 if ok else 503)
 
     def _preflight(sid: str, text: str, visitor_key: str) -> None:
         """入口侧注入检测与审计落库。所有入口（渠道/非流式/流式）都必须先过一次。"""
@@ -735,6 +721,41 @@ def create_app() -> FastAPI:
         note = store.notes_add(sid, "operator", content)
         store.append_audit("operator", "session.note_added", {"session_id": sid})
         return {"note": note}
+
+    # ---- 角色预设（单一事实源在 core/personas.py，前端只渲染不再复制文案）----
+
+    @app.get("/api/personas", dependencies=[Depends(require_admin)])
+    def personas_list():
+        """预设角色列表。with_persona=false 时只返回元信息（列表页省流量）。"""
+        from core import personas
+
+        return personas.list_public(with_persona=True)
+
+    @app.get("/api/personas/{preset_id}", dependencies=[Depends(require_admin)])
+    def persona_detail(preset_id: str):
+        from core import personas
+
+        p = personas.get(preset_id)
+        if p is None:
+            raise HTTPException(404, f"没有这个预设角色：{preset_id}")
+        return p.as_dict(with_persona=True)
+
+    @app.post("/api/personas/{preset_id}/apply", dependencies=[Depends(require_admin)])
+    def persona_apply(preset_id: str):
+        """一键应用预设：写回 context.persona 与推荐温度。
+
+        走 update_config 而不是直接写库：这样配置版本号会递增，
+        缓存与多 worker 都能立刻看到新值（手写 UPDATE 会漏掉这一步）。
+        """
+        from core import personas
+
+        p = personas.get(preset_id)
+        if p is None:
+            raise HTTPException(404, f"没有这个预设角色：{preset_id}")
+        config.update_config({"context": {"persona": p.persona},
+                              "llm": {"temperature": p.temperature}})
+        store.append_audit("admin", "persona.applied", {"preset": p.id})
+        return {"ok": True, "preset": p.as_dict(with_persona=False)}
 
     # ---- 角色卡（SillyTavern chara_card 对标）：卡片 CRUD + ST V2 导入 + 按会话绑定 ----
 
@@ -1406,246 +1427,10 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "规则不存在")
         return {"ok": True}
 
-    @app.get("/api/kb", dependencies=[Depends(require_admin)])
-    def kb_list():
-        emb_flag = config.get_config().get("retrieval", {}).get("embedding", "auto")
-        return {
-            "kb": retrieval.load_kb(),
-            "embedding": {
-                "available": retrieval.embedding_available(),
-                "enabled": emb_flag,
-                "model": retrieval.BGE_MODEL if retrieval.embedding_available() else "",
-            },
-        }
+    # ---- 知识库：已在 core/api/kb.py 实现，这里只做挂载 ----
+    from core.api import kb as kb_api
 
-    _kb_lock = threading.Lock()
-
-    @contextlib.contextmanager
-    def _kb_file_lock():
-        """跨进程文件锁。
-
-        只用 threading.Lock 不够：多 worker（uvicorn --workers N）或多实例部署时
-        每个进程有自己的锁对象，彼此不互斥，仍会丢更新（实测 5 进程各写 10 条只剩 12 条）。
-        这里用操作系统级独占锁，Linux/macOS 走 fcntl，Windows 走 msvcrt。
-        """
-        lock_path = retrieval.KB_PATH.with_suffix(retrieval.KB_PATH.suffix + ".lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(lock_path, "a+")
-        try:
-            if os.name == "nt":
-                import msvcrt
-                # 阻塞等待：重试直到拿到锁
-                while True:
-                    try:
-                        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
-                        break
-                    except OSError:
-                        time.sleep(0.05)
-            else:
-                import fcntl
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-            yield
-        finally:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    fh.seek(0)
-                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass
-            fh.close()
-
-    def _kb_mutate(fn):
-        """在【进程内锁 + 跨进程文件锁】内完成「读 → 改 → 写」。
-
-        两层锁缺一不可：
-        - threading.Lock：同进程多线程互斥
-        - 文件锁：多 worker/多实例互斥
-        只锁写盘不行，必须把读取也纳入临界区，否则读到旧列表后覆盖（实测丢 78% 数据）。
-        """
-        with _kb_lock, _kb_file_lock():
-            # 强制绕过缓存从磁盘读，拿到的才是最新内容
-            retrieval._KB_CACHE = None
-            items = list(retrieval.load_kb())
-            result, new_items = fn(items)
-            _save_kb_unlocked(new_items)
-            retrieval._KB_CACHE = None
-            return result, new_items
-
-    def _save_kb_unlocked(items: list[dict]) -> None:
-        """原子写知识库。
-
-        并发安全靠三件事：
-        1. 模块级锁串行化「读-改-写」，避免两个管理员同时改导致丢更新
-        2. 临时文件名带 uuid，避免并发抢同一个 .tmp（Windows 上会 WinError 32）
-        3. os.replace 失败时重试（杀毒/索引器会短暂占用句柄）
-        """
-        p = retrieval.KB_PATH
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(f"{p.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"kb": items}, f, ensure_ascii=False, indent=2)
-            # 末尾换行：POSIX 文本文件约定，也让每次改库不产生「无末尾换行」噪音 diff
-            f.write("\n")
-        last_err = None
-        for attempt in range(3):
-            try:
-                os.replace(tmp, p)
-                break
-            except OSError as e:
-                last_err = e
-                time.sleep(0.05 * (attempt + 1))
-        else:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise RuntimeError(f"知识库写入失败：{type(last_err).__name__}") from last_err
-
-    @app.post("/api/kb", dependencies=[Depends(require_admin)])
-    def add_kb(body: KbIn):
-        def op(items):
-            if any(e["id"] == body.id for e in items):
-                raise HTTPException(400, "知识库条目 ID 已存在")
-            items.append({"id": body.id, "text": body.text, "title": body.title,
-                          "answer": body.answer, "tags": body.tags})
-            return None, items
-        _, items = _kb_mutate(op)
-        return {"kb": items}
-
-    @app.put("/api/kb/{kb_id}", dependencies=[Depends(require_admin)])
-    def update_kb(kb_id: str, body: KbIn):
-        def op(items):
-            for i, e in enumerate(items):
-                if e["id"] == kb_id:
-                    items[i] = {"id": kb_id, "text": body.text, "title": body.title,
-                                "answer": body.answer, "tags": body.tags}
-                    return None, items
-            raise HTTPException(404, "知识库条目不存在")
-        _, items = _kb_mutate(op)
-        return {"kb": items}
-
-    @app.delete("/api/kb/{kb_id}", dependencies=[Depends(require_admin)])
-    def delete_kb(kb_id: str):
-        def op(items):
-            new = [e for e in items if e["id"] != kb_id]
-            if len(new) == len(items):
-                raise HTTPException(404, "知识库条目不存在")
-            return None, new
-        _, new = _kb_mutate(op)
-        return {"kb": new}
-
-    @app.post("/api/kb/import", dependencies=[Depends(require_admin)])
-    def import_kb(body: KbImportIn):
-        """批量导入知识库：自动识别「## 标题」或空行分块两种格式，条目 id 自动编号（KB101 起）。
-
-        replace=True 时清空现有条目后导入（整库重建）。答案里行首出现「## 」会破坏再导入，避免使用。
-        """
-        blocks = _parse_kb_blocks(body.text)
-        if not blocks:
-            raise HTTPException(400, "未能解析出任何条目：用「## 标题」开头，或用空行分隔「标题/正文」块")
-        if len(blocks) > MAX_KB_IMPORT_ITEMS:
-            raise HTTPException(413, f"单次导入条目过多（{len(blocks)} > {MAX_KB_IMPORT_ITEMS}），请分批导入")
-        def op(items):
-            if body.replace:
-                items = []
-            base = _next_kb_base(items)
-            for title, answer in blocks:
-                base += 1
-                items.append({
-                    "id": f"KB{base}",
-                    "title": title[:80],
-                    "text": f"{title} {answer}"[:300],
-                    "answer": answer or title,
-                    "tags": [],
-                })
-            return None, items
-        _, items = _kb_mutate(op)
-        return {"added": len(blocks), "total": len(items), "kb": items}
-
-    @app.post("/api/kb/import/document", dependencies=[Depends(require_admin)])
-    async def import_kb_document(file: UploadFile):
-        """文档导入管道：PDF/Word/Excel/Markdown → 解析 → 标题/段落分块 → KB 条目（id 续号，追加语义）。
-
-        PDF/DOCX/XLSX 解析为可选依赖（requirements-docs.txt），缺失时 400 给出安装提示。
-        """
-        from core import docparse
-
-        data = await file.read()
-        if len(data) > 10 * 1024 * 1024:
-            raise HTTPException(400, "文档超过 10MB 上限")
-        fname = file.filename or "doc"
-        try:
-            text = docparse.extract_text(fname, data)
-            blocks = docparse.chunk_document(text, fname.rsplit(".", 1)[0])
-        except RuntimeError as e:
-            raise HTTPException(400, str(e))
-        if not blocks:
-            raise HTTPException(400, "未能从文档中解析出内容")
-        def op(items):
-            base = _next_kb_base(items)
-            for title, chunk in blocks:
-                base += 1
-                items.append({
-                    "id": f"KB{base}",
-                    "title": title[:80],
-                    "text": f"{title} {chunk}"[:300],
-                    "answer": chunk,
-                    "tags": ["文档"],
-                })
-            return None, items
-        _, items = _kb_mutate(op)
-        return {"added": len(blocks), "total": len(items), "file": fname}
-
-    @app.post("/api/kb/test", dependencies=[Depends(require_admin)])
-    def kb_test(body: KbTestIn):
-        """试召回：按当前生效配置（top-K/门槛/向量开关）跑一次检索，返回命中与分数。"""
-        q = (body.query or "").strip()
-        if not q:
-            raise HTTPException(400, "检索词不能为空")
-        cfg = config.get_config()
-        top_k = cfg.get("retrieval", {}).get("kb_top_k", 4)
-        min_overlap = cfg.get("retrieval", {}).get("min_overlap", 0.0)
-        emb_flag = cfg.get("retrieval", {}).get("embedding", "auto")
-        use_emb = None if emb_flag == "auto" else (emb_flag == "on")
-        hits = retrieval.retrieve_scored(q, top_k, min_overlap, use_embedding=use_emb)
-        return {
-            "query": q,
-            "top_k": top_k,
-            "min_overlap": min_overlap,
-            "embedding": emb_flag,
-            "hits": [
-                {"id": e["id"], "title": e["title"], "score": round(s, 3), "answer": (e["answer"] or "")[:120]}
-                for s, e in hits
-            ],
-        }
-
-    def _next_kb_base(items: list[dict]) -> int:
-        base = 100
-        for e in items:
-            m = re.match(r"^KB(\d+)$", e["id"])
-            if m:
-                base = max(base, int(m.group(1)))
-        return base
-
-    @app.get("/api/kb/export", dependencies=[Depends(require_admin)])
-    def export_kb():
-        """导出全部知识库为 Markdown（「## 标题」格式，可直接再导入，形成备份闭环）。"""
-        from fastapi.responses import PlainTextResponse
-
-        lines: list[str] = []
-        for e in retrieval.load_kb():
-            lines.append(f"## {e['title']}")
-            lines.append(e["answer"] or e["text"])
-            lines.append("")
-        return PlainTextResponse(
-            "\n".join(lines).strip() + "\n",
-            media_type="text/markdown; charset=utf-8",
-            headers={"Content-Disposition": "attachment; filename=zhike-kb.md"},
-        )
+    app.include_router(kb_api.router)
 
     @app.get("/api/admin/overview", dependencies=[Depends(require_admin)])
     def admin_overview():
@@ -1672,33 +1457,6 @@ def create_app() -> FastAPI:
     def admin_report(days: int = 7):
         """经营报表：近 N 天日序列 + 命中率/升级率/CSAT 汇总。"""
         return store.admin_report(days)
-
-    class KbSaveNoteIn(BaseModel):
-        title: str = ""
-        text: str
-        tags: list[str] = []
-
-    @app.post("/api/kb/save-note", dependencies=[Depends(require_admin)])
-    def kb_save_note(body: KbSaveNoteIn):
-        """坐席答案回流：把坐席手工回复存为 KB 条目（id 续号，tag 坐席回流），沉淀为下次的自动答案。"""
-        text = (body.text or "").strip()
-        if not text:
-            raise HTTPException(400, "内容不能为空")
-        title = (body.title or text.strip().splitlines()[0] or text[:30]).strip()[:80]
-
-        def op(items):
-            base = _next_kb_base(items)
-            entry = {
-                "id": f"KB{base + 1}",
-                "title": title,
-                "text": f"{title} {text}"[:300],
-                "answer": text,
-                "tags": body.tags or ["坐席回流"],
-            }
-            items.append(entry)
-            return entry, items
-        entry, items = _kb_mutate(op)
-        return {"entry": entry, "total": len(items)}
 
     @app.post("/v1/gateway/heartbeat", dependencies=[Depends(require_channel)])
     def gateway_heartbeat(body: HeartbeatIn):
@@ -2015,9 +1773,10 @@ def create_app() -> FastAPI:
         return {
             "available": websearch.available(),
             "provider": websearch.provider(),
+            "backends": websearch.backend_status(),
             "hint": None if websearch.available() else (
-                "未配置搜索服务。设置 SEARCH_PROVIDER + 对应密钥后启用："
-                "TAVILY_API_KEY / SERPER_API_KEY / SEARXNG_URL"
+                "未配置搜索服务。默认自动使用免 Key 的 ddgs（装 ddgs 即启用）；"
+                "也可设 SEARCH_PROVIDER + 对应密钥：TAVILY_API_KEY / SERPER_API_KEY / SEARXNG_URL"
             ),
         }
 
@@ -2233,26 +1992,10 @@ def create_app() -> FastAPI:
             await hub.connect(sid, ws)
 
     # ---- 单端口模式：可选托管前端构建产物（CS_AGENT_STATIC_DIR=frontend/dist）----
-    static_dir = os.environ.get("CS_AGENT_STATIC_DIR", "").strip()
-    if static_dir and os.path.isdir(static_dir):
-        from fastapi.responses import FileResponse
-        from fastapi.staticfiles import StaticFiles
+    # 必须最后调用：兜底路由会吞掉所有未匹配请求
+    from core import spa as spa_mod
 
-        index_html = os.path.join(static_dir, "index.html")
-        assets_dir = os.path.join(static_dir, "assets")
-        static_root = os.path.realpath(static_dir)
-        if os.path.isdir(assets_dir):
-            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-
-        @app.get("/{full_path:path}", include_in_schema=False)
-        def spa_fallback(full_path: str):
-            if full_path.startswith(("api/", "v1/", "ws/", "docs", "openapi.json", "healthz")):
-                raise HTTPException(404, "资源不存在")
-            # realpath 包含性校验：拒绝 ../ 逃出静态目录（防路径穿越读取任意文件）
-            candidate = os.path.realpath(os.path.join(static_dir, full_path))
-            if full_path and candidate.startswith(static_root + os.sep) and os.path.isfile(candidate):
-                return FileResponse(candidate)
-            return FileResponse(index_html)
+    spa_mod.mount_spa(app, os.environ.get("CS_AGENT_STATIC_DIR", ""))
 
     return app
 

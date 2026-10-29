@@ -1,5 +1,4 @@
 """档案 / 黑话：沉淀、增量更新、注入提示词、API 契约。"""
-import pytest
 
 from core import profiles
 

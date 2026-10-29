@@ -73,7 +73,6 @@ def test_kb_test_endpoint(client):
 
 def test_kb_doc_import_markdown(client, monkeypatch, tmp_path):
     """导入测试必须用临时 KB，避免污染仓库真实知识库文件。"""
-    import pathlib
 
     kb_file = tmp_path / "kb.json"
     kb_file.write_text(json.dumps({"kb": [

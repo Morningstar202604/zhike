@@ -5,3 +5,4 @@ pytest-cov~=7.0
 pytest-asyncio~=1.0
 ruff~=0.17
 pip-audit~=2.10
+mypy~=1.14

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import shutil
 import subprocess
@@ -123,7 +124,8 @@ async def transcribe(audio: bytes) -> tuple[str, str]:
                     subprocess.run, argv, capture_output=True, timeout=120)
                 text = (proc.stdout or b"").decode("utf-8", "ignore").strip()
             finally:
-                Path(wav).unlink(missing_ok=True)
+                # unlink 是阻塞 IO：放在事件循环里会在慢盘/网络盘上卡住整个 worker
+                await asyncio.to_thread(functools.partial(Path(wav).unlink, missing_ok=True))
             if text:
                 return text, ""
             _LAST_ERROR = "外部 ASR 命令没有输出"

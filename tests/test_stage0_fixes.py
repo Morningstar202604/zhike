@@ -1,13 +1,10 @@
 """回归：阶段 0 止血修复（会话读取授权 / 审计 / opt-out / TTL / FTS / 持久化 / WAL）。"""
 import json
-import os
-import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
-from core import retrieval, sessions, store
+from core import retrieval, store
 from tests.conftest import ADMIN, create_web_session, reset_web_session_auth
 
 

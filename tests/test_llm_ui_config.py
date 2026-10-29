@@ -1,4 +1,3 @@
-import json
 
 
 def _put_config(client, patch):

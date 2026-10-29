@@ -21,7 +21,7 @@ def retrieve_relevant(query: str, mem: dict, top_k: int) -> list[tuple[str, str]
             qv = enc.encode([query], normalize_embeddings=True)[0]
             vecs = enc.encode(texts, normalize_embeddings=True)
             scored = []
-            for (k, v), vec in zip(items, vecs):
+            for (k, v), vec in zip(items, vecs, strict=False):
                 score = float(qv @ vec)
                 weight = 1.0 if "last_topic" not in k else 0.5
                 if score >= _SEM_MIN_SCORE:

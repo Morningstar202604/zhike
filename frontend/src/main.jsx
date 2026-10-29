@@ -1,11 +1,12 @@
 import React, { lazy, Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Link, Routes, Route } from 'react-router-dom'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './lib/queryClient'
 import ResponsiveShell from './components/ResponsiveShell'
 import { FeedbackProvider } from './components/Feedback'
 import { Spinner } from './components/Spinner'
+import ErrorBoundary, { installGlobalErrorHandlers } from './components/ErrorBoundary'
 import './i18n'
 import './index.css'
 import './styles.css'
@@ -22,35 +23,6 @@ const AgentRuns = lazy(() => import('./AgentRuns'))
 const BotPersona = lazy(() => import('./BotPersona'))
 const AnnotationCenter = lazy(() => import('./AnnotationCenter'))
 const Reminders = lazy(() => import('./Reminders'))
-
-class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props)
-    this.state = { error: null }
-  }
-
-  static getDerivedStateFromError(error) {
-    return { error }
-  }
-
-  componentDidCatch(error, info) {
-    // 保留控制台可见的堆栈，避免"白屏且无任何线索"
-    console.error('render error', error, info)
-  }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <div className="p-8">
-          <h2 className="text-lg font-semibold">页面出错了</h2>
-          <p className="text-sm text-muted mt-2">{(this.state.error && this.state.error.message) || '未知错误'}</p>
-          <button className="btn mt-4" onClick={() => window.location.reload()}>重新加载</button>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
 
 function NotFound() {
   return (
@@ -94,4 +66,5 @@ export default function App() {
   )
 }
 
+installGlobalErrorHandlers()
 ReactDOM.createRoot(document.getElementById('root')).render(<App />)

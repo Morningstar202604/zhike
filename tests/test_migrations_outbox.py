@@ -2,8 +2,6 @@
 
 这些测试都经过变异验证：删掉实现里的关键逻辑，测试必须失败。
 """
-import os
-import sqlite3
 
 import pytest
 

@@ -1,13 +1,12 @@
 """阶段 4：适配器接口 / 事件总线 / 插件清单 回归。"""
 import asyncio
-import json
 
 import pytest
 
 from gateway.adapters import (
     CAP_GROUP_ADMIN, CAP_SEND_IMAGE, CAP_SEND_TEXT,
     NormalizedMessage, OneBot11Adapter, UnsupportedCapability, require_capability,
-    adapter_info, bus, registry,
+    adapter_info,
 )
 from gateway.adapters.base import ALL_CAPABILITIES
 from gateway.adapters.bus import AdapterRegistry, EventBus, EV_MESSAGE_IN

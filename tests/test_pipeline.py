@@ -80,7 +80,6 @@ def test_tool_route_order_query():
 
 def test_tool_query_order_with_backend(monkeypatch):
     """配置了真实端点时，必须真的发请求并解析响应。"""
-    import httpx
     from core import tools
 
     class FakeResp:

@@ -4,11 +4,9 @@
 """
 import asyncio
 import json
-import os
 import threading
 import time
 
-import pytest
 
 from core import config, http_pool, retrieval, store
 from tests.conftest import create_web_session
@@ -357,16 +355,33 @@ def test_recent_context_still_works(client):
 # ============================================================
 
 def test_websearch_unavailable_without_config(monkeypatch):
-    """未配置搜索服务时必须明确返回不可用，不能假装能搜。"""
+    """显式关闭自动启用、且未配置任何后端时，必须明确返回不可用。
+
+    行为变更：默认会自动启用免 Key 的 ddgs（装了即用，开箱可用优先）。
+    内网/离线部署用 CS_AGENT_SEARCH_AUTO=0 显式关闭，此时才回到"无搜索"。
+    """
     from core import websearch
 
     for k in ("SEARCH_PROVIDER", "TAVILY_API_KEY", "SERPER_API_KEY", "SEARXNG_URL"):
         monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("CS_AGENT_SEARCH_AUTO", "0")
     assert websearch.available() is False
     assert websearch.provider() == ""
     result = asyncio.run(websearch.search("测试"))
     assert result["ok"] is False
     assert "未配置" in result["error"]
+
+
+def test_websearch_auto_enables_keyless_backend(monkeypatch):
+    """未配置任何 Key 时自动使用免 Key 后端，不让「联网」变成需要先申请 Key 的功能。"""
+    from core import websearch
+
+    for k in ("SEARCH_PROVIDER", "TAVILY_API_KEY", "SERPER_API_KEY", "SEARXNG_URL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("CS_AGENT_SEARCH_AUTO", "1")
+    assert websearch.provider() in ("ddgs", "bing", "")
+    if websearch.provider():
+        assert websearch.available() is True
 
 
 def test_websearch_detects_provider(monkeypatch):

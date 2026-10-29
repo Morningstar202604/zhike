@@ -27,7 +27,7 @@
 | 工具暴露 | MCP server（`core/mcp_server.py`），任意 MCP 客户端可调用 | Model Context Protocol |
 | 多步执行 | ReAct 循环 PLAN → ACT → OBSERVE，步数/工具/Token/墙钟/费用预算 + 死循环检测 | ReAct + Agent SDK 预算范式 |
 | 检索 | SQLite FTS5 BM25 + 可选 BGE 向量，RRF 融合；索引故障退字面兜底 | BM25 / RRF |
-| 可观测 | OpenTelemetry GenAI span（可选）+ 指标 + 结构化事件日志（默认落 `logs/app.log`，8MB 轮转） | OTel GenAI semantic conventions |
+| 可观测 | Prometheus 指标（直方图/在途请求）+ `X-Request-ID` 全链路关联 + OpenTelemetry GenAI span（可选）+ 结构化事件日志（8MB 轮转） | Prometheus / OTel GenAI conventions |
 | 结构化输出 | Pydantic 校验 + 逐字段宽松兜底 | PydanticAI / Agents SDK |
 | 权限 | L0 只读 / L1 可逆写 / L2 破坏性（强制审批）× T0–T3 自主度 | 最小权限 + 审批闸门 |
 | 审计 | 动作/审批/配置变更写 SHA-256 哈希链，控制台可校验 | 追加式审计链 |
@@ -39,10 +39,11 @@
 - **乒乓循环护栏**：对面也是机器人（道别复读/回声/问题连发/秒回连击）就静默 30 分钟，防两个 bot 互刷一整夜（`gateway/loop_guard.py`，默认开）
 - **提醒待办**：`10 分钟后`/`明天 9 点`/`每天 8 点`/`每个工作日 9 点`，按本地时区调度并推回原渠道
 - **RAG 知识库**：Markdown/PDF/Word/Excel 导入、分块、试召回、标注回复（命中即秒回）
+- **免 Key 联网**：装了 `ddgs` 即自动启用（多引擎聚合），与必应 HTML 后端并行竞速；网页正文用 trafilatura 做可读性抽取，不把导航栏喂给模型
 - **协作台**：待接管队列、内部备注、快捷话术、SLA 首响计时、答案回流知识库
 - **中英双语**：侧栏切换 `中 / EN`，界面框架全量翻译；业务数据保持原语言
 - **QQ 全量接管**：收到 face/mface 表情转成可读标记、群里回帖带引用、用户与群自动建档、群黑话自动沉淀、视觉模型独立配置（已实测可看图）
-- **内置角色**：猫娘「零」作为默认人设随仓库分发（`core/persona.py`），控制台预设逐字节同步；可用 `USER_PERSONA` 覆盖
+- **15 个预设角色 / 6 大分类**：猫娘「零」（默认）、全能秘书、极简高效、售前顾问、技术支持、数据分析师、严谨研究员、苏格拉底导师、学习教练、面试教练、创意搭档、文案主笔、日程管家、情绪陪伴者、贴心助理。定义在 `core/personas.py`（单一事实源），控制台经 `GET /api/personas` 渲染，`POST /api/personas/{id}/apply` 一键切换；仍可用 `USER_PERSONA` 覆盖
 - **渠道**：QQ（NapCat + OneBot v11 + NoneBot2 网关）、Web；企业微信/公众号适配骨架
 
 ### 镜像仓库
@@ -67,7 +68,9 @@ CS_AGENT_STATIC_DIR=frontend/dist python -m uvicorn core.main:app --port 8010
 # → http://localhost:8010  一个地址 = 控制台 + API
 ```
 
-不配 LLM Key 也能跑：自动降级为「规则 + 检索」应答。
+不配 LLM Key 也能跑：自动降级为「规则 + 检索」应答（`engine.mode=rule` 时 QQ 渠道同样走规则，不会被静默）。
+
+`.env` 会被自动加载（`core/env.py`，真实环境变量优先）；`/healthz` 是存活探针，`/readyz` 检查 DB/知识库/指标等真实依赖。
 
 QQ 接入见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md)，Docker / 反代 / 免费部署见 [DEPLOY.md](DEPLOY.md)。
 
@@ -83,6 +86,8 @@ QQ 接入见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md)，Docker / 反代 / 免费部�
 | `ACTION_L2_ENABLED` | 允许破坏性动作（仍需人工审批） | false |
 | `AUTHORIZED_QQ` | 可用特权工具（读写文件、以机器人身份发消息）的 QQ 号 | 空 |
 | `CS_AGENT_STATIC_DIR` | 前端 dist 目录（单端口模式） | 空 |
+| `SEARCH_PROVIDER` | 搜索后端：`ddgs`（默认免 Key）/ `bing` / `tavily` / `serper` / `searxng` | 自动（装了 ddgs 即用） |
+| `CS_AGENT_SEARCH_AUTO` | 是否自动启用免 Key 搜索；内网离线部署设 `0` | 1 |
 
 完整清单见 [.env.example](.env.example)。
 
@@ -119,10 +124,10 @@ QQ 接入见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md)，Docker / 反代 / 免费部�
 ### 测试
 
 ```bash
-python -m pytest tests -q                      # 814 passed
-ruff check core executor gateway scripts --select E9,F63,F7,F82,F401,F841
-cd frontend && npx tsc --noEmit && npm test && npm run build
-ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010
+python -m pytest tests -q                      # 811 passed, 7 skipped
+ruff check core executor gateway scripts tests  # E9/F/B/ASYNC 全量规则
+cd frontend && npx oxlint src && npx tsc --noEmit && npm test && npm run build
+ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010  # 18/18
 ```
 
 ### 安全
@@ -137,11 +142,16 @@ ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8
 
 ```
 core/       FastAPI 服务：管线、工具、检索、记忆、提醒、动作权限、审计
+  ├─ api/       路由包（deps 鉴权/护栏、kb 知识库）
+  ├─ ws_hub.py  WebSocket 连接中心
+  ├─ kb_store.py 知识库文件存储（跨进程锁 + 原子写）
+  ├─ spa.py     前端托管（immutable 缓存）
+  └─ personas.py 15 个预设角色
 gateway/    NoneBot2 + OneBot v11 网关：QQ 消息、拟人节奏、群节流
 executor/   独立电脑执行器：路径白名单、命令白名单、删除默认进回收站
 frontend/   React 控制台（Vite + TS/JSX + ECharts + react-i18next）
-tests/      814 条 pytest 回归
-docs/       QQ 接入路径（QQ-LOGIN.md）与截图
+tests/      811 条 pytest 回归
+docs/       接入文档 + 截图 + audit/（代码审计、对标、部署验证）
 ```
 
 ### 许可
@@ -253,10 +263,10 @@ Screenshots are captured against a demo database from `scripts/seed_demo.py` usi
 ### Tests
 
 ```bash
-python -m pytest tests -q                      # 814 passed
-ruff check core executor gateway scripts --select E9,F63,F7,F82,F401,F841
-cd frontend && npx tsc --noEmit && npm test && npm run build
-ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010
+python -m pytest tests -q                      # 811 passed, 7 skipped
+ruff check core executor gateway scripts tests  # E9/F/B/ASYNC 全量规则
+cd frontend && npx oxlint src && npx tsc --noEmit && npm test && npm run build
+ADMIN_TOKEN=xxx CHANNEL_TOKEN=yyy python scripts/e2e_check.py http://127.0.0.1:8010  # 18/18
 ```
 
 ### Security

@@ -39,7 +39,16 @@ def provider() -> str:
         return "serper"
     if os.environ.get("SEARXNG_URL"):
         return "searxng"
-    return ""  # 严格模式：未配置即无搜索。要启用免 Key 通道，显式设 SEARCH_PROVIDER=bing
+    # 都没配：ddgs 是免 Key 的多引擎聚合，装了就该能用（开箱可用优先）。
+    # 可用 CS_AGENT_SEARCH_AUTO=0 关掉自动启用（内网/离线部署不希望外联时）。
+    if (os.environ.get("CS_AGENT_SEARCH_AUTO") or "1").strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            import ddgs  # noqa: F401
+
+            return "ddgs"
+        except ImportError:
+            pass
+    return ""  # 严格模式：未配置即无搜索
 
 
 def available() -> bool:
@@ -233,11 +242,67 @@ async def _news_feed_results(query: str, top_k: int) -> list[dict]:
     return picked or [it for _, it in scored[:top_k]]
 
 
+async def _search_ddgs(query: str, top_k: int) -> list[dict]:
+    """ddgs 元搜索：免 Key、多引擎聚合（DuckDuckGo / Bing / Google 后端）。
+
+    为什么替换手写必应 HTML 抓取：
+    - 手写版依赖 `class="b_algo"` 的 DOM 结构，必应改版即全量失效（项目里已有一次）；
+    - ddgs 由社区持续跟进各引擎改版，且会做结果去重与排序；
+    - 无 API Key、无配额，符合本项目"开箱可用"的定位。
+
+    ddgs 是同步库，必须丢线程池，否则会阻塞事件循环（一次搜索几百毫秒到数秒）。
+    """
+    import asyncio
+
+    try:
+        from ddgs import DDGS
+    except ImportError as e:
+        raise SearchError("ddgs 未安装：pip install ddgs") from e
+
+    q = clean_query(query)
+
+    def _run() -> list[dict]:
+        with DDGS(timeout=15) as ddgs:
+            return list(ddgs.text(q, region="cn-zh", safesearch="moderate",
+                                  max_results=max(top_k, 1)))
+
+    try:
+        rows = await asyncio.wait_for(asyncio.to_thread(_run), timeout=25)
+    except asyncio.TimeoutError as e:
+        raise SearchError("ddgs 搜索超时") from e
+    except Exception as e:  # ddgs 内部异常类型不稳定，统一转 SearchError
+        raise SearchError(f"ddgs 搜索失败：{type(e).__name__}") from e
+
+    out = []
+    for r in rows[: top_k * 2]:
+        title = _clean(r.get("title") or "", 120)
+        url = str(r.get("href") or r.get("url") or "").strip()
+        if not title or not url:
+            continue
+        out.append({"title": title, "url": url,
+                    "snippet": _clean(r.get("body") or r.get("snippet") or "")})
+        if len(out) >= top_k:
+            break
+
+    if _NEWS_HINT.search(query or ""):
+        fresh = await _news_feed_results(query, max(3, top_k // 2))
+        if fresh:
+            seen = {f["url"] for f in fresh}
+            out = fresh + [r for r in out if r["url"] not in seen]
+    out = [r for r in out if not any(d in str(r.get("url") or "") for d in _JUNK_DOMAINS)]
+    if not out:
+        raise SearchError("ddgs 未返回可用结果")
+    return out[:max(top_k, 1)]
+
+
 async def _search_bing(query: str, top_k: int) -> list[dict]:
     """必应（cn.bing.com）HTML 抓取：免 Key 兜底通道（国内直连可达）。
 
     解析 b_algo 结果块；结构变了就抛 SearchError，上层静默降级。
     时效性问题额外并一路新闻 RSS：网页搜索只能给频道首页，答不了「今天」。
+
+    注意：这是最后兜底。首选 ddgs（多引擎 + 社区维护 DOM 适配）；
+    本函数只在 ddgs 不可用（未安装/全部引擎失败）时生效。
     """
     q = clean_query(query)
     client = get_client("https://cn.bing.com", timeout=20)
@@ -287,7 +352,34 @@ _BACKENDS = {
     "tavily": _search_tavily,
     "serper": _search_serper,
     "bing": _search_bing,
+    "ddgs": _search_ddgs,
 }
+# 免 Key 通道：ddgs（多引擎聚合）与必应 HTML 并行竞速。
+# 为什么并行而不是串行降级：实测 ddgs 在部分网络下会卡满超时（25s）才失败，
+# 串行等于把一个能 2 秒返回的后端拖成 27 秒，用户体感是"联网就卡死"。
+_KEYLESS_CHAIN = ("ddgs", "bing")
+_BACKEND_TIMEOUT_S = float(os.environ.get("SEARCH_BACKEND_TIMEOUT_S", "12") or 12)
+_COOLDOWN_S = float(os.environ.get("SEARCH_COOLDOWN_SECONDS", "300") or 300)
+_COOLDOWN: dict[str, float] = {}
+
+
+def backend_status() -> dict:
+    """搜索后端健康状态（供 /api/websearch/status 与就绪探针使用）。"""
+    import time as _t
+
+    now = _t.monotonic()
+    return {
+        name: {"cooling": _COOLDOWN.get(name, 0) > now,
+               "retry_in_s": max(0, round(_COOLDOWN.get(name, 0) - now))}
+        for name in _BACKENDS
+    }
+
+
+async def _run_backend(name: str, query: str, top_k: int) -> list[dict]:
+    import asyncio as _asyncio
+
+    backend = _BACKENDS[name]
+    return await _asyncio.wait_for(backend(query, top_k), timeout=_BACKEND_TIMEOUT_S)
 
 
 async def search(query: str, top_k: int = 5) -> dict:
@@ -295,7 +387,13 @@ async def search(query: str, top_k: int = 5) -> dict:
 
     任何失败都不抛异常——调用方（管线）把 error 写进上下文即可，
     不能让搜索挂了导致整条对话失败。
+
+    免 Key 模式（ddgs / bing）并行竞速：先成功者胜出，其余取消；
+    失败后端进冷却池（默认 5 分钟），避免每次对话都在一个坏后端上白等。
     """
+    import asyncio as _asyncio
+    import time as _time
+
     q = (query or "").strip()
     if not q:
         return {"ok": False, "provider": "", "results": [], "error": "空查询"}
@@ -307,22 +405,51 @@ async def search(query: str, top_k: int = 5) -> dict:
             "error": "未配置搜索服务（SEARCH_PROVIDER / TAVILY_API_KEY / SERPER_API_KEY / SEARXNG_URL）",
         }
 
-    backend = _BACKENDS.get(prov)
-    if backend is None:
-        return {"ok": False, "provider": prov, "results": [], "error": f"不支持的搜索后端：{prov}"}
+    top = max(1, min(top_k, 10))
+    now = _time.monotonic()
+    if prov in _KEYLESS_CHAIN:
+        candidates = [n for n in _KEYLESS_CHAIN
+                      if n in _BACKENDS and _COOLDOWN.get(n, 0) <= now]
+        # 全在冷却：仍试最后一个已知可用的，避免"全冷却=永久不可用"
+        if not candidates:
+            candidates = [_KEYLESS_CHAIN[-1]] if _KEYLESS_CHAIN[-1] in _BACKENDS else []
+    else:
+        candidates = [prov]
 
+    errors: list[str] = []
+    tasks = {_asyncio.ensure_future(_run_backend(name, q, top)): name for name in candidates}
+    winner: tuple[str, list[dict]] | None = None
     try:
-        results = await backend(q, max(1, min(top_k, 10)))
-    except SearchError as e:
-        return {"ok": False, "provider": prov, "results": [], "error": str(e)}
-    except httpx.HTTPError as e:
-        return {"ok": False, "provider": prov, "results": [], "error": f"{type(e).__name__}: {str(e)[:120]}"}
-    except (ValueError, KeyError) as e:
-        return {"ok": False, "provider": prov, "results": [], "error": f"响应解析失败：{type(e).__name__}"}
+        pending = set(tasks)
+        while pending and winner is None:
+            done, pending = await _asyncio.wait(
+                pending, return_when=_asyncio.FIRST_COMPLETED)
+            for task in done:
+                name = tasks[task]
+                exc = task.exception()
+                if exc is None:
+                    rows = task.result() or []
+                    if rows:
+                        winner = (name, rows)
+                        _COOLDOWN.pop(name, None)
+                        break
+                    errors.append(f"{name}: 无结果")
+                else:
+                    errors.append(f"{name}: {type(exc).__name__}")
+                _COOLDOWN[name] = _time.monotonic() + _COOLDOWN_S
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
 
+    if winner is None:
+        return {"ok": False, "provider": prov, "results": [],
+                "error": ("；".join(errors) or "所有搜索后端均不可用")[:300]}
+
+    name, results = winner
     # 结果打码：搜索结果里可能带密钥片段（如用户搜索自己的 token）
-    results = redact.mask_value(results)
-    return {"ok": True, "provider": prov, "results": results, "error": None}
+    return {"ok": True, "provider": name,
+            "results": redact.mask_value(results), "error": None}
 
 
 def format_for_context(result: dict, max_chars: int = 1200) -> str:

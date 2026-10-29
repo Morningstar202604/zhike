@@ -90,3 +90,54 @@ async def close_all() -> None:
         except Exception:
             pass
     _clients.clear()
+
+
+async def request_with_retry(
+    method: str,
+    url: str,
+    *,
+    timeout: float = 30.0,
+    retries: int = 2,
+    retry_on: tuple[int, ...] = (429, 500, 502, 503, 504),
+    **kwargs,
+) -> httpx.Response:
+    """带指数退避与抖动的请求（tenacity）。
+
+    为什么替换手写 `for attempt in range(2): sleep(0.6)`：
+    - 手写版没有 jitter，多个并发请求会在同一时刻重试，形成"重试风暴"；
+    - 不区分异常类型，DNS 永久失败也会重试两次；
+    - tenacity 是重试领域事实标准，策略可组合、可测试、可观测。
+
+    只重试幂等语义安全的场景：连接错误/超时/指定状态码。
+    4xx（除 429）一律不重试——业务拒绝重试没有意义。
+    """
+    from tenacity import (
+        AsyncRetrying, retry_if_exception_type, retry_if_result,
+        stop_after_attempt, wait_exponential_jitter,
+    )
+
+    client = get_client("", timeout=timeout)
+    state = {"resp": None}
+
+    def _should_retry_result(resp: httpx.Response) -> bool:
+        return resp.status_code in retry_on
+
+    async def _attempt() -> httpx.Response:
+        resp = await client.request(method, url, timeout=timeout, **kwargs)
+        state["resp"] = resp
+        return resp
+
+    retryer = AsyncRetrying(
+        stop=stop_after_attempt(max(1, retries + 1)),
+        wait=wait_exponential_jitter(initial=0.4, max=8.0),
+        retry=(retry_if_exception_type((httpx.ConnectError, httpx.ReadTimeout,
+                                        httpx.ConnectTimeout, httpx.RemoteProtocolError))
+               | retry_if_result(_should_retry_result)),
+        reraise=True,
+    )
+    try:
+        return await retryer(_attempt)
+    except Exception:
+        if state["resp"] is not None:
+            return state["resp"]
+        raise

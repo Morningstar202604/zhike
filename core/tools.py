@@ -412,6 +412,9 @@ async def tool_read_webpage(url: str, max_chars: str = "2000", **_kw) -> dict:
     """抓取一个网页并转成纯文本。
 
     SSRF 防护在 core.url_guard：只允许公网 http/https，且校验每一跳重定向。
+    正文提取用 trafilatura（可读性算法 + 噪声剔除），它是新闻/博客正文抽取的
+    事实标准；自带正则去标签会把导航栏、页脚、cookie 提示全部混进正文，
+    实测同一篇新闻可读正文占比不到 30%，模型经常"读了一堆菜单"。
     """
     from core import url_guard
 
@@ -438,11 +441,33 @@ async def tool_read_webpage(url: str, max_chars: str = "2000", **_kw) -> dict:
     except httpx.HTTPError as e:
         return miss_result("read_webpage", f"打不开这个页面（{type(e).__name__}）。", url=safe_url)
 
-    text = _html_to_text(raw)[:limit]
+    text = _extract_main_text(raw)[:limit]
     if not text.strip():
         return miss_result("read_webpage", "页面打开了，但没有可读文字（可能是纯图或需要登录）。",
                            url=safe_url)
     return ok_result("read_webpage", text, url=safe_url, chars=len(text))
+
+
+def _extract_main_text(raw: str) -> str:
+    """HTML → 正文。优先 trafilatura，失败/未装时退回正则清洗。"""
+    if not raw:
+        return ""
+    try:
+        import trafilatura
+
+        out = trafilatura.extract(
+            raw,
+            include_comments=False,
+            include_tables=True,
+            include_links=False,
+            favor_precision=True,
+            deduplicate=True,
+        )
+        if out and out.strip():
+            return out.strip()
+    except Exception:  # 解析失败不能阻断读取（HTML 畸形很常见）
+        pass
+    return _html_to_text(raw)
 
 
 def _html_to_text(raw: str) -> str:
@@ -1524,7 +1549,12 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
             text = q.replace(orig_when, " ", 1) if orig_when in q else (
                 q[:tm.start()] + " " + q[tm.end():])
             text = text.replace("提醒我", " ").replace("提醒", " ")
-            text = text.strip(" ，,。.；;：: 请帮我设个")
+            # 旧写法 text.strip(" ，,。.；;：: 请帮我设个") 是 bug：
+            # str.strip 的字符集会从两端逐个剥离，文本末尾的「个」也会被吃掉
+            # （「拿个快递」→「拿快递」）。这里只剥标点，再单独剥前缀客套话。
+            text = text.strip(" ，,。.；;：:")
+            text = re.sub(r"^(?:请|麻烦)?(?:帮我|给我)?(?:设个?|定个?|加个?)?", "", text)
+            text = text.strip(" ，,。.；;：:")
             if text:
                 return "remind", {"text": text, "when": when}
     if ("待办" in q or "提醒" in q) and ("列" in q or "有什" in q or "查看" in q) and "list_reminders" in enabled:

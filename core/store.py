@@ -1200,12 +1200,50 @@ def list_tools() -> list[dict]:
     return [_tool_row(r) for r in rows]
 
 
-def active_tools() -> list[dict]:
+# 工具表缓存：active_tools 是每轮对话的必经路径（build_context + tool_schema_block
+# + detect_tool 各调一次，实测 0.2~1.3ms/次，一轮对话 3 次）。工具定义变更频率极低，
+# 用版本号做失效信号（与 injection_rules 的 rules_version 同一套路），
+# 多 worker 下也能立刻看到新值——这是本项目「配置即时生效」不变量的一部分。
+_TOOLS_CACHE: dict = {"version": -1, "rows": []}
+_TOOLS_LOCK = threading.Lock()
+
+
+def _bump_tools_version() -> None:
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, name, desc, args_json, enabled, builtin FROM tools WHERE enabled = 1 ORDER BY id"
-        ).fetchall()
-    return [_tool_row(r) for r in rows]
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('tools_version', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)"
+        )
+
+
+def tools_version() -> int:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'tools_version'").fetchone()
+    return int(row["value"]) if row else 0
+
+
+def active_tools() -> list[dict]:
+    version = tools_version()
+    cached = _TOOLS_CACHE.get("version")
+    if cached == version:
+        return [dict(r) for r in _TOOLS_CACHE["rows"]]
+    with _TOOLS_LOCK:
+        if _TOOLS_CACHE.get("version") == version:
+            return [dict(r) for r in _TOOLS_CACHE["rows"]]
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, name, desc, args_json, enabled, builtin FROM tools "
+                "WHERE enabled = 1 ORDER BY id"
+            ).fetchall()
+        items = [_tool_row(r) for r in rows]
+        _TOOLS_CACHE["version"] = version
+        _TOOLS_CACHE["rows"] = items
+        return [dict(r) for r in items]
+
+
+def invalidate_tools_cache() -> None:
+    _TOOLS_CACHE["version"] = -1
+    _TOOLS_CACHE["rows"] = []
 
 
 def _tool_row(r) -> dict:
@@ -1239,6 +1277,7 @@ def upsert_tool(tool_id: str, name: str, desc: str, args_json: dict,
             (tool_id, name, desc, json.dumps(args_json, ensure_ascii=False),
              1 if enabled else 0, 1 if builtin else 0, _now()),
         )
+    _bump_tools_version()
     return get_tool(tool_id)
 
 
@@ -1248,13 +1287,17 @@ def set_tool_enabled(tool_id: str, enabled: bool) -> dict | None:
             "UPDATE tools SET enabled = ?, updated_at = ? WHERE id = ?",
             (1 if enabled else 0, _now(), tool_id),
         )
+    _bump_tools_version()
     return get_tool(tool_id)
 
 
 def delete_tool(tool_id: str) -> bool:
     with get_conn() as conn:
         cur = conn.execute("DELETE FROM tools WHERE id = ?", (tool_id,))
-    return cur.rowcount > 0
+    changed = cur.rowcount > 0
+    if changed:
+        _bump_tools_version()
+    return changed
 
 
 def list_injection_rules(enabled_only: bool = False) -> list[dict]:

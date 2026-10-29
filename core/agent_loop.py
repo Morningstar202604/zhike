@@ -216,7 +216,10 @@ async def _loop_body(*, run_id, principal, budget, tools, messages, usage, start
         if cancel_event is not None and cancel_event.is_set():
             return finish("cancelled", "任务已取消。")
         # ---- 墙钟预算 ----
-        if time.time() - started > budget["max_wall_s"]:
+        # 用 >= 而不是 >：Windows 上 time.time() 分辨率约 15.6ms，预算为 0 时
+        # 两次取时间可能落在同一 tick，elapsed==0 会让「零预算」首次检查直接放过
+        # （回归用例 test_wall_time_budget 因此偶发失败）。预算 0 的语义就是"不允许耗时"。
+        if time.time() - started >= budget["max_wall_s"]:
             return finish("budget_exceeded", "任务超时未完成，已停止。", "wall_time")
         # ---- token 预算 ----
         if usage["tokens"] > budget["max_tokens"]:

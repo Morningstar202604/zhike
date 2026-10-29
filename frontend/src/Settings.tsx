@@ -122,6 +122,28 @@ export default function Settings() {
 }
 
 /* ============ 参数配置（补齐 char_budget/react_steps/top_p + 引擎模式） ============ */
+function Grp({ id, title, note, children }: { id: string; title: string; note?: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div className="grp">
+      <div className="grp-head" onClick={() => setOpen((o) => !o)}>
+        <h3>{title}</h3>
+        {note && <span className="gh-note">{note}</span>}
+        <span className="text-muted text-xs">{open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</span>
+      </div>
+      {open && <div className="grp-body">{children}</div>}
+    </div>
+  )
+}
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="f-row">
+      <span className="f-lb">{label}</span>
+      {children}
+    </div>
+  )
+}
+
 function ParamsPanel({ cfg, setDraft, upd }: {
   cfg: AgentConfig
   setDraft: React.Dispatch<React.SetStateAction<AgentConfig | null>>
@@ -140,26 +162,6 @@ function ParamsPanel({ cfg, setDraft, upd }: {
       return base
     })
   }
-
-  const Grp = ({ id, title, note, children }: { id: string; title: string; note?: string; children: React.ReactNode }) => {
-    const [open, setOpen] = useState(true)
-    return (
-      <div className="grp">
-        <div className="grp-head" onClick={() => setOpen((o) => !o)}>
-          <h3>{title}</h3>
-          {note && <span className="gh-note">{note}</span>}
-          <span className="text-muted text-xs">{open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</span>
-        </div>
-        {open && <div className="grp-body">{children}</div>}
-      </div>
-    )
-  }
-  const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <div className="f-row">
-      <span className="f-lb">{label}</span>
-      {children}
-    </div>
-  )
 
   return (
     <div className="space-y-3">

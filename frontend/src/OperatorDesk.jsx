@@ -163,7 +163,7 @@ export default function OperatorDesk() {
   const wsUrl = adminToken ? '/ws/operator' : null
   const wsSubs = adminToken ? ['zhike-admin', adminToken] : undefined
   const activeRef = useRef(null)
-  activeRef.current = active
+  useEffect(() => { activeRef.current = active }, [active])
   const { state: connState } = useWs(wsUrl, (p) => {
     if (p.type === 'new_pending' || p.type === 'session_updated') queues.refetch()
     if (p.type === 'visitor_message' && p.session_id === activeRef.current) {

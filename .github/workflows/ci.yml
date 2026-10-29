@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -20,8 +24,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-      - name: Lint (real errors only)
-        run: ruff check core executor gateway scripts --select E9,F63,F7,F82,F401,F841
+      - name: Lint (syntax + bugbear + async blocking)
+        run: ruff check core executor gateway scripts tests
+      - name: Type check (advisory, non-blocking)
+        run: mypy core executor gateway || true
       - name: Tests + coverage gate
         run: pytest -q --cov=core --cov-report=term --cov-fail-under=70
       - name: Dependency audit (production deps)
@@ -41,9 +47,40 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install
         run: npm ci
+      - name: Lint (oxlint, 0 errors required)
+        run: npx oxlint src
       - name: Unit tests (vitest)
         run: npm test
       - name: Typecheck + build
         run: npm run build
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (single-port console included)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: zhike-core:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test container
+        run: |
+          docker run -d --name zhike-ci -p 8010:8010 \
+            -e ADMIN_TOKEN=ci-admin-token -e CHANNEL_TOKEN=ci-channel-token \
+            zhike-core:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8010/healthz; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8010/healthz | grep -q '"ok":true'
+          curl -fsS http://127.0.0.1:8010/readyz | grep -q '"ok":true'
+          curl -fsS http://127.0.0.1:8010/ | grep -qi '<div id="root">'
+          docker logs zhike-ci | tail -30
+          docker rm -f zhike-ci

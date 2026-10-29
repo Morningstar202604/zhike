@@ -111,7 +111,7 @@ def is_bot_name(name: str) -> bool:
 def _mean_gap(stamps: list[tuple]) -> float:
     if len(stamps) < 2:
         return float("inf")
-    return statistics.mean(b[0] - a[0] for a, b in zip(stamps, stamps[1:]))
+    return statistics.mean(b[0] - a[0] for a, b in zip(stamps, stamps[1:], strict=False))
 
 
 def _trim(stamps: list[tuple], now: float, window: float) -> None:
@@ -221,7 +221,7 @@ class LoopGuard:
             if len(st.questions) >= 10 and q_gap < 60:
                 return self._mute(key, "question_flood", now)
         if is_group and len(st.rapid) >= WINDOW_RAPID:
-            gaps = [b[0] - a[0] for a, b in zip(st.rapid, st.rapid[1:])]
+            gaps = [b[0] - a[0] for a, b in zip(st.rapid, st.rapid[1:], strict=False)]
             lengths = [n for _, n in st.rapid]
             # 门槛压得很紧：真人打字快也能到 8 秒一条，但连续 12 条都「引用我们」
             # 且平均 40 字以内、间隔 8 秒内——人手点 12 次引用回复做不到。

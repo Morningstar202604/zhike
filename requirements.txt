@@ -6,6 +6,8 @@ pydantic~=2.11
 python-multipart~=0.0.9
 nonebot2~=2.5
 nonebot-adapter-onebot~=2.4
+# .env 加载（README 让用户 cp .env.example .env，必须有代码真正读它）
+python-dotenv~=1.1
 # 文档解析
 pypdf~=6.21
 python-docx~=1.2
@@ -13,3 +15,12 @@ openpyxl>=3.1
 # LLM API Key 落库加密（Fernet）
 # 43.x / 46.x 都有已公开 CVE（pip-audit 可查），修复版本在 50.0；Fernet API 未变
 cryptography~=50.0
+# 生产可观测性：Prometheus 文本格式指标（替换手写 registry，支持直方图与多进程）
+prometheus-client~=0.21
+# 重试退避：LLM/搜索/动作调用的指数退避与 jitter（替换手写 for+sleep）
+tenacity~=9.0
+# 网页正文提取：readability 级正文识别（替换正则去标签，正文召回率显著提升）
+trafilatura~=2.0
+# 免 Key 元搜索后端（ddgs：DuckDuckGo/Bing/Google 聚合，无 API Key）
+ddgs~=9.0
+

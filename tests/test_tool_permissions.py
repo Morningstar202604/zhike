@@ -1,7 +1,6 @@
 """工具层权限闸门回归：写类工具必须校验主体，不能只靠提示词。"""
 import asyncio
 
-import pytest
 
 from core import tools
 from core.tool_context import ToolContext

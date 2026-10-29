@@ -32,6 +32,11 @@ logger = logging.getLogger("gateway")
 
 # 群友表情包收藏库（第三方表情包学习）：mface 回放 + 梗图本地缓存
 _EMOTE_DIR = os.environ.get("GATEWAY_EMOTE_DIR") or str(Path.home() / "napcat" / "emotes")
+def _write_bytes(path: str, data: bytes) -> None:
+    with open(path, "wb") as f:
+        f.write(data)
+
+
 _EMOTE_LIB = EmoteLib(os.path.join(_EMOTE_DIR, "index.json"))
 os.makedirs(_EMOTE_DIR, exist_ok=True)
 # 梗图下载限流：每小时最多 30 张、并发 2——别把带宽和磁盘搞爆
@@ -233,8 +238,8 @@ async def _download_emote(url: str, group: str, summary: str) -> None:
                   ".png" if resp.content[:4] == b"\x89PNG" else ".jpg"
             fname = f"e{int(time.time()*1000)}{ext}"
             fpath = os.path.join(_EMOTE_DIR, fname)
-            with open(fpath, "wb") as f:
-                f.write(resp.content)
+            # 磁盘写入丢线程池：表情包动辄几百 KB，同步写在群消息热路径上会卡住网关
+            await asyncio.to_thread(_write_bytes, fpath, resp.content)
         if _EMOTE_LIB.add("image", summary, fpath, group):
             _EMOTE_LIB.save()
     except Exception:  # 收藏失败绝不能影响正常收发

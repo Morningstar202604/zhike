@@ -3,7 +3,6 @@ from tests.conftest import create_web_session
 import asyncio
 import json
 
-import pytest
 
 from core import llm as llm_mod, pipeline, store
 

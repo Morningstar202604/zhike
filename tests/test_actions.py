@@ -2,15 +2,13 @@
 
 覆盖计划 7.3.3 的放行矩阵（T0-T3 × L0-L2 × 主体），以及阶段 1 DoD 全部条目。
 """
-import json
-import os
 import uuid
 
 import pytest
 
 from core import redact, store
-from core.actions import authz, registry, service
-from tests.conftest import ADMIN, create_web_session
+from core.actions import authz, registry
+from tests.conftest import ADMIN
 
 
 # ---------- 注册表完整性 ----------

@@ -22,12 +22,16 @@ _FILE_HANDLER: logging.Handler | None = None
 class RingHandler(logging.Handler):
     def emit(self, record):
         global _seq
+        from core.request_id import current_request_id
+
         entry = {
             "id": 0,
             "time": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "name": record.name,
             "message": record.getMessage(),
+            # 关联 ID：一次请求的所有日志行可直接 grep 到一起
+            "request_id": getattr(record, "request_id", "") or current_request_id(),
         }
         with _lock:
             _seq += 1
@@ -83,10 +87,13 @@ def attach() -> None:
             lg.addHandler(_FILE_HANDLER)
 
 
-def entries(limit: int = 200, level: str | None = None) -> list[dict]:
+def entries(limit: int = 200, level: str | None = None,
+            request_id: str = "") -> list[dict]:
     with _lock:
         items = list(_ring)
     if level:
         items = [e for e in items if e["level"] == level.upper()]
+    if request_id:
+        items = [e for e in items if e.get("request_id") == request_id]
     return list(reversed(items))[:limit]
 

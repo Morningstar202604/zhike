@@ -38,21 +38,50 @@ def _trim_messages(messages: list[dict]) -> list[dict]:
 
     官方 harness（OpenAI Agents SDK / LangGraph）都做窗口裁剪或摘要，
     这里用最简单可靠的窗口法；超长工具结果单独截断。
+
+    注意：重排消息时必须保留 tool_calls / tool_call_id 的配对关系。
+    只按条数窗口裁剪会把 assistant(tool_calls) 与 role=tool 拆开，
+    OpenAI 兼容端点会直接 400 invalid_request_error（已复现）。
     """
-    if len(messages) <= MAX_HISTORY_MESSAGES:
-        return [m for m in messages if _fit_size(m)]
-    head = messages[:1] if messages and messages[0].get("role") == "system" else []
-    tail = messages[-MAX_HISTORY_MESSAGES:]
-    return [m for m in head + tail if _fit_size(m)]
+    window = messages
+    if len(messages) > MAX_HISTORY_MESSAGES:
+        head = messages[:1] if messages and messages[0].get("role") == "system" else []
+        tail = _repair_tool_pairs(messages[-MAX_HISTORY_MESSAGES:])
+        window = head + tail
+    return [_fit_size(m) for m in window]
 
 
-def _fit_size(msg: dict) -> bool:
+def _repair_tool_pairs(messages: list[dict]) -> list[dict]:
+    """丢掉没有对应 assistant.tool_calls 的孤立 role=tool 消息，以及被截断的 tool_calls 组。
+
+    窗口从中间切开时，最早几条可能是某个 tool_calls 组的一半：
+    保留孤立 tool 消息会让服务端报 "tool_call_id not found"。
+    """
+    out: list[dict] = []
+    pending: set[str] = set()
+    for msg in messages:
+        role = msg.get("role")
+        if role == "assistant" and msg.get("tool_calls"):
+            pending = {str(c.get("id") or "") for c in msg["tool_calls"] if isinstance(c, dict)}
+            out.append(msg)
+            continue
+        if role == "tool":
+            tid = str(msg.get("tool_call_id") or "")
+            if tid and tid in pending:
+                out.append(msg)
+            continue
+        pending = set()
+        out.append(msg)
+    return out
+
+
+def _fit_size(msg: dict) -> dict:
+    """超长消息裁剪：返回新 dict，绝不就地修改调用方数据。"""
     content = msg.get("content")
     if isinstance(content, str) and len(content) > MAX_TOOL_RESULT_CHARS * 3:
         msg = dict(msg)
         msg["content"] = content[: MAX_TOOL_RESULT_CHARS * 3] + "…(已截断)"
-        return True
-    return True
+    return msg
 
 
 def _parse_arguments(raw: str | dict | None) -> dict:

@@ -6,9 +6,7 @@
 - 无 ffmpeg / 空音频 / 命令无输出 的失败说明
 - available() 的判定
 """
-import os
 
-import pytest
 
 from core import asr
 

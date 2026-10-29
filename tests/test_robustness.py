@@ -2,12 +2,10 @@
 import json
 import logging
 import os
-import sqlite3
 import subprocess
 import sys
 import threading
 
-import pytest
 
 from core import events_log, pipeline, ratelimit, retrieval, store
 from tests.conftest import ADMIN, create_web_session, reset_web_session_auth
@@ -86,7 +84,8 @@ def test_stream_survives_pipeline_without_final(client, monkeypatch):
 # ---------- N4/N9 限流 ----------
 
 def test_rate_limiter_has_ts_index():
-    limiter = ratelimit.SQLiteRateLimiter()
+    # 构造 limiter 会建索引；这里只关心索引是否存在，不关心实例本身
+    ratelimit.SQLiteRateLimiter()
     with store.get_conn() as conn:
         plan = conn.execute("EXPLAIN QUERY PLAN DELETE FROM rate_hits WHERE ts < ?", (0,)).fetchall()
     detail = " ".join(str(tuple(r)) for r in plan)
@@ -196,13 +195,13 @@ def test_oversized_ingest_rejected(client):
 
 def test_kb_import_item_limit(client, monkeypatch, tmp_path):
     """导入体积上限。必须用临时 KB：否则会往仓库真实知识库里写测试条目。"""
-    from core import main as main_mod
+    from core.api import deps as deps_mod
 
     kb_file = tmp_path / "kb.json"
     kb_file.write_text(json.dumps({"kb": []}), encoding="utf-8")
     monkeypatch.setattr(retrieval, "KB_PATH", kb_file)
     retrieval._KB_CACHE = None
-    monkeypatch.setattr(main_mod, "MAX_KB_IMPORT_ITEMS", 3)
+    monkeypatch.setattr(deps_mod, "MAX_KB_IMPORT_ITEMS", 3)
 
     text = "\n\n".join(f"标题{i}\n内容{i}" for i in range(6))
     r = client.post("/api/kb/import", json={"text": text})
@@ -221,7 +220,7 @@ def test_ws_registry_cleanup_on_disconnect(client):
     sid, secret = create_web_session(client, "n11-ws")
     reset_web_session_auth(client)
     # 子协议传 secret（query 版本会泄露到 access log，仅保留兼容）
-    with client.websocket_connect(f"/ws/{sid}", subprotocols=["zhike-visitor", secret]) as ws:
+    with client.websocket_connect(f"/ws/{sid}", subprotocols=["zhike-visitor", secret]):
         assert sum(len(v) for v in hub.visitor_conns.values()) >= 1
     assert sum(len(v) for v in hub.visitor_conns.values()) == 0, "断开后连接未被清理"
 

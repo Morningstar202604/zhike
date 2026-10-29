@@ -368,6 +368,9 @@ check("11 每身份限流（第 21 条 429）", rate_limit)
 check("12 坐席全流程（队列/接管/回复/关闭）", operator_flow)
 check("13 反馈统计+差评自动升级", feedback_and_negative_escalate)
 check("14 配置热更新（引擎模式即时生效）", config_hot_reload)
+# 14 号用例会把模式回滚成部署原值（通常是 auto）；15/17 依赖确定性规则路径，
+# 必须在规则模式下跑，否则无 Key 部署会得到 no_model 空回复（已复现）。
+_set_engine("rule")
 check("15 知识库 CRUD+新条目立即可检索", kb_crud_and_retrieval)
 check("16 工具注册表 CRUD", tool_registry_crud)
 check("17 WS 实时推送（坐席端）", lambda: asyncio.run(ws_push()))

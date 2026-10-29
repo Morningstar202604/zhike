@@ -510,8 +510,15 @@ async def react(query: str, ctx: dict, cfg: dict, image_b64: str = "",
     if prefer:
         # 集群择优时可以让某个候选排第一（不影响 failover 顺序的完整性）
         chain.sort(key=lambda c: 0 if c["model"] == prefer else 1)
+    started = time.monotonic()
     parsed = await _race_chain(chain, messages, payload, parse=_parse_llm_answer)
     _record_llm("ok" if parsed is not None else "fail")
+    try:
+        from core import metrics as _metrics
+
+        _metrics.record_llm_latency(model, time.monotonic() - started)
+    except Exception:  # 指标失败不影响主链路
+        pass
     return parsed
 
 

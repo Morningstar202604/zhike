@@ -1,40 +1,18 @@
 import React, { Component } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import hljs from 'highlight.js/lib/core'
-import javascript from 'highlight.js/lib/languages/javascript'
-import typescript from 'highlight.js/lib/languages/typescript'
-import python from 'highlight.js/lib/languages/python'
-import bash from 'highlight.js/lib/languages/bash'
-import json from 'highlight.js/lib/languages/json'
-import sql from 'highlight.js/lib/languages/sql'
-import css from 'highlight.js/lib/languages/css'
-import xml from 'highlight.js/lib/languages/xml'
-import go from 'highlight.js/lib/languages/go'
-import java from 'highlight.js/lib/languages/java'
-import yaml from 'highlight.js/lib/languages/yaml'
-import markdown from 'highlight.js/lib/languages/markdown'
 
-hljs.registerLanguage('javascript', javascript)
-hljs.registerLanguage('js', javascript)
-hljs.registerLanguage('typescript', typescript)
-hljs.registerLanguage('ts', typescript)
-hljs.registerLanguage('python', python)
-hljs.registerLanguage('py', python)
-hljs.registerLanguage('bash', bash)
-hljs.registerLanguage('sh', bash)
-hljs.registerLanguage('shell', bash)
-hljs.registerLanguage('json', json)
-hljs.registerLanguage('sql', sql)
-hljs.registerLanguage('css', css)
-hljs.registerLanguage('html', xml)
-hljs.registerLanguage('xml', xml)
-hljs.registerLanguage('go', go)
-hljs.registerLanguage('java', java)
-hljs.registerLanguage('yaml', yaml)
-hljs.registerLanguage('yml', yaml)
-hljs.registerLanguage('markdown', markdown)
-hljs.registerLanguage('md', markdown)
+/*
+ * Markdown 渲染器。
+ *
+ * 两个关键设计：
+ * 1. **语法高亮按需加载**：highlight.js 的 12 种语言 + core 约 145KB（gzip 48KB），
+ *    而实际网页里大多数消息不含代码块。改前它是同步 import，等于每个访客首屏
+ *    都要为「可能出现的代码块」付费。现在只在首次真的遇到 <pre><code> 时才
+ *    动态 import，纯聊天场景零成本。
+ * 2. **XSS 防线**：marked 输出后必须过 DOMPurify（默认配置就够，
+ *    这里显式白名单是为了禁止 style/iframe 等可被用来做点击劫持的标签）。
+ */
 
 marked.setOptions({ gfm: true, breaks: true })
 
@@ -50,6 +28,50 @@ function render(source) {
     ALLOWED_TAGS,
     ALLOWED_ATTR: ['href', 'title', 'target', 'rel', 'class'],
   })
+}
+
+/** @type {Promise<any>|null} */
+let hljsPromise = null
+/** @type {any} */
+let hljsInstance = null
+
+/** 首次需要高亮时才加载 highlight.js（含常用语言包）。 */
+async function loadHljs() {
+  if (hljsInstance) return hljsInstance
+  if (!hljsPromise) {
+    hljsPromise = (async () => {
+      const [core, langs] = await Promise.all([
+        import('highlight.js/lib/core'),
+        Promise.all([
+          import('highlight.js/lib/languages/javascript'),
+          import('highlight.js/lib/languages/typescript'),
+          import('highlight.js/lib/languages/python'),
+          import('highlight.js/lib/languages/bash'),
+          import('highlight.js/lib/languages/json'),
+          import('highlight.js/lib/languages/sql'),
+          import('highlight.js/lib/languages/css'),
+          import('highlight.js/lib/languages/xml'),
+          import('highlight.js/lib/languages/go'),
+          import('highlight.js/lib/languages/java'),
+          import('highlight.js/lib/languages/yaml'),
+          import('highlight.js/lib/languages/markdown'),
+        ]),
+      ])
+      const hljs = core.default
+      const [js, ts, py, sh, json, sql, css, xml, go, java, yaml, md] = langs.map((m) => m.default)
+      const reg = [
+        ['javascript', js], ['js', js], ['typescript', ts], ['ts', ts],
+        ['python', py], ['py', py], ['bash', sh], ['sh', sh], ['shell', sh],
+        ['json', json], ['sql', sql], ['css', css], ['html', xml], ['xml', xml],
+        ['go', go], ['java', java], ['yaml', yaml], ['yml', yaml],
+        ['markdown', md], ['md', md],
+      ]
+      for (const [name, lang] of reg) hljs.registerLanguage(name, lang)
+      hljsInstance = hljs
+      return hljsInstance
+    })().catch(() => null)
+  }
+  return hljsPromise
 }
 
 function decorateCodeBlocks(root) {
@@ -75,9 +97,13 @@ function decorateCodeBlocks(root) {
   })
 }
 
-function highlightIn(root) {
+async function highlightIn(root) {
   if (!root) return
-  root.querySelectorAll('pre code').forEach((el) => {
+  const blocks = root.querySelectorAll('pre code')
+  if (!blocks.length) return
+  const hljs = await loadHljs()
+  if (!hljs) return
+  blocks.forEach((el) => {
     if (el.dataset.highlighted) return
     const cls = [...el.classList].find((c) => c.startsWith('language-'))
     const lang = cls ? cls.slice(9) : ''
@@ -102,7 +128,7 @@ export default class Markdown extends Component {
   }
 
   componentDidMount() {
-    highlightIn(this.root.current)
+    void highlightIn(this.root.current)
     decorateCodeBlocks(this.root.current)
   }
 
@@ -113,7 +139,7 @@ export default class Markdown extends Component {
   }
 
   componentDidUpdate() {
-    highlightIn(this.root.current)
+    void highlightIn(this.root.current)
     decorateCodeBlocks(this.root.current)
   }
 

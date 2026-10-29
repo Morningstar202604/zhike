@@ -5,12 +5,11 @@
 """
 import asyncio
 import json
-import os
 
 import pytest
 
 from core import config, crypto, guardrail, retrieval, store
-from tests.conftest import ADMIN, CHANNEL, create_web_session, reset_web_session_auth
+from tests.conftest import ADMIN, create_web_session, reset_web_session_auth
 
 
 # ============================================================
@@ -125,7 +124,6 @@ def test_detect_output_allows_normal_answer():
 def test_output_guardrail_triggers_escalation(monkeypatch):
     """LLM 输出泄露系统提示时，回复应被替换并转人工。"""
     from core import pipeline
-    from core.schemas import LlmReply
 
     ctx = {
         "kb_block": "", "hits": [], "tools_schema": [], "tools": {},
@@ -174,7 +172,6 @@ def test_rule_cache_is_actually_used(monkeypatch, tmp_path):
     这测的是「缓存存在并生效」，不是「结果正确」——
     删掉缓存后结果依然正确，只有性能变差，功能测试抓不到。
     """
-    import re as _re
 
     monkeypatch.setenv("CS_AGENT_DB", str(tmp_path / "usecache.db"))
     store._SCHEMA_READY.clear()
@@ -358,7 +355,6 @@ def test_shell_timeout_is_passed_through(policy, workspace, monkeypatch):
     from executor import capabilities as cap
 
     captured = {}
-    real_run = sp.run
 
     def fake_run(*a, **kw):
         captured["timeout"] = kw.get("timeout")

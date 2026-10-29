@@ -16,5 +16,15 @@ export function useMediaQuery(query: string): boolean {
   return matches
 }
 
-export const isMobile = () => useMediaQuery('(max-width: 639px)')
-export const isTablet = () => useMediaQuery('(max-width: 899px)')
+/**
+ * 便捷 Hook：调用方必须在组件顶层调用（不能让 `useXxx` 藏在一个普通函数里，
+ * 那样 React 无法确定调用顺序，条件渲染时会报 "Rendered more hooks than
+ * during the previous render"）。所以这里导出的是 Hook 而不是普通函数。
+ */
+export function useIsMobile(): boolean {
+  return useMediaQuery('(max-width: 639px)')
+}
+
+export function useIsTablet(): boolean {
+  return useMediaQuery('(max-width: 899px)')
+}

@@ -2,7 +2,6 @@
 
 每条用例对应一个已实测复现的缺陷，修实现必须让这里失败。
 """
-import json
 
 import pytest
 

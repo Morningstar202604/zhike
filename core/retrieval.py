@@ -304,7 +304,7 @@ def rebuild_index_if_needed(conn: sqlite3.Connection, kb: list[dict]) -> None:
                 conn.execute("DELETE FROM kb_vec")
                 docs = [_doc_text(e) for e in kb]
                 embs = encoder.encode(docs, normalize_embeddings=True)
-                for e, vec in zip(kb, embs):
+                for e, vec in zip(kb, embs, strict=False):
                     conn.execute(
                         "INSERT INTO kb_vec(rowid, embedding) VALUES (?, ?)",
                         (_kb_rowid(e["id"]), np.asarray(vec, dtype="float32").tobytes()),
@@ -446,7 +446,29 @@ def _rrf_fuse(rankings: list[list[tuple[float, str]]], top_k: int, k: int = _RRF
 
 
 def retrieve_scored(query: str, top_k: int, min_overlap: float, use_embedding: bool | None = None) -> list[tuple[float, dict]]:
-    """混合检索：FTS5 BM25 + 向量，RRF 融合。返回 [(0~1 校准分, entry)]。"""
+    """混合检索：FTS5 BM25 + 向量，RRF 融合。返回 [(0~1 校准分, entry)]。
+
+    埋点：检索是每轮对话必经路径，但历史上没有耗时指标——KB 变大或向量模型
+    首次加载导致"回消息慢"时无法判断是不是检索的问题。这里按后端分档记录。
+    """
+    import time as _time
+
+    from core import metrics as _metrics
+
+    started = _time.perf_counter()
+    try:
+        return _retrieve_scored_inner(query, top_k, min_overlap, use_embedding)
+    finally:
+        backend = "vec" if _INDEX_STATE.get("vec") else (
+            "fts5" if _INDEX_STATE.get("fts5") else "bigram")
+        try:
+            _metrics.record_retrieval(backend, _time.perf_counter() - started)
+        except Exception:
+            pass
+
+
+def _retrieve_scored_inner(query: str, top_k: int, min_overlap: float,
+                           use_embedding: bool | None = None) -> list[tuple[float, dict]]:
     kb = load_kb()
     if not kb:
         return []

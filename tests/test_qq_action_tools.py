@@ -1,7 +1,6 @@
 """QQ 全量接管：动作 → 工具封装必须走同一套鉴权/审批，不能变成后门。"""
 import asyncio
 
-import pytest
 
 from core import tools
 from core.tool_context import ToolContext

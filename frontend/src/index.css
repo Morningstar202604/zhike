@@ -3,3 +3,25 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* 读屏专用文本：视觉上不可见，但会被屏幕阅读器朗读。
+   用于图标按钮/加载态的可访问名称（WCAG 2.2 名称-角色-值）。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 键盘焦点必须可见：默认 outline 被 Tailwind preflight 清掉后，
+   只用键盘的用户完全不知道自己焦点在哪（WCAG 2.4.7）。 */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

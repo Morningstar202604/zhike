@@ -8,7 +8,6 @@ from gateway.loop_guard import (
     is_bot_name,
     is_closing,
     is_question,
-    is_trivial,
 )
 
 
