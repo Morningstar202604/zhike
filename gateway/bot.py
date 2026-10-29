@@ -16,6 +16,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# 网关与 core 是两个进程，但配置同源：core 靠包初始化加载 .env，
+# 网关也必须加载，否则本机部署要手动 export（实测漏 CHANNEL_TOKEN 时
+# core 对 ingest 一律 503，网关表现为"消息发不进去且无报错"）。
+from core.env import load_env as _load_env
+
+_load_env()
+
 import httpx
 
 import nonebot
