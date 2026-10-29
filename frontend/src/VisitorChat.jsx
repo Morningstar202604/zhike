@@ -338,6 +338,22 @@ export default function VisitorChat() {
     })
   }, [])
 
+  // 刷新后恢复最近一次对话。
+  // 此前只把会话列表存进 localStorage，当前会话本身没有恢复，用户刷新页面
+  // 就看到一个空白的新对话，需要自己去侧栏翻历史——手机端误触刷新等于对话消失。
+  const restoredRef = useRef(false)
+  useEffect(() => {
+    if (restoredRef.current) return
+    restoredRef.current = true
+    if (sessionId) return
+    const recent = sessions[0]
+    if (!recent?.sid) return
+    if (!useAppStore.getState().getSessionSecret(recent.sid)) return
+    void openHistory(recent.sid, recent.title)
+    // 只在首帧恢复一次；openHistory 每次渲染都是新函数，不能进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const regenerate = useCallback(async () => {
     // 找到最后一条访客消息，删掉之后的 agent 回复，重发。
     // regenerate=true 让后端复用同一条访客消息，不再重复落库。
