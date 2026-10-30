@@ -1704,6 +1704,15 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
         return "qq_emoji_like", {}
 
     # 发图 / 识图 / 读文档 / 搜新闻
+    # 主动发消息（私聊/群）：此前没有规则路由，「私聊给我发…」永远掉兜底（实测）。
+    # 只拦「发给谁+说什么」都明确的表达；target 留空=当前会话。
+    if "qq_send" in enabled:
+        m_send = (re.search(r"(?:私聊|私信)(?:给|到)?(?:我)?(?:发|说|讲)一?(?:句|条|段)?[:：]?(.+)", q)
+                  or re.search(r"(?:用|通过)?QQ(?:私聊|私信)?(?:给|到)?我?(?:发|说)一?(?:句|条|段)?[:：]?(.+)", q)
+                  or re.search(r"^发一?(?:句|条)消息[:：](.+)$", q))
+        if m_send and m_send.group(1).strip():
+            return "qq_send", {"text": m_send.group(1).strip()}
+
     if "send_image" in enabled and re.search(
             r"(把|将).{0,8}(图|图片|照片).{0,6}(发|传|甩)", q):
         return "send_image", {}
@@ -1724,6 +1733,11 @@ def detect_tool(query: str, tools: dict | None = None) -> tuple[str | None, dict
         return "generate_image", {"prompt": q}
     if "send_voice" in enabled and re.search(
             r"(发|来|说|录).{0,4}(条|句|段)?.{0,2}(语音|声音)|用语音(说|回|来)?", q):
+        # 把要合成的内容解析出来（「用语音说：测试」→ text=测试）；
+        # 解析不到再返回空参数，工具层会 need_context 追问，而不是每次都追问。
+        m_voice = re.search(r"(?:用语音|语音)(?:说|回|来|念)?[:：，,]?\s*(.+)$", q)
+        if m_voice and m_voice.group(1).strip():
+            return "send_voice", {"text": m_voice.group(1).strip()}
         return "send_voice", {"text": ""}
 
     return None, None
