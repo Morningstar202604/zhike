@@ -1780,6 +1780,75 @@ def create_app() -> FastAPI:
             ),
         }
 
+    # ---- 表情包库：gateway 学习的群友梗图（只读浏览 + 管理员删除）----
+    @app.get("/api/emotes", dependencies=[Depends(require_admin)])
+    def emotes_list(q: str = "", limit: int = 120):
+        """表情包索引。数据源 = gateway 的 EmoteLib（index.json + tags.json）。"""
+        import pathlib as _pathlib
+
+        from gateway.humanize import EmoteLib
+
+        emote_dir = _pathlib.Path(os.environ.get("GATEWAY_EMOTE_DIR")
+                                  or (_pathlib.Path.home() / "napcat" / "emotes"))
+        lib = EmoteLib(str(emote_dir / "index.json"))
+        items = lib.items  # list 属性（新条目在前）
+        if q.strip():
+            qq = q.strip().lower()
+            items = [it for it in items
+                     if qq in (it.get("summary") or "").lower()
+                     or qq in (it.get("tags") or "").lower()]
+        return {
+            "total": len(items),
+            "dir": str(emote_dir),
+            "items": [
+                {k: it.get(k) for k in ("kind", "summary", "data", "group", "ts", "tags", "hits")}
+                for it in items[: max(1, min(limit, 300))]
+            ],
+        }
+
+    @app.delete("/api/emotes/{ts}", dependencies=[Depends(require_admin)])
+    def emote_delete(ts: str):
+        """按 ts 删除一条表情（索引 + 磁盘文件），供清理低质图。"""
+        import pathlib as _pathlib
+
+        from gateway.humanize import EmoteLib
+
+        emote_dir = _pathlib.Path(os.environ.get("GATEWAY_EMOTE_DIR")
+                                  or (_pathlib.Path.home() / "napcat" / "emotes"))
+        lib = EmoteLib(str(emote_dir / "index.json"))
+        target = next((it for it in lib.items if str(it.get("ts")) == ts), None)
+        if not target:
+            raise HTTPException(404, "表情不存在或已被删除")
+        try:
+            data_path = _pathlib.Path(target.get("data") or "")
+            if data_path.exists() and emote_dir in data_path.resolve().parents:
+                data_path.unlink()
+        except OSError:
+            pass
+        before = len(lib.items)
+        lib.items = [it for it in lib.items if str(it.get("ts")) != ts]
+        lib.save()
+        store.append_audit("admin", "emote.deleted", {"ts": ts, "summary": target.get("summary")})
+        return {"ok": len(lib.items) < before, "remaining": len(lib.items)}
+
+    @app.get("/api/emotes/file", include_in_schema=False)
+    def emote_file(path: str, x_admin_token: str | None = Header(default=None, alias="X-Admin-Token")):
+        """表情图片文件（管理员令牌）。realpath 限制在 emote 目录内，防穿越。"""
+        import pathlib as _pathlib
+
+        from fastapi.responses import FileResponse
+
+        if not security.constant_time_equals(x_admin_token, security.admin_token()):
+            raise HTTPException(401, "需要管理员令牌")
+        emote_dir = (_pathlib.Path(os.environ.get("GATEWAY_EMOTE_DIR")
+                                   or (_pathlib.Path.home() / "napcat" / "emotes"))).resolve()
+        cand = (_pathlib.Path(path)).resolve()
+        if emote_dir != cand and emote_dir not in cand.parents:
+            raise HTTPException(403, "路径不在表情包目录内")
+        if not cand.is_file():
+            raise HTTPException(404, "文件不存在")
+        return FileResponse(cand)
+
     @app.get("/api/channels/adapters", dependencies=[Depends(require_admin)])
     def channel_adapters():
         """已注册的渠道适配器与能力矩阵。

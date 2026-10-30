@@ -581,3 +581,35 @@ export function useAdminPurge() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin'] }),
   })
 }
+
+/* ============ 表情包库（gateway 学习的群友梗图） ============ */
+export interface EmoteItem {
+  kind: string
+  summary: string
+  data: string
+  group: string
+  ts: number
+  tags?: string
+  hits?: number
+}
+export function useEmotes(q = '', limit = 60) {
+  return useQuery({
+    queryKey: ['emotes', q, limit],
+    queryFn: () => http.get<{ total: number; dir: string; items: EmoteItem[] }>(
+      `/api/emotes?limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ''}`),
+    staleTime: 30_000,
+  })
+}
+export async function fetchEmoteBlob(path: string): Promise<string> {
+  const r = await fetch(`/api/emotes/file?path=${encodeURIComponent(path)}`, { headers: baseHeaders() })
+  if (!r.ok) throw new HttpError(r.status, `HTTP ${r.status}`)
+  const blob = await r.blob()
+  return URL.createObjectURL(blob)
+}
+export function useEmoteDelete() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ts: string) => http.del<{ ok: boolean; remaining: number }>(`/api/emotes/${ts}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['emotes'] }),
+  })
+}

@@ -23,6 +23,7 @@ const AgentRuns = lazy(() => import('./AgentRuns'))
 const BotPersona = lazy(() => import('./BotPersona'))
 const AnnotationCenter = lazy(() => import('./AnnotationCenter'))
 const Reminders = lazy(() => import('./Reminders'))
+const EmoteCenter = lazy(() => import('./EmoteCenter'))
 
 function NotFound() {
   return (
@@ -51,6 +52,7 @@ export default function App() {
                 <Route path="/sessions" element={<SessionsCenter />} />
                 <Route path="/actions" element={<ActionsCenter />} />
                 <Route path="/runs" element={<AgentRuns />} />
+                <Route path="/emotes" element={<EmoteCenter />} />
                 <Route path="/logs" element={<LogsCenter />} />
                 <Route path="/operator" element={<OperatorDesk />} />
                 <Route path="/settings" element={<Settings />} />

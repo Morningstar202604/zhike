@@ -5,7 +5,7 @@ import {
 import {
   MessageCircle, Headset, Settings, Menu, X,
   LayoutDashboard, MessagesSquare, ScrollText, ShieldAlert, ListChecks,
-  Bot, BookOpen, Stamp, Moon, Sun, Search, Command, Bell,
+  Bot, BookOpen, Stamp, Moon, Sun, Search, Command, Bell, Images,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from '../hooks/useMediaQuery'
@@ -30,6 +30,7 @@ export const NAV_GROUPS = [
     items: [
       { to: '/persona', label: '秘书人设', icon: <Bot size={16} /> },
       { to: '/annotations', label: '标注回复', icon: <Stamp size={16} /> },
+      { to: '/emotes', label: '表情包库', icon: <Images size={16} /> },
       { to: '/settings/kb', label: '知识库', icon: <BookOpen size={16} />, match: (p) => p.startsWith('/settings/kb') },
       { to: '/runs', label: 'Agent 任务', icon: <ListChecks size={16} /> },
       { to: '/settings', label: '管理中心', icon: <Settings size={16} />, match: (p) => p.startsWith('/settings') && !p.startsWith('/settings/kb') },
