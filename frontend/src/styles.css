@@ -687,3 +687,10 @@ body {
   background: var(--panel-2); color: var(--ink);
 }
 .tb-search-input:focus { border-color: var(--brand); outline: none; }
+
+/* 管理中心侧栏分组（IA 重排） */
+.set-group { margin-bottom: 10px; }
+.set-group-label {
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 4px 10px;
+}

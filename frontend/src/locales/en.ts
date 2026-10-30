@@ -17,7 +17,7 @@ const en: Record<string, string> = {
   '秘书人设': 'Persona',
   '标注回复': 'Canned Answers',
   '知识库': 'Knowledge Base',
-  '任务运行': 'Agent Runs',
+  'Agent 任务': 'Agent Runs',
   '管理中心': 'Settings',
   '审计': 'Audit',
   '动作审计': 'Action Audit',

@@ -139,7 +139,7 @@ export default function AgentRuns() {
   return (
     <div className="p-4 md:p-6 max-w-[1400px] mx-auto w-full space-y-4 pb-24 md:pb-10">
       <PageHead
-        title={t('任务运行')}
+        title={t('Agent 任务')}
         sub={t('让 Agent 用多步工具调用完成一个目标 · 每步的思考与观察都可回放')}
         right={<button className="btn ghost sm" onClick={() => runs.refetch()} title={t('立即刷新')}><RefreshCw size={13} /></button>}
       />

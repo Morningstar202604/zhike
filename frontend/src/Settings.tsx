@@ -29,23 +29,46 @@ import CardsPanel from './CardsPanel'
 import './pages2.css'
 import { t as tr } from './lib/t'
 
-const TABS = [
-  { key: 'providers', icon: <Plug size={15} />, label: '模型厂商', sub: '地址 + Key 自动检测模型与能力 · 三协议' },
-  { key: 'params', icon: <SlidersHorizontal size={15} />, label: '能力参数', sub: '模型 / 检索 / 上下文 / 记忆 / 引擎' },
-  { key: 'skills', icon: <Wand2 size={15} />, label: '技能', sub: '什么时候用哪个工具' },
-  { key: 'hooks', icon: <ShieldAlert size={15} />, label: '钩子', sub: '管线固定位置的强制规则' },
-  { key: 'permission', icon: <Lock size={15} />, label: '权限', sub: '全面放开 / 核心锁定' },
-  { key: 'cards', icon: <Brain size={15} />, label: '角色卡', sub: 'SillyTavern 卡导入 / 按群绑定人格' },
-  { key: 'tools', icon: <Wrench size={15} />, label: '工具注册表', sub: '可自定义 Agent 能执行的动作' },
-  { key: 'guardrail', icon: <ShieldAlert size={15} />, label: '注入规则', sub: '护栏检测规则管理' },
-  { key: 'kb', icon: <BookOpen size={15} />, label: '知识库', sub: 'RAG 语料增删改' },
-  { key: 'data', icon: <BarChart3 size={15} />, label: '数据概览', sub: '运营统计' },
-  { key: 'mem', icon: <Brain size={15} />, label: '长期记忆', sub: '跨会话沉淀' },
-  { key: 'profiles', icon: <Users size={15} />, label: '档案', sub: '人物与群：备注/标签，机器人靠它认人' },
-  { key: 'lexicon', icon: <MessagesSquare size={15} />, label: '黑话表', sub: '群里的梗与缩写，机器人靠它听懂黑话' },
-  { key: 'inj', icon: <Activity size={15} />, label: '注入日志', sub: '护栏审计' },
-  { key: 'token', icon: <KeyRound size={15} />, label: '访问令牌', sub: '控制台登录凭据' },
+const TAB_GROUPS: { group: string; items: { key: string; icon: React.ReactNode; label: string; sub: string }[] }[] = [
+  {
+    group: '模型与推理',
+    items: [
+      { key: 'providers', icon: <Plug size={15} />, label: '模型厂商', sub: '地址 + Key 自动检测模型与能力 · 三协议' },
+      { key: 'params', icon: <SlidersHorizontal size={15} />, label: '能力参数', sub: '模型 / 检索 / 上下文 / 记忆 / 引擎' },
+    ],
+  },
+  {
+    group: '行为与知识',
+    items: [
+      { key: 'skills', icon: <Wand2 size={15} />, label: '技能', sub: '什么时候用哪个工具' },
+      { key: 'tools', icon: <Wrench size={15} />, label: '工具注册表', sub: '可自定义 Agent 能执行的动作' },
+      { key: 'cards', icon: <Brain size={15} />, label: '角色卡', sub: 'SillyTavern 卡导入 / 按群绑定人格' },
+      { key: 'profiles', icon: <Users size={15} />, label: '档案', sub: '人物与群：备注/标签，机器人靠它认人' },
+      { key: 'lexicon', icon: <MessagesSquare size={15} />, label: '黑话表', sub: '群里的梗与缩写，机器人靠它听懂黑话' },
+      { key: 'mem', icon: <Brain size={15} />, label: '长期记忆', sub: '跨会话沉淀' },
+    ],
+  },
+  {
+    group: '安全与合规',
+    items: [
+      { key: 'permission', icon: <Lock size={15} />, label: '权限', sub: '全面放开 / 核心锁定' },
+      { key: 'guardrail', icon: <ShieldAlert size={15} />, label: '注入规则', sub: '护栏检测规则管理' },
+      { key: 'hooks', icon: <ShieldAlert size={15} />, label: '钩子', sub: '管线固定位置的强制规则' },
+      { key: 'inj', icon: <Activity size={15} />, label: '注入日志', sub: '护栏审计' },
+    ],
+  },
+  {
+    group: '数据与运维',
+    items: [
+      { key: 'data', icon: <BarChart3 size={15} />, label: '数据概览', sub: '运营统计 / 存储维护' },
+      { key: 'token', icon: <KeyRound size={15} />, label: '访问令牌', sub: '控制台登录凭据' },
+    ],
+  },
 ]
+// 平铺视图供 active 查找与页头：必须包含 kb（/settings/kb 是一级导航入口）。
+// TAB_GROUPS 只决定侧栏展示，不含 kb —— 双入口去重只发生在侧栏，URL 与内容保留。
+const KB_TAB = { key: 'kb', icon: <BookOpen size={15} />, label: '知识库', sub: 'RAG 语料增删改' }
+const TABS = [...TAB_GROUPS.flatMap((g) => g.items), KB_TAB]
 
 export default function Settings() {
   const { tab: routeTab } = useParams()
@@ -78,11 +101,16 @@ export default function Settings() {
       <aside className="set-side">
         <div className="ss-title">{tr('管理中心')}</div>
         <div className="ss-sub">{tr('Agent 运行时配置 · 即时生效')}</div>
-        {TABS.map((item) => (
-          <button key={item.key} className={`set-item ${tab === item.key ? 'on' : ''}`} onClick={() => setTab(item.key)}>
-            <span className="si-ico">{item.icon}</span>
-            <span>{tr(item.label)}</span>
-          </button>
+        {TAB_GROUPS.map((g) => (
+          <div key={g.group} className="set-group">
+            <div className="set-group-label">{tr(g.group)}</div>
+            {g.items.map((item) => (
+              <button key={item.key} className={`set-item ${tab === item.key ? 'on' : ''}`} onClick={() => setTab(item.key)}>
+                <span className="si-ico">{item.icon}</span>
+                <span>{tr(item.label)}</span>
+              </button>
+            ))}
+          </div>
         ))}
       </aside>
 
