@@ -898,7 +898,7 @@ def _apply_post_hooks(reply: AgentReply, cfg: dict) -> AgentReply:
     return reply
 
 
-_SELF_FIX_CACHE: tuple[float, str] = (0.0, "")
+_SELF_FIX_CACHE: list = [0.0, ""]  # list 便于原地刷新（tuple 不可写，实测 item assignment 崩）
 
 
 def _self_fix_hint() -> str:
@@ -916,7 +916,7 @@ def _self_fix_hint() -> str:
                    "\n".join(f"- {i}" for i in issues[:3])
     except Exception:
         hint = ""
-    _SELF_FIX_CACHE[:] = (now, hint)
+    _SELF_FIX_CACHE[0], _SELF_FIX_CACHE[1] = now, hint
     return hint
 
 
