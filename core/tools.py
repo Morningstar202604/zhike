@@ -273,11 +273,12 @@ def _next_occurrence(rule: str, hour: int, minute: int, now: datetime) -> dateti
         return base if base > now else at(1)
 
     if kind == "weekday":
-        for i in range(1, 8):
-            cand = at(i) if base <= now else base
-            if i == 1 and base > now:
-                cand = base
-            if cand.weekday() < 5:
+        # 旧实现把 `base <= now` 写在循环里当条件：今天钟点未过时它恒为 False，
+        # 7 次迭代全在试「今天」，周末发起就永远找不到工作日 → 提醒建不上（实测 2026-10-31 周六复现）。
+        # 正确语义：i=0 试今天，之后逐天往后找，共查 8 天必覆盖下个工作日。
+        for i in range(0, 8):
+            cand = base if i == 0 else at(i)
+            if cand > now and cand.weekday() < 5:
                 return cand
         return None
 

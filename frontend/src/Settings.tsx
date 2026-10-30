@@ -5,14 +5,17 @@ import {
   Save, Plus, Pencil, Trash2, X, Activity, Inbox, MessageSquare,
   FileText, Users, Search, Wrench, Zap, ChevronDown, ChevronUp,
   ChevronLeft, ChevronRight, Upload, Download, KeyRound, Check,
-  Plug, Wand2, Lock } from 'lucide-react'
+  Plug, Wand2, Lock, MessagesSquare } from 'lucide-react'
 import { ProviderPanel, SkillsPanel, HooksPanel, PermissionsPanel } from './ProviderCenter'
 import {
   useConfig, useUpdateConfig, useKb, useKbMutations, useKbImport, useKbTest, useKbDocImport, exportKb, useTools, useToolMutations,
   useInjectionRules, useInjectionRuleMutations, useLlmTest, useLlmModels,
   useAdminOverview, useAdminMemory, useAdminInjection, useAdminReport, useAdminStats,
+  useProfiles, useProfileMutations, useLexicon, useLexiconMutations,
+  useAdminSchema, useAdminPurge,
 } from './lib/queries'
 import { StatCard, EmptyState } from './ui'
+import type { Profile, LexiconEntry } from './lib/queries'
 import { useShell } from './components/ResponsiveShell'
 import { Spinner, ErrorBanner } from './components/Spinner'
 import type { AgentConfig, KbEntry, ToolDef, InjectionRule, MemoryEntry, InjectionLogEntry } from './types/api'
@@ -38,6 +41,8 @@ const TABS = [
   { key: 'kb', icon: <BookOpen size={15} />, label: '知识库', sub: 'RAG 语料增删改' },
   { key: 'data', icon: <BarChart3 size={15} />, label: '数据概览', sub: '运营统计' },
   { key: 'mem', icon: <Brain size={15} />, label: '长期记忆', sub: '跨会话沉淀' },
+  { key: 'profiles', icon: <Users size={15} />, label: '档案', sub: '人物与群：备注/标签，机器人靠它认人' },
+  { key: 'lexicon', icon: <MessagesSquare size={15} />, label: '黑话表', sub: '群里的梗与缩写，机器人靠它听懂黑话' },
   { key: 'inj', icon: <Activity size={15} />, label: '注入日志', sub: '护栏审计' },
   { key: 'token', icon: <KeyRound size={15} />, label: '访问令牌', sub: '控制台登录凭据' },
 ]
@@ -114,6 +119,8 @@ export default function Settings() {
         {tab === 'kb' && <KbPanel />}
         {tab === 'data' && <DataPanel />}
         {tab === 'mem' && <MemPanel />}
+        {tab === 'profiles' && <ProfilesPanel />}
+        {tab === 'lexicon' && <LexiconPanel />}
         {tab === 'inj' && <InjPanel />}
         {tab === 'token' && <TokenPanel />}
       </main>
@@ -811,6 +818,10 @@ function DataPanel() {
   const { data: ov, isLoading } = useAdminOverview()
   const { data: report } = useAdminReport()
   const { data: stats } = useAdminStats()
+  const { data: schema } = useAdminSchema()
+  const purge = useAdminPurge()
+  const fb = useFeedback()
+  const [confirmPurge, setConfirmPurge] = useState(false)
   if (isLoading || !ov) return <Spinner full label={tr('加载数据…')} />
 
   const days = report?.daily ?? []
@@ -834,6 +845,40 @@ function DataPanel() {
         <StatCard icon={<BookOpen size={18} />} value={ov.kb_count} label={tr('知识库')} tone="brand" />
         <StatCard icon={<ShieldAlert size={18} />} value={ov.injection} label={tr('注入拦截')} tone="danger" />
         <StatCard icon={<Activity size={18} />} value={ov.feedback.total} label={`反馈 · 好评率 ${(ov.feedback.help_rate * 100).toFixed(1)}%`} tone="ok" />
+      </div>
+
+      {/* 诊断区：DB 版本 / 表容量 / 数据清理（/api/admin/schema + /api/admin/purge） */}
+      <div className="grp" style={{ marginTop: 14 }}>
+        <div className="grp-head">
+          <h3>{tr('存储与维护')}</h3>
+          <span className="gh-note">{schema ? tr('schema v{v}', { v: schema.schema_version }) : tr('…')}</span>
+        </div>
+        <div className="grp-body">
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {Object.entries(schema?.tables ?? {}).map(([t, n]) => (
+              <span key={t} className="badge muted" title={`${t}: ${n} 行`}>{t} · {n}</span>
+            ))}
+          </div>
+          {confirmPurge ? (
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <span style={{ color: 'var(--danger)' }}>{tr('将清理 180 天前的运营数据（审计链保留），确定？')}</span>
+              <button className="btn sm" style={{ background: 'var(--danger)', color: '#fff' }}
+                disabled={purge.isPending}
+                onClick={() => purge.mutate(180, {
+                  onSuccess: (r) => {
+                    setConfirmPurge(false)
+                    fb.toast.success(tr('已清理 {n} 条', { n: Object.values(r.removed || {}).reduce((a: number, b) => a + Number(b || 0), 0) }))
+                  },
+                  onError: (e) => fb.toast.error(`${tr('清理失败')}: ${(e as Error).message}`),
+                })}>
+                {purge.isPending ? tr('清理中…') : tr('确认清理')}
+              </button>
+              <button className="btn ghost sm" onClick={() => setConfirmPurge(false)}>{tr('取消')}</button>
+            </div>
+          ) : (
+            <button className="btn secondary sm" onClick={() => setConfirmPurge(true)}>{tr('清理 180 天前的运营数据…')}</button>
+          )}
+        </div>
       </div>
 
       <div className="grp" style={{ marginTop: 14 }}>
@@ -988,6 +1033,125 @@ function InjPanel() {
         </table>
       </div>
       {pg.hasPages && <Pager page={pg.page} maxPage={pg.maxPage} total={pg.total} onChange={pg.setPage} label={tr('注入日志')} />}
+    </>
+  )
+}
+
+
+/* ============ 档案（人物/群）：后端 /api/profiles ============ */
+function ProfilesPanel() {
+  const { data, isLoading } = useProfiles()
+  const { save } = useProfileMutations()
+  const fb = useFeedback()
+  const items: Profile[] = data?.profiles ?? []
+  const pg = usePagination(items)
+  const [editing, setEditing] = useState<string | null>(null)
+  const [note, setNote] = useState('')
+  const [alias, setAlias] = useState('')
+
+  if (isLoading) return <Spinner full label={tr('加载档案…')} />
+  if (!items.length) return <EmptyState icon={<Users size={22} />} title={tr('还没有档案')} desc={tr('群里有人说话后自动建档；也可以手动添加备注。')} />
+
+  const startEdit = (p: Profile) => {
+    setEditing(p.key); setNote(p.note || ''); setAlias(p.alias || '')
+  }
+  const commit = (key: string) => {
+    save.mutate({ key, note, alias }, {
+      onSuccess: () => { setEditing(null); fb.toast.success(tr('档案已保存')) },
+      onError: (e) => fb.toast.error(`${tr('保存失败')}: ${(e as Error).message}`),
+    })
+  }
+
+  return (
+    <>
+      <div className="tbl-wrap">
+        <table className="dt">
+          <thead><tr><th>{tr('标识')}</th><th>{tr('类型')}</th><th>{tr('昵称')}</th><th>{tr('别名')}</th><th>{tr('互动')}</th><th>{tr('备注')}</th><th></th></tr></thead>
+          <tbody>
+            {pg.pageItems.map((p) => (
+              <tr key={p.key}>
+                <td className="raw" title={p.key}>{p.key}</td>
+                <td><span className="badge">{p.kind}</span></td>
+                <td>{p.display_name || '—'}</td>
+                <td>
+                  {editing === p.key
+                    ? <input value={alias} onChange={(e) => setAlias(e.target.value)} style={{ width: 100 }} />
+                    : (p.alias || '—')}
+                </td>
+                <td>{Object.values(p.stats || {}).reduce((a: number, b) => a + Number(b || 0), 0)}</td>
+                <td>
+                  {editing === p.key
+                    ? <input value={note} onChange={(e) => setNote(e.target.value)} style={{ width: 160 }} />
+                    : <span className="raw" title={p.note}>{p.note || '—'}</span>}
+                </td>
+                <td>
+                  {editing === p.key
+                    ? <>
+                        <button className="btn sm" onClick={() => commit(p.key)} disabled={save.isPending}>{tr('存')}</button>
+                        <button className="btn ghost sm" onClick={() => setEditing(null)}>{tr('取消')}</button>
+                      </>
+                    : <button className="btn ghost sm" onClick={() => startEdit(p)}>{tr('编辑')}</button>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {pg.hasPages && <Pager page={pg.page} maxPage={pg.maxPage} total={pg.total} onChange={pg.setPage} label={tr('档案')} />}
+    </>
+  )
+}
+
+/* ============ 黑话表：后端 /api/lexicon ============ */
+function LexiconPanel() {
+  const { data, isLoading } = useLexicon()
+  const { add } = useLexiconMutations()
+  const fb = useFeedback()
+  const items: LexiconEntry[] = data?.entries ?? []
+  const pg = usePagination(items)
+  const [term, setTerm] = useState('')
+  const [meaning, setMeaning] = useState('')
+
+  const submit = () => {
+    if (!term.trim()) return
+    add.mutate({ scope: 'global', term: term.trim(), meaning: meaning.trim() }, {
+      onSuccess: () => { setTerm(''); setMeaning(''); fb.toast.success(tr('黑话已记录')) },
+      onError: (e) => fb.toast.error(`${tr('保存失败')}: ${(e as Error).message}`),
+    })
+  }
+
+  return (
+    <>
+      <div className="f-row" style={{ marginBottom: 10 }}>
+        <span className="f-lb">{tr('新增')}</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder={tr('黑话，如：绝绝子')} maxLength={40} style={{ width: 160 }} />
+          <input value={meaning} onChange={(e) => setMeaning(e.target.value)} placeholder={tr('释义')} maxLength={120} style={{ width: 220 }} />
+          <button className="btn sm" onClick={submit} disabled={!term.trim() || add.isPending}>{add.isPending ? tr('保存中…') : tr('添加')}</button>
+        </div>
+      </div>
+      {isLoading ? <Spinner full label={tr('加载黑话表…')} /> : !items.length ? (
+        <EmptyState icon={<MessagesSquare size={22} />} title={tr('黑话表还是空的')} desc={tr('群里出现的黑话会自动沉淀到这里待补充；也可以手动添加。')} />
+      ) : (
+        <>
+          <div className="tbl-wrap">
+            <table className="dt">
+              <thead><tr><th>{tr('黑话')}</th><th>{tr('释义')}</th><th>{tr('出现次数')}</th><th>{tr('更新时间')}</th></tr></thead>
+              <tbody>
+                {pg.pageItems.map((e: LexiconEntry) => (
+                  <tr key={e.id}>
+                    <td><b>{e.term}</b></td>
+                    <td className="raw">{e.meaning || tr('（待补充）')}</td>
+                    <td>{e.hits}</td>
+                    <td>{(e.updated_at || '').slice(0, 16).replace('T', ' ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {pg.hasPages && <Pager page={pg.page} maxPage={pg.maxPage} total={pg.total} onChange={pg.setPage} label={tr('黑话表')} />}
+        </>
+      )}
     </>
   )
 }

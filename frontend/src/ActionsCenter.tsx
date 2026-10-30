@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { ShieldAlert, CheckCircle2, XCircle, RefreshCw, Radio, Zap, GitBranch } from 'lucide-react'
+import { ShieldAlert, CheckCircle2, XCircle, RefreshCw, Radio, Zap, GitBranch , Play, FileSearch } from 'lucide-react'
 import {
   useActionCatalog, useActionLogs, useApprovals, useApprovalMutations,
   useAuditVerify, useExecutorHealth, isAuthError,
+  useActionExecute, useAuditEntries,
 } from './lib/queries'
 import type { ActionLogEntry } from './lib/queries'
 import { PageHead, EmptyState } from './ui'
@@ -70,6 +71,9 @@ export default function ActionsCenter() {
   const audit = useAuditVerify()
   const execHealth = useExecutorHealth()
   const fb = useFeedback()
+  const auditEntries = useAuditEntries(100)
+  const execute = useActionExecute()
+  const [execOpen, setExecOpen] = useState(false)
 
   const authErr = isAuthError(catalog.error) ? catalog.error : isAuthError(logs.error) ? logs.error : null
   if (authErr) {
@@ -116,12 +120,37 @@ export default function ActionsCenter() {
           <button className="btn ghost sm ml-auto" onClick={() => audit.mutate()} disabled={audit.isPending}>
             <GitBranch size={13} /> {audit.isPending ? '校验中…' : '校验审计链'}
           </button>
+          <button className="btn sm" onClick={() => setExecOpen((o) => !o)}>
+            <Play size={13} /> {execOpen ? '收起执行' : '执行动作'}
+          </button>
           {audit.data && (
             <span className={`badge ${audit.data.ok ? 'ok' : 'danger'}`}>
               {audit.data.ok ? `完整 · ${audit.data.checked} 条` : `断链 @ #${audit.data.broken_at}`}
             </span>
           )}
         </div>
+      )}
+
+      {execOpen && cat && <ActionRunner actions={cat.actions} exec={execute} onDone={() => { logs.refetch(); auditEntries.refetch() }} />}
+
+      {auditEntries.data && auditEntries.data.entries.length > 0 && (
+        <section className="bg-panel border border-line-2 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <FileSearch size={15} className="text-brand" />
+            <h3 className="font-semibold text-sm">{t('审计链（最近）')}</h3>
+            <span className="badge muted">{auditEntries.data.entries.length}</span>
+          </div>
+          <div className="max-h-56 overflow-auto text-xs space-y-1">
+            {auditEntries.data.entries.map((e) => (
+              <div key={e.id} className="flex gap-2 items-baseline border-b border-line-2/50 py-1">
+                <span className="text-muted shrink-0">{(e.ts || '').slice(5, 16).replace('T', ' ')}</span>
+                <span className="badge info shrink-0">{e.kind}</span>
+                <span className="shrink-0">{e.actor}</span>
+                <span className="text-muted truncate" title={e.payload}>{e.payload}</span>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {catalog.isLoading && <Spinner full label={t('加载动作目录…')} />}
@@ -248,5 +277,67 @@ export default function ActionsCenter() {
         </div>
       )}
     </div>
+  )
+}
+
+/* ============ 动作执行表单：选动作 → 填参数 → 执行（L0 试运行/L1 谨慎/L2 走审批） ============ */
+function ActionRunner({ actions, exec, onDone }: {
+  actions: { name: string; summary: string; risk: number; risk_label: string; args: string[]; required: string[]; requires_approval: boolean }[]
+  exec: ReturnType<typeof useActionExecute>
+  onDone: () => void
+}) {
+  const [name, setName] = useState('')
+  const [params, setParams] = useState<Record<string, string>>({})
+  const spec = actions.find((a) => a.name === name)
+  const preview = exec.data
+
+  return (
+    <section className="bg-panel border border-line-2 rounded-xl p-4 space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Play size={15} className="text-brand" />
+        <h3 className="font-semibold text-sm">执行动作</h3>
+        {spec && (
+          <>
+            <span className={`badge ${spec.risk === 0 ? 'muted' : spec.risk === 1 ? 'info' : 'danger'}`}>{spec.risk_label}</span>
+            {spec.requires_approval && <span className="badge warn">需审批</span>}
+            <span className="text-muted text-xs">{spec.summary}</span>
+          </>
+        )}
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <select value={name} onChange={(e) => { setName(e.target.value); setParams({}) }}
+          className="tb-search-input" style={{ padding: "6px 10px" }} aria-label="选择动作">
+          <option value="">— 选择动作 —</option>
+          {actions.map((a) => (
+            <option key={a.name} value={a.name}>{a.name} · {a.summary}</option>
+          ))}
+        </select>
+        <button className="btn sm" disabled={!name || exec.isPending}
+          onClick={() => exec.mutate({ action: name, params }, { onSuccess: onDone })}>
+          {exec.isPending ? '执行中…' : '执行'}
+        </button>
+        {exec.isError && <span className="badge danger">{(exec.error as Error).message}</span>}
+      </div>
+      {spec && spec.args.length > 0 && (
+        <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
+          {spec.args.map((arg) => (
+            <label key={arg} className="text-xs text-muted">
+              {arg}{spec.required.includes(arg) ? ' *' : ''}
+              <input
+                style={{ width: "100%", marginTop: 4, padding: "6px 10px" }}
+                value={params[arg] ?? ''}
+                onChange={(e) => setParams((prev) => ({ ...prev, [arg]: e.target.value }))}
+                placeholder={spec.required.includes(arg) ? '必填' : '可选'}
+              />
+            </label>
+          ))}
+        </div>
+      )}
+      {preview && (
+        <pre className="text-xs p-3 rounded bg-[var(--panel-2)] overflow-auto max-h-44">
+          {JSON.stringify(preview, null, 2)}
+        </pre>
+      )}
+    </section>
   )
 }

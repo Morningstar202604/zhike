@@ -270,7 +270,7 @@ export interface ActionLogEntry {
 }
 
 export interface ActionCatalog {
-  actions: { name: string; summary: string; risk: number; risk_label: string; group: string; requires_approval: boolean }[]
+  actions: { name: string; summary: string; risk: number; risk_label: string; group: string; args: string[]; required: string[]; requires_approval: boolean }[]
   risks: { L0: number; L1: number; L2: number }
   agent_tier: number
   tier_label: string
@@ -437,5 +437,147 @@ export function useWebSearchStatus() {
     queryFn: () => http.get<{ available: boolean; provider: string; hint?: string | null }>('/api/websearch/status'),
     staleTime: 60_000,
     retry: false,
+  })
+}
+
+
+/* ============ 档案（人物/群）与黑话表 ============ */
+export interface Profile {
+  key: string
+  kind: string
+  display_name: string
+  alias: string
+  tags: string[]
+  note: string
+  stats: Record<string, number>
+  updated_at: string
+}
+export interface LexiconEntry {
+  id: number
+  scope: string
+  term: string
+  meaning: string
+  example: string
+  hits: number
+  updated_at: string
+}
+
+export function useProfiles(kind = '') {
+  return useQuery({
+    queryKey: ['profiles', kind],
+    queryFn: () => http.get<{ profiles: Profile[] }>(`/api/profiles?limit=200${kind ? `&kind=${kind}` : ''}`),
+    staleTime: 30_000,
+  })
+}
+export function useProfileMutations() {
+  const qc = useQueryClient()
+  const save = useMutation({
+    mutationFn: (body: { key: string; kind?: string; display_name?: string; alias?: string; tags?: string[]; note?: string }) =>
+      http.put<{ profile: Profile }>(`/api/profiles/${encodeURIComponent(body.key)}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['profiles'] }),
+  })
+  return { save }
+}
+export function useLexicon(scope = '') {
+  return useQuery({
+    queryKey: ['lexicon', scope],
+    queryFn: () => http.get<{ entries: LexiconEntry[] }>(`/api/lexicon?limit=200${scope ? `&scope=${encodeURIComponent(scope)}` : ''}`),
+    staleTime: 30_000,
+  })
+}
+export function useLexiconMutations() {
+  const qc = useQueryClient()
+  const add = useMutation({
+    mutationFn: (body: { scope: string; term: string; meaning: string; example?: string }) =>
+      http.post<{ entry: LexiconEntry }>('/api/lexicon', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lexicon'] }),
+  })
+  return { add }
+}
+export interface SearchHit {
+  id: number
+  session_id: string
+  role: string
+  content: string
+  created_at: string
+  visitor_id: string
+}
+export function useSearchMessages(q: string) {
+  return useQuery({
+    queryKey: ['search', q],
+    queryFn: () => http.get<{ results: SearchHit[]; query: string }>(`/api/search/messages?q=${encodeURIComponent(q)}&limit=50`),
+    enabled: q.trim().length >= 2,
+  })
+}
+
+/* ============ 动作执行（控制台直接试 L0 只读动作）与审计条目 ============ */
+export interface ActionExecuteResult {
+  status: string
+  result?: unknown
+  action_log_id?: string
+  approval_id?: string
+  summary?: string
+  error?: string
+}
+export function useActionExecute() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { action: string; params: Record<string, string> }) =>
+      http.post<ActionExecuteResult>('/api/actions/execute', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['actions'] })
+      qc.invalidateQueries({ queryKey: ['audit', 'entries'] })
+    },
+  })
+}
+export interface AuditEntry {
+  id: number
+  ts: string
+  actor: string
+  kind: string
+  payload: string
+  hash: string
+}
+export function useAuditEntries(limit = 100) {
+  return useQuery({
+    queryKey: ['audit', 'entries', limit],
+    queryFn: () => http.get<{ entries: AuditEntry[] }>(`/api/admin/audit/entries?limit=${limit}`),
+    staleTime: 15_000,
+  })
+}
+export interface ChannelAdapter {
+  name: string
+  capabilities: string[]
+  supports: Record<string, boolean>
+  status: string
+}
+export function useChannelAdapters() {
+  return useQuery({
+    queryKey: ['channels', 'adapters'],
+    queryFn: () => http.get<{ adapters: ChannelAdapter[] }>('/api/channels/adapters'),
+    staleTime: 30_000,
+  })
+}
+export interface FeedbackSummary { total: number; helpful: number; not_helpful: number; help_rate: number }
+export function useFeedbackSummary() {
+  return useQuery({
+    queryKey: ['feedback', 'summary'],
+    queryFn: () => http.get<FeedbackSummary>('/api/feedback/summary'),
+    staleTime: 30_000,
+  })
+}
+export interface DataStats { [table: string]: number }
+export function useAdminSchema() {
+  return useQuery({
+    queryKey: ['admin', 'schema'],
+    queryFn: () => http.get<{ schema_version: number; tables: Record<string, number> }>('/api/admin/schema'),
+    staleTime: 60_000,
+  })
+}
+export function useAdminPurge() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (days: number) => http.post<{ days: number; removed: Record<string, number> }>('/api/admin/purge', { days }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin'] }),
   })
 }

@@ -6,7 +6,7 @@ import {
   Bot, Zap, Headset, Lock, RefreshCw, LayoutDashboard, CheckCircle2, AlertTriangle,
   Radio, ScrollText, MessagesSquare, BarChart3,
 } from 'lucide-react'
-import { useAdminOverview, useAdminStats, useAdminReport, useAgentHealth, useAdminChannels, useConfig, useUpdateConfig } from './lib/queries'
+import { useAdminOverview, useAdminStats, useAdminReport, useAgentHealth, useAdminChannels, useConfig, useUpdateConfig, useFeedbackSummary, useChannelAdapters } from './lib/queries'
 import { isAuthError } from './lib/queries'
 import TokenGate from './components/TokenGate'
 import type { ChannelStatus } from './types/api'
@@ -28,6 +28,8 @@ export default function Dashboard() {
   const stats = useAdminStats()
   const report = useAdminReport()
   const channelsQ = useAdminChannels()
+  const feedbackSummary = useFeedbackSummary()
+  const adapters = useChannelAdapters()
   const { data: cfgRes } = useConfig()
   const upd = useUpdateConfig()
   const adminToken = useAppStore((s) => s.adminToken)
@@ -275,13 +277,22 @@ export default function Dashboard() {
           <ChartCard title={t('渠道连接')} icon={<Radio size={15} />}>
             {chs && chs.length > 0 ? (
               <div className="flex flex-col justify-center gap-4 px-2" style={{ height: 240 }}>
-                {chs.map((c) => (
-                  <div key={c.channel} className="flex items-center gap-3 text-sm">
+                {chs.map((c) => {
+                  const adapter = c.channel === 'onebot_v11' ? adapters.data?.adapters?.[0] : undefined
+                  const caps = adapter ? Object.entries(adapter.supports).filter(([, ok]) => ok).map(([k]) => k) : []
+                  return (
+                  <div key={c.channel} className="flex items-center gap-3 text-sm flex-wrap">
                     <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${c.status === 'online' ? 'bg-ok' : c.status === 'stale' ? 'bg-warn' : c.status === 'builtin' ? 'bg-brand' : 'bg-danger'}`} />
                     <span className="font-medium w-[110px]">{label(CHANNEL_LABEL, c.channel)}</span>
                     <span className="text-xs text-muted">{channelText(c)}</span>
+                    {caps.length > 0 && (
+                      <span className="flex gap-1 flex-wrap">
+                        {caps.map((cap) => <span key={cap} className="badge muted" style={{ fontSize: 10 }}>{cap}</span>)}
+                      </span>
+                    )}
                   </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <div className="h-[240px] grid place-items-center text-xs text-muted">{t('加载中…')}</div>
@@ -327,13 +338,22 @@ export default function Dashboard() {
           <ChartCard title={t('渠道连接')} icon={<Radio size={15} />}>
             {chs && chs.length > 0 ? (
               <div className="h-[250px] flex flex-col justify-center gap-4 px-2">
-                {chs.map((c) => (
-                  <div key={c.channel} className="flex items-center gap-3 text-sm">
+                {chs.map((c) => {
+                  const adapter = c.channel === 'onebot_v11' ? adapters.data?.adapters?.[0] : undefined
+                  const caps = adapter ? Object.entries(adapter.supports).filter(([, ok]) => ok).map(([k]) => k) : []
+                  return (
+                  <div key={c.channel} className="flex items-center gap-3 text-sm flex-wrap">
                     <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${c.status === 'online' ? 'bg-ok' : c.status === 'stale' ? 'bg-warn' : c.status === 'builtin' ? 'bg-brand' : 'bg-danger'}`} />
                     <span className="font-medium w-[110px]">{label(CHANNEL_LABEL, c.channel)}</span>
                     <span className="text-xs text-muted">{channelText(c)}</span>
+                    {caps.length > 0 && (
+                      <span className="flex gap-1 flex-wrap">
+                        {caps.map((cap) => <span key={cap} className="badge muted" style={{ fontSize: 10 }}>{cap}</span>)}
+                      </span>
+                    )}
                   </div>
-                ))}
+                  )
+                })}
                 <p className="text-[11px] text-muted">{t('QQ 网关离线？启动 NapCat(:3001) 与 gateway/bot.py，每 30 秒自动心跳上报。')}</p>
               </div>
             ) : (

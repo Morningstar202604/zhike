@@ -738,6 +738,29 @@ def test_recurring_weekday_skips_weekend():
     assert res["repeat_rule"] == "weekday"
 
 
+def test_recurring_weekday_from_saturday_lands_on_monday():
+    """冻结时间回归：周六发起「工作日上午9点」必须落到下周一。
+
+    旧实现把 `base <= now` 写在循环里当条件，今天钟点未过时 7 次迭代全在
+    试「今天」，周末发起返回 None → 提醒建不上（2026-10-31 周六实爆发）。
+    这里同时冻结三个发起时刻，不再随日历过期。
+    """
+    from core import tools as t
+
+    sat_early = datetime(2026, 10, 31, 1, 5).astimezone()   # 周六凌晨
+    fri_pm = datetime(2026, 10, 30, 14, 0).astimezone()     # 周五下午（今天9点已过）
+    fri_am = datetime(2026, 10, 30, 8, 0).astimezone()      # 周五早上（今天9点未到）
+
+    d = t._next_occurrence("weekday", 9, 0, sat_early)
+    assert d is not None and d.weekday() == 0 and d.hour == 9, f"SAT: {d}"
+
+    d = t._next_occurrence("weekday", 9, 0, fri_pm)
+    assert d is not None and d.weekday() == 0 and d.hour == 9, f"FRI-PM: {d}"
+
+    d = t._next_occurrence("weekday", 9, 0, fri_am)
+    assert d is not None and d.weekday() == 4 and d.day == 30, f"FRI-AM: {d}"
+
+
 def test_detect_tool_routes_recurring_reminders():
     enabled = {"remind": 1}
     assert tools.detect_tool("每天8点提醒我喝水", enabled) == ("remind", {"text": "喝水", "when": "每天8点"})
