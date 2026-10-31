@@ -39,7 +39,6 @@ export const NAV_GROUPS = [
   {
     label: '审计',
     items: [
-      { to: '/actions', label: '动作审计', icon: <ShieldAlert size={16} /> },
       { to: '/logs', label: '日志中心', icon: <ScrollText size={16} /> },
     ],
   },

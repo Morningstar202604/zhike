@@ -1,6 +1,6 @@
 import React, { lazy, Suspense } from 'react'
 import ReactDOM from 'react-dom/client'
-import { BrowserRouter, Link, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, Routes, Route } from 'react-router-dom'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './lib/queryClient'
 import ResponsiveShell from './components/ResponsiveShell'
@@ -50,7 +50,7 @@ export default function App() {
                 <Route path="/persona" element={<BotPersona />} />
                 <Route path="/annotations" element={<AnnotationCenter />} />
                 <Route path="/sessions" element={<SessionsCenter />} />
-                <Route path="/actions" element={<ActionsCenter />} />
+                <Route path="/actions" element={<Navigate to="/runs" replace />} />
                 <Route path="/runs" element={<AgentRuns />} />
                 <Route path="/emotes" element={<EmoteCenter />} />
                 <Route path="/logs" element={<LogsCenter />} />
