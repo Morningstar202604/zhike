@@ -95,7 +95,7 @@ def test_symlink_escape_rejected(policy, workspace, tmp_path):
     if os.name == "nt":
         import subprocess
         r = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(outside)],
-                           capture_output=True, text=True)
+                           capture_output=True)
         made = r.returncode == 0
     if not made:
         try:
