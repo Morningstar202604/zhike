@@ -12,6 +12,7 @@ import asyncio
 import base64
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,12 @@ import websockets
 
 ROOT = Path(__file__).resolve().parent.parent
 SELF_ID = 10000
+
+
+def _new_runtime_dir() -> Path:
+    base = ROOT / ".tmp" / "qq_e2e"
+    base.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="run-", dir=base))
 
 
 def _free_port() -> int:
@@ -151,7 +158,8 @@ def _msg_text(action: dict | None) -> str:
 
 
 async def main() -> int:
-    tmp = tempfile.mkdtemp(prefix="zhike_qq_e2e_")
+    runtime_dir = _new_runtime_dir()
+    tmp = str(runtime_dir)
     env = {**os.environ, "CS_AGENT_DB": os.path.join(tmp, "e2e.db")}
     env.pop("USER_LLM_API_KEY", None)  # 规则模式，行为确定性
     # CHANNEL_TOKEN：core 现在强制要求渠道令牌（未设置则 /v1/ingest 返回 503）。
@@ -161,33 +169,58 @@ async def main() -> int:
     # BGE 懒加载若无外网，HF Hub HEAD 重试会阻塞分钟级；离线模式直接用本地缓存（无缓存则快速失败走 bigram）
     env["HF_HUB_OFFLINE"] = "1"
     procs: list[subprocess.Popen] = []
+    log_files = []
     actions: list[dict | None] = []
     try:
         # 1. 本地图片源
         srv = HTTPServer(("127.0.0.1", IMG_PORT), _ImgHandler)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         # 2. 核心（日志落盘便于排障）
-        core_log = open("/tmp/zhike_qq_core.log", "w")
+        core_log = open(runtime_dir / "core.log", "w", encoding="utf-8")
+        log_files.append(core_log)
         procs.append(subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "core.main:app", "--host", "127.0.0.1", "--port", str(CORE_PORT)],
             cwd=ROOT, env=env, stdout=core_log, stderr=subprocess.STDOUT,
         ))
-        for _ in range(50):
-            try:
-                if (await httpx.AsyncClient().get(f"{CORE}/healthz")).status_code == 200:
-                    break
-            except Exception:
-                await asyncio.sleep(0.3)
-        else:
-            print("FAIL: 核心服务未就绪")
-            return 1
+        async with httpx.AsyncClient(timeout=10) as client:
+            for _ in range(50):
+                try:
+                    if (await client.get(f"{CORE}/healthz")).status_code == 200:
+                        break
+                except Exception:  # aqg: top-level boundary
+                    await asyncio.sleep(0.3)
+            else:
+                print("FAIL: 核心服务未就绪")
+                return 1
+            configured = await client.put(
+                f"{CORE}/api/config",
+                headers={"X-Admin-Token": env["ADMIN_TOKEN"]},
+                json={"config": {"engine": {"mode": "rule"}}},
+            )
+            if configured.status_code != 200:
+                print(f"FAIL: 无法切换规则模式（HTTP {configured.status_code}）")
+                return 1
         # 3. 网关（连假 NapCat；日志落盘便于排障；PORT=nonebot 内置 uvicorn 端口，避开 8080 冲突）
         gw_env = {**env, "ONEBOT_WS_URL": f"ws://127.0.0.1:{NAPCAT_PORT}", "CORE_BASE_URL": CORE, "PORT": "8031",
                   # 演练里网关先于假协议端起进程，跳过启动前探测
                   "GATEWAY_SKIP_PREFLIGHT": "1"}
-        gw_log = open("/tmp/zhike_qq_gw.log", "w")
+        gw_log = open(runtime_dir / "gateway.log", "w", encoding="utf-8")
+        log_files.append(gw_log)
+        gateway_bootstrap = (
+            "import runpy\n"
+            "from urllib.parse import urlparse\n"
+            "from core import url_guard\n"
+            "_check_url = url_guard.check_url\n"
+            "def _e2e_check_url(url):\n"
+            f"    parsed = urlparse(url)\n"
+            f"    if parsed.hostname == '127.0.0.1' and parsed.port == {IMG_PORT}:\n"
+            "        return url\n"
+            "    return _check_url(url)\n"
+            "url_guard.check_url = _e2e_check_url\n"
+            "runpy.run_path('gateway/bot.py', run_name='__main__')\n"
+        )
         procs.append(subprocess.Popen(
-            [sys.executable, "gateway/bot.py"], cwd=ROOT, env=gw_env,
+            [sys.executable, "-c", gateway_bootstrap], cwd=ROOT, env=gw_env,
             stdout=gw_log, stderr=subprocess.STDOUT,
         ))
         # 4. 演练
@@ -200,6 +233,12 @@ async def main() -> int:
                 p.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 p.kill()
+        for log_file in log_files:
+            log_file.close()
+        if all(a is not None for a in actions):
+            shutil.rmtree(runtime_dir, ignore_errors=True)
+        else:
+            print(f"[diagnostic] runtime logs kept at {runtime_dir}")
 
     def _is_reply(a: dict | None, msg_type: str) -> bool:
         """判断是否为指定类型的回复。
