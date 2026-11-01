@@ -74,7 +74,7 @@
 
 | 问题 | 为什么暂不改 | 建议 |
 |---|---|---|
-| `core/store.py` 2267 行、`core/tools.py` 1807 行仍偏大 | 拆分需要同步改 50+ 处调用与测试替身，单次改动风险高于收益；本轮已先把「能独立单测的部分」抽出 | 下一轮按 `store` 的实体边界（sessions/memory/actions/agent）拆 4 个模块，保持函数级 API 不变 |
+| `core/store.py` 2267 行、`core/tools.py` 1857 行仍偏大 | 本轮已先将配置持久化（当前实现 `core/config_store.py`）从 `store.py` 抽出，保留 `store.*` 兼容入口；其余实体仍需分片迁移 | 下一轮按 `store` 的实体边界（sessions/memory/actions/agent）拆 4 个模块，保持函数级 API 不变；严格审计路线优先 `agent_store` |
 | `core/main.py` 仍有 110 个路由在闭包里 | 抽路由需要逐个核对 `app.state` 依赖，机器化拆分易错；已完成最内聚的 KB 与两个基础设施模块 | 按 `api/{sessions,admin,actions,agent}.py` 分批迁移，每批跑全量测试 |
 | `sqlite-vec` / `sentence-transformers` 未安装 | 属可选重型依赖（~2GB），当前 14 条 KB 用 FTS5 已够；装上后会自动启用 | 生产需要语义召回时执行 `pip install -r requirements-embedding.txt` |
 | `echarts` 单 chunk 554KB | 已按需注册（Bar/Line/Pie），剩余体积是 echarts 核心本身 | 若首屏体积敏感，可把 Dashboard 图表再拆为二次懒加载 |

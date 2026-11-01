@@ -4,7 +4,7 @@ import os
 import threading
 
 from core import persona as persona_mod
-from core import store
+from core import config_store
 from core import crypto
 
 def _defaults() -> dict:
@@ -146,7 +146,7 @@ def invalidate_cache() -> None:
 
 def config_version() -> int:
     """配置版本号：存在 meta 表，每次 set_config 递增。"""
-    return store.config_version()
+    return config_store.config_version()
 
 
 def get_config() -> dict:
@@ -163,7 +163,7 @@ def get_config() -> dict:
             return json.loads(json.dumps(_CFG_CACHE["value"]))
 
     cfg = _defaults()
-    stored = store.get_config() or {}
+    stored = config_store.get_config() or {}
     cfg = _deep_merge(cfg, stored)
     stored_key = cfg["llm"].get("api_key") or ""
     # DB 里存的可能是 Fernet 加密 token，运行时解密
@@ -310,6 +310,6 @@ def update_config(patch: dict) -> dict:
                 k = (match or {}).get("api_key") or ""
             if k.strip():
                 p["api_key"] = crypto.encrypt_key(k)
-    store.set_config(patch)
+    config_store.set_config(patch)
     invalidate_cache()
     return get_config()
