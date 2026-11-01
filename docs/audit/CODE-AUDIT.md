@@ -7,14 +7,14 @@
 
 | 维度 | 审计前 | 审计后 |
 |---|---|---|
-| 后端测试 | 807 passed / 7 skipped | **833 passed / 3 skipped** |
+| 后端测试 | 807 passed / 7 skipped | **840 passed / 3 skipped** |
 | 端到端体检 | 11/18 通过（7 项失败） | **18/18 通过** |
 | ruff（生产代码） | 只查 6 条语法规则 | **E9/F/B/ASYNC 全量，0 错误** |
 | 前端 lint | 无 lint 配置 | **oxlint 0 error / 64 warning** |
 | 前端类型检查 | `tsc --noEmit` 通过 | 通过（新增 4 个 TS 组件/钩子后仍通过） |
 | 可观测性 | 手写 registry，无直方图、无请求 ID | prometheus_client 直方图 + `X-Request-ID` + `/readyz` |
 | 预设角色 | 6 个，前后端双份硬编码 | **15 个 / 6 分类，后端单一事实源** |
-| `core/main.py` | 2260 行（路由+WS+文件锁+SPA 全混） | **2003 行**（4 个职责已抽出） |
+| `core/main.py` | 2260 行（路由+WS+文件锁+SPA 全混） | **2015 行**（KB 与 reminders API 已抽出） |
 | 搜索可用性 | 需 API Key 或必应 HTML 抓取 | **免 Key ddgs 并行竞速，首次 1.54s 出结果** |
 | 网页正文 | 正则去标签（导航/页脚混入） | trafilatura 可读性抽取（实测只留正文） |
 
@@ -74,7 +74,7 @@
 
 | 问题 | 为什么暂不改 | 建议 |
 |---|---|---|
-| `core/store.py` 2141 行、`core/tools.py` 1896 行、`core/main.py` 2072 行仍偏大 | 配置持久化已抽为 `core/config_store.py`，Agent 运行记录/步骤 CRUD 已抽为 `core/agent_store.py`，工具注册表/缓存已抽为 `core/tool_store.py`；三者均保留 `store.*` 兼容入口。sessions/memory/actions 仍需分片迁移 | 下一轮继续按 `store` 实体边界拆分，先评估 sessions/memory/actions 风险；main 路由和 tools 规则路由暂不混迁 |
+| `core/store.py` 2141 行、`core/tools.py` 1896 行、`core/main.py` 2015 行仍偏大 | 配置持久化已抽为 `core/config_store.py`，Agent 运行记录/步骤 CRUD 已抽为 `core/agent_store.py`，工具注册表/缓存已抽为 `core/tool_store.py`；三者均保留 `store.*` 兼容入口。sessions/memory/actions 仍需分片迁移 | 下一轮继续按 `store` 实体边界拆分，先评估 sessions/memory/actions 风险；main 路由和 tools 规则路由暂不混迁 |
 | `core/main.py` 仍有 110 个路由在闭包里 | 抽路由需要逐个核对 `app.state` 依赖，机器化拆分易错；已完成最内聚的 KB 与两个基础设施模块 | 按 `api/{sessions,admin,actions,agent}.py` 分批迁移，每批跑全量测试 |
 | `sqlite-vec` / `sentence-transformers` 未安装 | 属可选重型依赖（~2GB），当前 14 条 KB 用 FTS5 已够；装上后会自动启用 | 生产需要语义召回时执行 `pip install -r requirements-embedding.txt` |
 | `echarts` 单 chunk 554KB | 已按需注册（Bar/Line/Pie），剩余体积是 echarts 核心本身 | 若首屏体积敏感，可把 Dashboard 图表再拆为二次懒加载 |
@@ -87,7 +87,7 @@
 ```bash
 # 后端
 .venv/Scripts/python.exe -m pytest tests -q
-# → 811 passed, 7 skipped in 285s
+# → 840 passed, 3 skipped in 312s
 
 .venv/Scripts/python.exe -m ruff check core executor gateway scripts tests
 # → All checks passed!
@@ -149,3 +149,31 @@ python -c "import asyncio; from core import websearch; print(asyncio.run(websear
 ### 后续仍未修复
 
 `store.py` / `tools.py` / `main.py` 的进一步职责拆分、向量依赖体积、ECharts chunk、mypy advisory、i18n 覆盖率仍按第三节登记，未与本切片混做。
+
+---
+
+## 七、本轮接管切片（2026-11-01）：reminders API 路由模块化
+
+### 选定范围
+
+从 `core/main.py` 抽出 reminders 管理 API 的四个路由：`GET/POST /api/reminders`、`DELETE /api/reminders/{rid}`、`POST /api/reminders/tick`。本片只改变代码边界，不改变 URL、HTTP 方法、管理员鉴权、请求模型、错误状态、响应字段、SQLite schema、提醒解析器或调度器。
+
+### 改动与兼容性
+
+- 新增 `core/api/reminders.py`，使用与 `core/api/kb.py` 相同的 `APIRouter` 模式。
+- `core/main.py` 删除闭包内的 `ReminderIn` 和四个实现，只在应用创建时 `include_router` 挂载 reminders router；主文件由 2072 行降至 2015 行。
+- 复用 `core.api.deps.require_admin`、`core.store`、`core.tools._parse_repeat/_parse_due` 与 `core.reminders.tick`，无新依赖、无迁移、无数据库数据改动。
+
+### 行为与门禁证据
+
+- 行为锁先行：抽取前 `tests/test_reminders_api.py` 为 `7 passed`。
+- 抽取后聚焦：`tests/test_reminders_api.py tests/test_tools_secretary.py tests/test_harness_hardening.py` → `129 passed`。
+- 反证：暂时移除 `app.include_router(reminders_api.router)` 后同一 reminders API 套件 `7 failed`，恢复挂载后重新 `7 passed`。
+- 全量后端：`pytest tests -q -W error::pytest.PytestUnhandledThreadExceptionWarning` → `840 passed, 3 skipped`。
+- 代码质量：`ruff check core executor gateway scripts tests` → `All checks passed`；聚焦 ruff 与 `git diff --check` 通过。
+- 现有服务只读检查：`8010 /healthz`、`8010 /readyz` 均 HTTP 200；服务未重启，因此该结果仅证明现有进程健康，不证明其加载了本片新代码。
+- 本片未运行写入型在线 E2E，未写入生产提醒、配置、会话或 QQ 外部数据。
+
+### 剩余边界
+
+`annotations/cards` 路由仍在 `core/main.py`，sessions/memory/actions 路由拆分、向量依赖、ECharts、mypy 与 i18n 遗留项不在本片范围。

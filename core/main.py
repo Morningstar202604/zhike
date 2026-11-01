@@ -604,65 +604,6 @@ def create_app() -> FastAPI:
         channel_user_id: str
         group_id: str | None = None
 
-    # ---- 提醒 / 待办（秘书核心能力）----
-    class ReminderIn(BaseModel):
-        text: str
-        when: str = ""
-        due_at: str = ""
-        visitor_id: str = ""
-        chat_key: str = ""
-        channel_type: str = "webchat"
-        group_id: str | None = None
-        channel_user_id: str | None = None
-        repeat_rule: str = ""
-
-    @app.get("/api/reminders", dependencies=[Depends(require_admin)])
-    def reminders_list(visitor_id: str = "", status: str = "pending", limit: int = 50):
-        return {"reminders": store.reminder_list(visitor_id=visitor_id, status=status,
-                                                 limit=min(max(limit, 1), 200))}
-
-    @app.post("/api/reminders", dependencies=[Depends(require_admin)])
-    def reminders_create(body: ReminderIn):
-        from core import tools as tools_mod
-
-        text = (body.text or "").strip()
-        if not text:
-            raise HTTPException(400, "提醒内容不能为空")
-        due_iso = (body.due_at or "").strip()
-        repeat_rule = (getattr(body, "repeat_rule", "") or "").strip()
-        when_raw = (body.when or "").strip()
-        # 周期规则可能写在 when 里（「每天8点」），先剥出来再解析时间
-        if not repeat_rule:
-            repeat_rule, when_raw = tools_mod._parse_repeat(when_raw)
-        if not due_iso:
-            from datetime import datetime, timezone
-
-            due = tools_mod._parse_due(when_raw, datetime.now(timezone.utc))
-            if due is None:
-                raise HTTPException(400, f"看不懂时间表达：{body.when or '(空)'}")
-            due_iso = due.isoformat()
-        rec = store.reminder_add(
-            visitor_id=(body.visitor_id or "admin").strip(),
-            chat_key=(body.chat_key or f"{body.channel_type}:{body.visitor_id or 'admin'}").strip(),
-            text=text, due_at=due_iso, channel_type=body.channel_type,
-            group_id=body.group_id, channel_user_id=body.channel_user_id,
-            repeat_rule=repeat_rule,
-        )
-        return rec
-
-    @app.delete("/api/reminders/{rid}", dependencies=[Depends(require_admin)])
-    def reminders_cancel(rid: int):
-        if not store.reminder_cancel(rid):
-            raise HTTPException(404, "提醒不存在或已触发")
-        return {"cancelled": rid}
-
-    @app.post("/api/reminders/tick", dependencies=[Depends(require_admin)])
-    async def reminders_tick():
-        """手动触发一次到期扫描（排障/演示用）。"""
-        from core import reminders
-
-        return {"sent": await reminders.tick()}
-
     # ---- 标注回复（Dify annotations 对标）：命中标准答案直接回复 ----
     @app.get("/api/annotations", dependencies=[Depends(require_admin)])
     def annotations_list():
@@ -1427,10 +1368,12 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "规则不存在")
         return {"ok": True}
 
-    # ---- 知识库：已在 core/api/kb.py 实现，这里只做挂载 ----
+    # ---- 已抽出的 API 路由只在这里挂载，保持旧 URL 不变 ----
     from core.api import kb as kb_api
+    from core.api import reminders as reminders_api
 
     app.include_router(kb_api.router)
+    app.include_router(reminders_api.router)
 
     @app.get("/api/admin/overview", dependencies=[Depends(require_admin)])
     def admin_overview():
