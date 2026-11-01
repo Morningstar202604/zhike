@@ -74,10 +74,10 @@
 
 | 问题 | 为什么暂不改 | 建议 |
 |---|---|---|
-| `core/store.py` 2141 行、`core/tools.py` 1896 行、`core/main.py` 2015 行仍偏大 | 配置持久化已抽为 `core/config_store.py`，Agent 运行记录/步骤 CRUD 已抽为 `core/agent_store.py`，工具注册表/缓存已抽为 `core/tool_store.py`；三者均保留 `store.*` 兼容入口。sessions/memory/actions 仍需分片迁移 | 下一轮继续按 `store` 实体边界拆分，先评估 sessions/memory/actions 风险；main 路由和 tools 规则路由暂不混迁 |
-| `core/main.py` 仍有 110 个路由在闭包里 | 抽路由需要逐个核对 `app.state` 依赖，机器化拆分易错；已完成最内聚的 KB 与两个基础设施模块 | 按 `api/{sessions,admin,actions,agent}.py` 分批迁移，每批跑全量测试 |
+| `core/store.py` 2141 行、`core/tools.py` 1896 行、`core/main.py` 2015 行仍偏大 | 配置持久化、Agent 记录、工具注册表、提醒 API、提醒时间解析已抽出为独立模块；sessions/memory/actions 仍需分片迁移 | 下一轮继续按 `store` 实体边界拆分，先评估 sessions/memory/actions 风险；main 路由和 tools 规则路由暂不混迁 |
+| `core/main.py` 仍有 110 个路由在闭包里 | 抽路由需要逐个核对 `app.state` 依赖，机器化拆分易错；已完成最内聚的 KB、reminders 与两个基础设施模块 | 按 `api/{sessions,admin,actions,agent}.py` 分批迁移，每批跑全量测试 |
 | `sqlite-vec` / `sentence-transformers` 未安装 | 属可选重型依赖（~2GB），当前 14 条 KB 用 FTS5 已够；装上后会自动启用 | 生产需要语义召回时执行 `pip install -r requirements-embedding.txt` |
-| `echarts` 单 chunk 554KB | 已按需注册（Bar/Line/Pie），剩余体积是 echarts 核心本身 | 若首屏体积敏感，可把 Dashboard 图表再拆为二次懒加载 |
+| `echarts` 单 chunk 554KB | 已在 Dashboard 改为按需动态导入，空态与鉴权失败页面不再预载；图表显示时仍加载该 chunk | 如需进一步缩小，可拆分 echarts 模块级按需注册 |
 | `mypy` 仅 advisory | 存量 3 万行 Python 无类型标注，全量严格模式会产生数千条错误 | CI 已挂非阻塞 mypy，按新增代码逐步收紧 |
 
 ---
