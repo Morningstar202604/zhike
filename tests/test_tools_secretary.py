@@ -586,6 +586,29 @@ def test_parse_repeat_strips_rule_from_text():
     assert "每天" not in cleaned
 
 
+def test_chinese_numeral_reminder_parsing():
+    now = datetime(2026, 11, 1, 8, 0, tzinfo=timezone.utc)
+    assert tools._parse_due("十分钟后", now) == datetime(2026, 11, 1, 8, 10, tzinfo=timezone.utc)
+    assert tools._parse_due("明天早上八点", now) == datetime(2026, 11, 2, 8, 0, tzinfo=timezone.utc)
+    assert tools._parse_due("明天二十五点", now) is None
+    assert tools._parse_clock("下午三点半") == (15, 30)
+    assert tools._parse_clock("下午二十五点") is None
+    rule, cleaned = tools._parse_repeat("每月三十一号提醒我交房租")
+    assert rule == "monthly:31"
+    assert cleaned == "提醒我交房租"
+
+
+@pytest.mark.parametrize("query, expected_when, expected_text", [
+    ("明天早上八点提醒我开会", "明天早上八点", "开会"),
+    ("每周三下午三点提醒我交周报", "每周三下午三点", "交周报"),
+    ("十分钟后提醒我喝水", "十分钟后", "喝水"),
+    ("每月三十一号提醒我交房租", "每月三十一号", "交房租"),
+])
+def test_detect_tool_preserves_chinese_numeral_reminder_span(query, expected_when, expected_text):
+    assert tools.detect_tool(query, {"remind": 1}) == (
+        "remind", {"text": expected_text, "when": expected_when})
+
+
 def test_next_due_daily_and_weekday(monkeypatch):
     """锚点必须晚于“现在”，否则会因为推进到未来而改日期；这里冻结时间保证可复现。"""
     from datetime import datetime as _dt, timezone as _tz

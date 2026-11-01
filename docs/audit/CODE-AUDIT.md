@@ -7,7 +7,7 @@
 
 | 维度 | 审计前 | 审计后 |
 |---|---|---|
-| 后端测试 | 807 passed / 7 skipped | **811 passed / 7 skipped** |
+| 后端测试 | 807 passed / 7 skipped | **833 passed / 3 skipped** |
 | 端到端体检 | 11/18 通过（7 项失败） | **18/18 通过** |
 | ruff（生产代码） | 只查 6 条语法规则 | **E9/F/B/ASYNC 全量，0 错误** |
 | 前端 lint | 无 lint 配置 | **oxlint 0 error / 64 warning** |
@@ -74,7 +74,7 @@
 
 | 问题 | 为什么暂不改 | 建议 |
 |---|---|---|
-| `core/store.py` 2267 行、`core/tools.py` 1857 行仍偏大 | 配置持久化已抽为 `core/config_store.py`，Agent 运行记录/步骤 CRUD 已抽为 `core/agent_store.py`，工具注册表/缓存已抽为 `core/tool_store.py`；三者均保留 `store.*` 兼容入口。sessions/memory/actions 仍需分片迁移 | 下一轮继续按 `store` 实体边界拆分，先评估 sessions/memory/actions 风险；main 路由和 tools 规则路由暂不混迁 |
+| `core/store.py` 2141 行、`core/tools.py` 1897 行、`core/main.py` 2072 行仍偏大 | 配置持久化已抽为 `core/config_store.py`，Agent 运行记录/步骤 CRUD 已抽为 `core/agent_store.py`，工具注册表/缓存已抽为 `core/tool_store.py`；三者均保留 `store.*` 兼容入口。sessions/memory/actions 仍需分片迁移 | 下一轮继续按 `store` 实体边界拆分，先评估 sessions/memory/actions 风险；main 路由和 tools 规则路由暂不混迁 |
 | `core/main.py` 仍有 110 个路由在闭包里 | 抽路由需要逐个核对 `app.state` 依赖，机器化拆分易错；已完成最内聚的 KB 与两个基础设施模块 | 按 `api/{sessions,admin,actions,agent}.py` 分批迁移，每批跑全量测试 |
 | `sqlite-vec` / `sentence-transformers` 未安装 | 属可选重型依赖（~2GB），当前 14 条 KB 用 FTS5 已够；装上后会自动启用 | 生产需要语义召回时执行 `pip install -r requirements-embedding.txt` |
 | `echarts` 单 chunk 554KB | 已按需注册（Bar/Line/Pie），剩余体积是 echarts 核心本身 | 若首屏体积敏感，可把 Dashboard 图表再拆为二次懒加载 |
@@ -123,3 +123,29 @@ python -c "import asyncio; from core import websearch; print(asyncio.run(websear
 | `gateway/` | 人性化节奏、群节流、乒乓护栏是真实运营沉淀；`bot.py` 792 行偏大 |
 | `executor/` | 路径/命令双白名单 + 符号链接/ADS/保留名防护，安全边界扎实 |
 | `frontend/` | 页面完整、i18n 覆盖率约 36%（373 处 `t()` / 1025 处中文）；已消除渲染期建组件与首屏 hljs |
+
+---
+
+## 六、本轮接管切片（2026-11-01）
+
+### 选定问题：中文数字提醒解析与原文保真
+
+审计遗留项中，提醒是最贴近“私人秘书”定位且可独立验收的用户能力。原规则路由先把中文数字归一化为阿拉伯数字，再用归一化片段从原句删除；因此「十分钟后提醒我喝水」会残留「醒我喝水」，「每月三十一号提醒我交房租」会残留「号 交房租」，而工具解析层也无法处理中文数字时长/钟点。该问题不涉及 schema、数据库迁移或既有 API 变更。
+
+### 改动与兼容性
+
+- `core/tools.py` 新增归一化文本到原文字符区间的映射，规则匹配仍在归一化副本上进行，删除与返回的 `when` 使用原始用户表达。
+- `_parse_due`、`_parse_clock`、`_parse_repeat` 支持中文数字相对时长、钟点、周/月周期；保留原有 ASCII 形式、返回字段、周期规则和数据库格式。
+- 无新增依赖、无路由/Schema/迁移变化、未重启现有服务。
+
+### 行为证据
+
+- 改前：聚焦行为锁 `5 failed`；中文数字时长返回 `None`，且规则路由出现归一化时间和残留正文。
+- 改后：新增回归与原有秘书工具测试 `105 passed`；反证把 `_original_span` 故意改为不映射后 `3 failed`，恢复后重新通过。
+- 全量后端：`pytest tests -q -W error::pytest.PytestUnhandledThreadExceptionWarning` → `833 passed, 3 skipped`；仅有 Pydantic 依赖内部 `UnsupportedFieldAttributeWarning`。
+- 代码质量：`ruff check core executor gateway scripts tests` → `All checks passed`；`git diff --check` 通过。
+- 现有服务只读检查：`GET /healthz` 与 `GET /readyz` 均返回 HTTP 200；未执行会写入会话/配置的在线 E2E，避免修改生产外部数据。
+
+### 后续仍未修复
+
+`store.py` / `tools.py` / `main.py` 的进一步职责拆分、向量依赖体积、ECharts chunk、mypy advisory、i18n 覆盖率仍按第三节登记，未与本切片混做。
