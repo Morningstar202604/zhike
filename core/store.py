@@ -1582,102 +1582,41 @@ def approval_expire(ap_id: str) -> None:
 
 def agent_run_create(run_id: str, session_id: str | None, principal: str, goal: str,
                      tier: int, budget: dict) -> dict:
-    import json as _json
+    from core import agent_store
 
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO agent_runs (id, session_id, principal, goal, status, tier, "
-            "budget_json, usage_json, started_at) VALUES (?,?,?,?,'running',?,?,?,?)",
-            (run_id, session_id, principal, goal[:2000], tier,
-             _json.dumps(budget, ensure_ascii=False),
-             _json.dumps({"steps": 0, "tool_calls": 0, "tokens": 0, "cost": 0.0}), _now()),
-        )
-    return agent_run_get(run_id) or {}
+    return agent_store.agent_run_create(run_id, session_id, principal, goal, tier, budget)
 
 
 def agent_run_get(run_id: str) -> dict | None:
-    import json as _json
+    from core import agent_store
 
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM agent_runs WHERE id = ?", (run_id,)).fetchone()
-    if not row:
-        return None
-    d = dict(row)
-    for k in ("budget_json", "usage_json", "result"):
-        if d.get(k):
-            try:
-                d[k] = _json.loads(d[k])
-            except (TypeError, ValueError):
-                pass
-    return d
+    return agent_store.agent_run_get(run_id)
 
 
 def agent_run_update(run_id: str, **fields) -> None:
-    import json as _json
+    from core import agent_store
 
-    allowed = {"status", "usage_json", "result", "error", "ended_at"}
-    sets, params = [], []
-    for k, v in fields.items():
-        if k not in allowed:
-            continue
-        if k in ("usage_json", "result") and not isinstance(v, str):
-            v = _json.dumps(v, ensure_ascii=False)
-        sets.append(f"{k} = ?")
-        params.append(v)
-    if not sets:
-        return
-    params.append(run_id)
-    with get_conn() as conn:
-        conn.execute(f"UPDATE agent_runs SET {', '.join(sets)} WHERE id = ?", params)
+    agent_store.agent_run_update(run_id, **fields)
 
 
 def agent_step_add(run_id: str, step_no: int, thought: str, action: str | None,
                    params: dict | None, observation: str, status: str,
                    duration_ms: int = 0) -> int:
-    import json as _json
+    from core import agent_store
 
-    with get_conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO agent_steps (run_id, step_no, thought, action, params, observation, "
-            "status, duration_ms, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (run_id, step_no, (thought or "")[:4000], action,
-             _json.dumps(params or {}, ensure_ascii=False) if params is not None else None,
-             (observation or "")[:8000], status, duration_ms, _now()),
-        )
-        return cur.lastrowid or 0
+    return agent_store.agent_step_add(run_id, step_no, thought, action, params, observation, status, duration_ms)
 
 
 def agent_steps_list(run_id: str) -> list[dict]:
-    import json as _json
+    from core import agent_store
 
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM agent_steps WHERE run_id = ? ORDER BY step_no, id", (run_id,)
-        ).fetchall()
-    out = []
-    for r in rows:
-        d = dict(r)
-        if d.get("params"):
-            try:
-                d["params"] = _json.loads(d["params"])
-            except (TypeError, ValueError):
-                pass
-        out.append(d)
-    return out
+    return agent_store.agent_steps_list(run_id)
 
 
 def agent_runs_list(limit: int = 50, status: str | None = None) -> list[dict]:
-    sql = "SELECT id, session_id, principal, goal, status, tier, started_at, ended_at " \
-          "FROM agent_runs"
-    params: list = []
-    if status:
-        sql += " WHERE status = ?"
-        params.append(status)
-    sql += " ORDER BY started_at DESC LIMIT ?"
-    params.append(limit)
-    with get_conn() as conn:
-        rows = conn.execute(sql, params).fetchall()
-    return [dict(r) for r in rows]
+    from core import agent_store
+
+    return agent_store.agent_runs_list(limit, status)
 
 
 # ============================================================
