@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { type ReactNode } from 'react'
+import { lazy, Suspense, type ReactNode } from 'react'
 import type { EChartsOption } from './lib/echarts'
 import {
   Inbox, MessageSquare, FileText, Users, BookOpen, ShieldAlert, Activity,
@@ -14,9 +14,18 @@ import { useAppStore } from './store/appStore'
 import { StatCard, EmptyState, PageHead } from './ui'
 import { CHANNEL_LABEL, ESCALATE_REASON, TOOL_LABEL, label } from './lib/labels'
 import { Spinner, ErrorBanner } from './components/Spinner'
-import EChart from './components/EChart'
 import './pages2.css'
 import { t } from './lib/t'
+
+const LazyEChart = lazy(() => import('./components/EChart'))
+
+function EChart({ option, height = 260 }: { option: EChartsOption; height?: number }) {
+  return (
+    <Suspense fallback={<div role="status" style={{ width: '100%', height }}>{t('加载中…')}</div>}>
+      <LazyEChart option={option} height={height} />
+    </Suspense>
+  )
+}
 
 // 图表配色跟随品牌：墨绿主色 / 朱砂 / 竹青 / 赭石 / 灰蓝，避免默认的 indigo 紫
 const PALETTE = ['#0E5C55', '#17786C', '#C2452D', '#B98A4B', '#5E7C88', '#7FA99B', '#946B5C']
