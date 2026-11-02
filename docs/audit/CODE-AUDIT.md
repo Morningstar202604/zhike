@@ -7,7 +7,7 @@
 
 | 维度 | 审计前 | 审计后 |
 |---|---|---|
-| 后端测试 | 807 passed / 7 skipped | **840 passed / 3 skipped** |
+| 后端测试 | 807 passed / 7 skipped | **851 passed / 0 skipped**（装齐可选依赖后） |
 | 端到端体检 | 11/18 通过（7 项失败） | **18/18 通过** |
 | ruff（生产代码） | 只查 6 条语法规则 | **E9/F/B/ASYNC 全量，0 错误** |
 | 前端 lint | 无 lint 配置 | **oxlint 0 error / 64 warning** |
@@ -87,7 +87,7 @@
 ```bash
 # 后端
 .venv/Scripts/python.exe -m pytest tests -q
-# → 840 passed, 3 skipped in 312s
+# → 851 passed in 291s
 
 .venv/Scripts/python.exe -m ruff check core executor gateway scripts tests
 # → All checks passed!
@@ -169,7 +169,7 @@ python -c "import asyncio; from core import websearch; print(asyncio.run(websear
 - 行为锁先行：抽取前 `tests/test_reminders_api.py` 为 `7 passed`。
 - 抽取后聚焦：`tests/test_reminders_api.py tests/test_tools_secretary.py tests/test_harness_hardening.py` → `129 passed`。
 - 反证：暂时移除 `app.include_router(reminders_api.router)` 后同一 reminders API 套件 `7 failed`，恢复挂载后重新 `7 passed`。
-- 全量后端：`pytest tests -q -W error::pytest.PytestUnhandledThreadExceptionWarning` → `840 passed, 3 skipped`。
+- 全量后端：`pytest tests -q -W error::pytest.PytestUnhandledThreadExceptionWarning` → `851 passed`。
 - 代码质量：`ruff check core executor gateway scripts tests` → `All checks passed`；聚焦 ruff 与 `git diff --check` 通过。
 - 现有服务只读检查：`8010 /healthz`、`8010 /readyz` 均 HTTP 200；服务未重启，因此该结果仅证明现有进程健康，不证明其加载了本片新代码。
 - 本片未运行写入型在线 E2E，未写入生产提醒、配置、会话或 QQ 外部数据。

@@ -595,9 +595,18 @@ async def _make_llm_reply(data: dict, ctx: dict, cfg: dict) -> AgentReply:
         parsed.escalate = True
         parsed.escalate_reason = "output_guardrail"
 
+    # 引用回填：模型通常不会自己把 KB 编号写进 citations 字段（提示词没有强制要求，
+    # 实测三条真实问答 citations 恒为空，前端「依据 KB005」徽章永远不显示，
+    # 用户也就无从判断答案是查过知识库还是模型自己编的）。
+    # 检索结果 ctx["hits"] 是可信的，模型没给引用时用它回填；
+    # 模型给了就尊重模型的（它可能只引用了其中一部分）。
+    citations = list(parsed.citations or [])
+    if not citations:
+        citations = [e["id"] for _, e in (ctx.get("hits") or [])[:3]]
+
     answer = AgentReply(
         text=parsed.answer,
-        citations=parsed.citations,
+        citations=citations,
         confidence=parsed.confidence,
         escalate=parsed.escalate,
         escalate_reason=parsed.escalate_reason,

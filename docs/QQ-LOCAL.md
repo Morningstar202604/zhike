@@ -81,6 +81,36 @@ NapCat Shell 启动的就是这份 QQ 客户端（`NapCatWinBootMain.exe` 以注
 | 网关反复 `ConnectionRefusedError` 后又 connected | NapCat 重启导致的正常重连（NoneBot 自动恢复，无需干预） |
 | 频繁 `KickedOffline` | 手机 QQ「设置→账号安全→登录设备」确认本机为可信设备；仍频繁则换号 |
 | 控制台中文乱码 | 显示层编码问题，不影响功能；`napcat_local.py` 已强制 UTF-8 输出 |
+| **QQ 进程起来但只有 20MB、3001/6099 全不通、`logs/` 无新文件** | QQ 版本与 NapCat 不匹配。`napcat_local.py status` 会打印 `[!] QQ 版本不匹配`。QQ 自动升级会让注入静默失败——QQ 进程看着"在跑"，内核其实没起来。处置见下方「QQ 版本升级后失效」 |
+| `run.log` 只有一行 `请按任意键继续...` | NapCat 自带的 `launcher-user.bat` 末尾有 `pause`，无人值守启动时会永久阻塞。`napcat_local.py` 已改为直连 `NapCatWinBootMain.exe` 绕开它 |
+
+### QQ 版本升级后失效（最常见）
+
+NapCat 的注入是按 QQ 内部结构打补丁的，`qqnt.json` 里写死了适配版本。QQ 一旦自动升级，
+注入就会**静默失败**：QQ 进程能起来但只占约 20MB，WebUI(6099)/OneBot(3001) 都不监听，
+`logs/` 里一个新文件都不产生，`run.log` 却只有 `Process resumed` 看似正常。
+
+判断：
+
+```bash
+.venv/Scripts/python.exe scripts/napcat_local.py status
+# 正常应输出 OneBot WS(3001): ready
+# 若出现 [!] QQ 版本不匹配：NapCat 适配 x，本机是 y —— 就是这个原因
+```
+
+处置（任选其一）：
+
+1. **升级 NapCat**（推荐）：从 <https://github.com/NapNeko/NapCatQQ/releases> 下载
+   `NapCat.Shell.zip`，解压覆盖 `.local/napcat/`（**保留 `config/` 目录**，登录凭据在里面）。
+2. **降级 QQ** 到 NapCat 适配的版本，并关闭 QQ 自动更新。
+
+另有一个容易混淆的独立问题：**QQ 数据目录与桌面版共用**会让内核卡在 initializing
+（现象相同：不登录、不写日志、不开端口）。NapCat v4.18.42 起支持
+`NAPCAT_QQ_DATA_DIR` 隔离，`napcat_local.py` 已默认指向 `.local/napcat-data`。
+
+> 上游已知未修复：QQ 9.9.36-53644 + NapCat 4.18.42 仍有注入后内核不启动的报告
+> （NapNeko/NapCatQQ#2153）。遇到时以上面两条处置为准，不是本项目代码问题——
+> 网关链路可用 `scripts/fake_napcat.py` 单独验证（不依赖真 QQ）。
 
 ## 六、与 Docker 方案的关系
 

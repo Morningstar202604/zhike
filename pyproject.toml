@@ -1,6 +1,6 @@
 [project]
 name = "zhike"
-version = "1.2.0"
+version = "1.2.1"
 description = "Self-hosted personal assistant agent harness: QQ + Web, ReAct loop, RAG, reminders, tiered action permissions, audit."
 readme = "README.md"
 requires-python = ">=3.12"

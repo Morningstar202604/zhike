@@ -149,6 +149,7 @@ export default function ResponsiveShell({ children }) {
   const [theme, toggleTheme] = useTheme()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const loc = useLocation()
+  const { t } = useTranslation()
   const isApp = ['/', '/operator', '/persona', '/annotations', '/settings'].includes(loc.pathname) || loc.pathname.startsWith('/settings/')
 
   // Ctrl/Cmd + K 打开命令面板（Codex 对标）
@@ -189,7 +190,7 @@ export default function ResponsiveShell({ children }) {
                 </button>
                 <Brand onToggleTheme={toggleTheme} theme={theme} />
                 <SideNav onNav={() => setDrawerOpen(false)} />
-                <div className="shell-foot">知客 · MIT 开源</div>
+                <div className="shell-foot">{t('知客 · MIT 开源')}</div>
               </div>
             </>
           )}
@@ -210,7 +211,7 @@ export default function ResponsiveShell({ children }) {
             <Command size={12} /> <span>K</span>
           </button>
           <div className="shell-foot">
-            知客<br />你的私人秘书 · MIT
+            {t('知客')}<br />{t('你的私人秘书 · MIT')}
           </div>
         </aside>
         <main className={mainClass}>{children}</main>

@@ -28,6 +28,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 NAPCAT_DIR = ROOT / ".local" / "napcat"
+# QQ 内核数据目录：必须与桌面版 QQ 隔离，否则内核卡在 initializing（见 _launch_direct 注释）
+NAPCAT_DATA_DIR = ROOT / ".local" / "napcat-data"
 RUN_LOG = NAPCAT_DIR / "run.log"
 PID_FILE = NAPCAT_DIR / "napcat.pid"
 WEBUI_PORT = int(os.environ.get("NAPCAT_WEBUI_PORT", "6099"))
@@ -83,28 +85,124 @@ def _tail(path: Path, lines: int = 15) -> list[str]:
         return []
 
 
+def _qq_exe_from_registry() -> str:
+    """从注册表读 QQ 安装路径（launcher .bat 用的同一判据）。"""
+    import winreg
+
+    key = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\QQ"
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hive, key) as k:
+                uninstall, _ = winreg.QueryValueEx(k, "UninstallString")
+        except OSError:
+            continue
+        # UninstallString = "C:\...\Uninstall.exe" → 同目录下的 QQ.exe
+        exe = Path(str(uninstall).strip('"')).parent / "QQ.exe"
+        if exe.exists():
+            return str(exe)
+    return ""
+
+
+def _version_warnings() -> list[str]:
+    """检查 QQ 版本是否与 NapCat 注入包匹配。
+
+    为什么必须查：NapCat 的注入是按 QQ 内部结构打补丁的，``qqnt.json`` 里写死了
+    它适配的 QQ 版本。QQ 自动升级后版本号一变，注入就静默失败——
+    表现是 QQ.exe 起来了但内存只有 20MB、WebUI/OneBot 端口全不通，
+    ``run.log`` 里却只有 "Process resumed" 看似正常。这是本项目实际踩过的坑
+    （NapCat 适配 9.9.22-40990，机器上被升到 9.9.36-53644，QQ 群一整天没响应）。
+    这里不阻断启动（有人可能就想试试），但必须把话说在前面。
+    """
+    warns: list[str] = []
+    pkg = NAPCAT_DIR / "qqnt.json"
+    try:
+        import json as _json
+
+        want = str(_json.loads(pkg.read_text(encoding="utf-8")).get("version") or "")
+    except (OSError, ValueError):
+        return warns
+    if not want:
+        return warns
+
+    have = ""
+    try:
+        # 目录名即版本：.../versions/9.9.36-53644/
+        exe = _qq_exe_from_registry()
+        if exe:
+            vdir = Path(exe).parent / "versions"
+            cands = sorted((d.name for d in vdir.iterdir() if d.is_dir()), reverse=True)
+            have = cands[0] if cands else ""
+    except OSError:
+        pass
+
+    if have and have != want:
+        warns.append(
+            f"QQ 版本不匹配：NapCat 适配 {want}，本机是 {have}。"
+            "注入很可能失败（QQ 进程起来但端口不通）。"
+            "处理：把 QQ 降级到该版本，或换用适配当前 QQ 的 NapCat 版本。"
+        )
+    return warns
+
+
+def _launch_direct(uin: str, log_fh) -> subprocess.Popen:
+    """直接调 NapCatWinBootMain.exe 注入 QQ，绕开 launcher .bat。
+
+    为什么要绕开：NapCat 自带的 launcher-user.bat 在结尾（以及每个失败分支）
+    都写了 `pause`。人工双击运行时它只是"按任意键退出"，但在**无人值守启动**
+    （本脚本、CI、服务化部署）里，没有控制台给它喂按键，进程会永久停在
+    `请按任意键继续...`——表现为 NapCat 永远起不来、QQ 群一直没响应，
+    而日志里只有这一行，极难定位。这里直接调底层 exe，参数与 .bat 完全一致。
+    """
+    exe = NAPCAT_DIR / "NapCatWinBootMain.exe"
+    hook = NAPCAT_DIR / "NapCatWinBootHook.dll"
+    if not exe.exists():
+        raise FileNotFoundError(f"缺少 {exe.name}")
+    qq = _qq_exe_from_registry()
+    if not qq:
+        raise FileNotFoundError("注册表里找不到 QQ 安装路径（先安装桌面版 QQ）")
+    args = [str(exe), qq, str(hook)]
+    if uin:
+        args.append(uin)
+    # 数据目录必须与桌面版 QQ 隔离。
+    # QQ 内核通过注册表 HKLM\...\Tencent\QQNT Install 解析数据目录，默认落到桌面版
+    # 共用的 Tencent Files。共用后内核卡在 initializing：不登录、不写日志、不开端口，
+    # 二维码看着正常但扫了没反应（NapCat issue #2135，v4.18.42 起支持该变量）。
+    env = dict(os.environ)
+    env.setdefault("NAPCAT_QQ_DATA_DIR", str(NAPCAT_DATA_DIR))
+    creationflags = 0x00000008 if os.name == "nt" else 0  # DETACHED_PROCESS
+    return subprocess.Popen(args, cwd=str(NAPCAT_DIR), stdout=log_fh, stderr=log_fh,
+                            env=env, creationflags=creationflags)
+
+
 def cmd_start(uin: str, wait_s: int) -> int:
     if not NAPCAT_DIR.exists():
         print(f"[X] 未找到 NapCat：{NAPCAT_DIR}")
         print("    先下载 Release 的 NapCat.Shell.zip 解压到这里（见 docs/QQ-LOCAL.md）")
         return 2
+    for w in _version_warnings():
+        print(f"[!] {w}")
     if _ws_handshake_ok()[0]:
         print(f"[OK] OneBot WS 已就绪（{WS_PORT}），无需重复启动。")
         return 0
 
-    launcher = NAPCAT_DIR / ("launcher.bat" if os.name != "nt" else "launcher-user.bat")
-    if not launcher.exists():
-        launcher = NAPCAT_DIR / "launcher.bat"
-    args = [str(launcher)]
-    if uin:
-        args.append(uin)
-
     log_fh = open(RUN_LOG, "ab")
-    creationflags = 0x00000008 if os.name == "nt" else 0  # DETACHED_PROCESS
-    proc = subprocess.Popen(args, cwd=str(NAPCAT_DIR), stdout=log_fh, stderr=log_fh,
-                            creationflags=creationflags)
+    try:
+        proc = _launch_direct(uin, log_fh)
+        how = "NapCatWinBootMain.exe（直连，避开 .bat 的 pause）"
+    except FileNotFoundError as e:
+        # 兜底：直连不可用时仍试 .bat，但提示它可能卡在 pause
+        print(f"[!] 直连启动不可用（{e}），回退到 launcher.bat")
+        launcher = NAPCAT_DIR / ("launcher.bat" if os.name != "nt" else "launcher-user.bat")
+        if not launcher.exists():
+            launcher = NAPCAT_DIR / "launcher.bat"
+        args = [str(launcher)] + ([uin] if uin else [])
+        creationflags = 0x00000008 if os.name == "nt" else 0
+        proc = subprocess.Popen(args, cwd=str(NAPCAT_DIR), stdout=log_fh, stderr=log_fh,
+                                creationflags=creationflags)
+        how = f"{launcher.name}（注意：内含 pause，无人值守时可能卡住）"
+
     PID_FILE.write_text(str(proc.pid), encoding="utf-8")
-    print(f"[启动] NapCat pid={proc.pid} 日志={RUN_LOG}")
+    print(f"[启动] NapCat pid={proc.pid} 方式={how} 日志={RUN_LOG}")
     if uin:
         print(f"[登录] 使用快速登录：{uin}（凭据不存在时会回退扫码）")
     else:
@@ -144,6 +242,8 @@ def cmd_status() -> int:
         # pid 只记录 launcher；真正干活的是它派生的 QQ/NapCat 子进程，
         # launcher 退出不代表服务停了——一切以 3001 握手结果为准。
         print(f"napcat.pid={pid}（launcher 记录；服务状态以 OneBot WS 为准）")
+    for w in _version_warnings():
+        print(f"[!] {w}")
     return 0 if ok else 1
 
 

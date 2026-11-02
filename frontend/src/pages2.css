@@ -163,21 +163,46 @@
   gap: 10px;
   margin-bottom: 20px;
 }
+/* 图标在左、数值与标签在右上下两行。
+   早期是 flex 横排（icon / val / label 同一行），中文短标签刚好放得下，
+   英文标签（"Total conversations"）会把卡片撑破并截断成 "Total conve"。
+   改成两行网格后，标签可以自然换行，中英文都不再被裁。 */
 .stat {
   background: var(--panel);
   border: 1px solid var(--line-2);
   border-radius: var(--r-md);
   padding: 13px 14px;
-  display: flex; align-items: center; gap: 11px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "icon val"
+    "icon lb";
+  align-items: center;
+  column-gap: 11px;
+  row-gap: 2px;
+  min-width: 0;
 }
 .stat-icon {
+  grid-area: icon;
   width: 38px; height: 38px;
   border-radius: var(--r-sm);
   display: grid; place-items: center;
   flex-shrink: 0;
 }
-.stat-val { font-size: 20px; font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.stat-lb { font-size: 11px; color: var(--muted); margin-top: 2px; white-space: nowrap; }
+.stat-val {
+  grid-area: val;
+  font-size: 20px; font-weight: 650; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stat-lb {
+  grid-area: lb;
+  font-size: 11px; color: var(--muted);
+  line-height: 1.35;
+  min-width: 0;
+  /* 允许换行：英文标签比中文长得多，强制 nowrap 会被卡片边界裁掉 */
+  overflow-wrap: anywhere;
+}
 
 .grp {
   background: var(--panel);

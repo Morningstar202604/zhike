@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from core import config, events_log, executor_client, guardrail, llm, memory as memory_mod, net, pipeline, ratelimit, retrieval, security, sessions, store, tools as tools_mod
+from core import version as version_mod
 from core.api import deps
 from core.actions import authz as actions_authz
 from core.actions import client as actions_client
@@ -347,8 +348,11 @@ def create_app() -> FastAPI:
 
         容器编排用它判断"要不要重启"；把依赖检查放进来会导致
         DB 抖动时容器被反复杀掉重启（存活探针语义被误用，业界典型事故）。
+
+        同时回传版本号，便于运维确认"正在跑的是哪个发布"——版本读取是纯内存操作，
+        不引入任何依赖，不违反存活探针语义。
         """
-        return {"ok": True}
+        return {"ok": True, "version": version_mod.VERSION}
 
     def _search_available() -> bool:
         try:
@@ -1082,6 +1086,7 @@ def create_app() -> FastAPI:
         return {
             "mode": effective,
             "engine_mode": engine_mode,
+            "version": version_mod.VERSION,
             "llm_ready": bool(llm_cfg.get("has_key")),
             "model": llm_cfg.get("model", "") if llm_cfg.get("has_key") else "",
             "kb_entries": len(retrieval.load_kb()),
@@ -1726,7 +1731,12 @@ def create_app() -> FastAPI:
     # ---- 表情包库：gateway 学习的群友梗图（只读浏览 + 管理员删除）----
     @app.get("/api/emotes", dependencies=[Depends(require_admin)])
     def emotes_list(q: str = "", limit: int = 120):
-        """表情包索引。数据源 = gateway 的 EmoteLib（index.json + tags.json）。"""
+        """表情包索引。数据源 = gateway 的 EmoteLib（index.json + tags.json）。
+
+        视觉标签存在独立的 tags.json（按 data 路径索引），不在 index.json 条目里，
+        所以必须经 ``lib.tags(data)`` 取，不能直接读 ``it["tags"]``——
+        否则控制台永远显示 kind 回退值（"image"），搜索也搜不到标签。
+        """
         import pathlib as _pathlib
 
         from gateway.humanize import EmoteLib
@@ -1734,19 +1744,28 @@ def create_app() -> FastAPI:
         emote_dir = _pathlib.Path(os.environ.get("GATEWAY_EMOTE_DIR")
                                   or (_pathlib.Path.home() / "napcat" / "emotes"))
         lib = EmoteLib(str(emote_dir / "index.json"))
-        items = lib.items  # list 属性（新条目在前）
+
+        def _row(it: dict) -> dict:
+            data = str(it.get("data") or "")
+            return {
+                "kind": it.get("kind"),
+                "summary": it.get("summary") or "",
+                "data": data,
+                "group": it.get("group"),
+                "ts": it.get("ts"),
+                "tags": lib.tags(data) or "",
+                "hits": it.get("hits") or 0,
+            }
+
+        rows = [_row(it) for it in lib.items]  # 新条目在前
         if q.strip():
             qq = q.strip().lower()
-            items = [it for it in items
-                     if qq in (it.get("summary") or "").lower()
-                     or qq in (it.get("tags") or "").lower()]
+            rows = [r for r in rows
+                    if qq in (r["summary"] or "").lower() or qq in (r["tags"] or "").lower()]
         return {
-            "total": len(items),
+            "total": len(rows),
             "dir": str(emote_dir),
-            "items": [
-                {k: it.get(k) for k in ("kind", "summary", "data", "group", "ts", "tags", "hits")}
-                for it in items[: max(1, min(limit, 300))]
-            ],
+            "items": rows[: max(1, min(limit, 300))],
         }
 
     @app.delete("/api/emotes/{ts}", dependencies=[Depends(require_admin)])

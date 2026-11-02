@@ -831,7 +831,7 @@ def test_bare_clock_reminder_lands_in_future():
     ("21:30提醒我睡觉", "21:30"),
 ])
 def test_detect_tool_routes_bare_clock(query, expected_when):
-    """裸钟点（没有「明天/每天」前缀）也要能路由成提醒。
+    r"""裸钟点（没有「明天/每天」前缀）也要能路由成提醒。
 
     这类表达在群里最常见（「8点提醒我吃药」），漏掉等于提醒功能不可用。
     负向先行 (?<![\d:]) 防止把 21:30 里的 "1:30" 误当成时间。

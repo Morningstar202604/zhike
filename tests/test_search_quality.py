@@ -95,3 +95,34 @@ def test_business_question_still_hits():
 
     hits = retrieval.retrieve("我的订单什么时候发货", top_k=3, min_overlap=0.08)
     assert hits and hits[0]["id"] == "KB001"
+
+
+def test_long_business_question_with_filler_tail_still_hits():
+    """长问句 + 问法词尾巴，不能因为覆盖率闸门过严而返回空。
+
+    回归背景：实测「开发票需要多久？」检索 0 条，而知识库里明明有「发票开具」。
+    原因有两层：
+      1. 「需要/多久」没进停用词表，被当成实词计入覆盖率分母；
+      2. 闸门要求 max(2, n//2) 个 bigram 命中，6 个 bigram 只有「发票」能匹配，
+         于是整条被丢弃。
+    反常之处在于「退货怎么弄」（短）能命中，而问得更完整的句子反而 miss——
+    用户问得越自然，命中率越低。
+    """
+    from core import retrieval
+
+    for q in ["开发票需要多久？", "发票怎么开", "能不能开发票", "退款要几天"]:
+        hits = retrieval.retrieve(q, top_k=3, min_overlap=0.08)
+        assert hits, f"「{q}」应当命中知识库，实际为空"
+
+    assert retrieval.retrieve("开发票需要多久？", top_k=3, min_overlap=0.08)[0]["id"] == "KB005"
+    assert retrieval.retrieve("能不能开发票", top_k=3, min_overlap=0.08)[0]["id"] == "KB005"
+
+
+def test_question_word_fillers_are_stripped():
+    """「需要/多久」这类问法词必须和「怎么/什么」同等对待。"""
+    from core import retrieval
+
+    for w in ["需要", "多久", "多长时间", "几天", "是否", "能否"]:
+        assert w not in retrieval.strip_fillers(f"开发票{w}"), f"{w} 应当被视为填充词"
+    # 主题词不能被误删
+    assert "发票" in retrieval.strip_fillers("开发票需要多久")

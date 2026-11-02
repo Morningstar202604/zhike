@@ -40,11 +40,11 @@
   "programmingLanguage": ["Python", "TypeScript"],
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "sameAs": [
+    "https://gitcode.com/badhope/zhike",
+    "https://gitee.com/badhope/zhike",
     "https://github.com/badhope/zhike",
     "https://github.com/X33834/zhike",
-    "https://github.com/Morningstar202604/zhike",
-    "https://gitee.com/badhope/zhike",
-    "https://gitcode.com/badhope/zhike"
+    "https://github.com/Morningstar202604/zhike"
   ]
 }
 </script>
@@ -117,7 +117,7 @@
       <a href="#design" class="en">Design</a><a href="#design" class="zh">设计</a>
       <a href="#start" class="en">Quick start</a><a href="#start" class="zh">快速开始</a>
       <a href="#mirrors" class="en">Mirrors</a><a href="#mirrors" class="zh">镜像</a>
-      <a href="https://github.com/badhope/zhike">GitHub</a>
+      <a href="https://gitcode.com/badhope/zhike">GitCode</a>
       <div class="lang" role="group" aria-label="Language">
         <button type="button" data-set-lang="en" aria-pressed="true">EN</button>
         <button type="button" data-set-lang="zh" aria-pressed="false">中文</button>
@@ -140,13 +140,14 @@
         <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
         <img src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black" alt="React 18" />
         <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License" />
-        <img src="https://img.shields.io/badge/tests-814%20passed-brightgreen" alt="814 tests passed" />
+        <img src="https://img.shields.io/badge/version-1.2.1-brightgreen" alt="Version 1.2.1" />
+        <img src="https://img.shields.io/badge/tests-passing-brightgreen" alt="Tests passing" />
       </div>
       <div class="cta">
-        <a class="btn primary" href="https://github.com/badhope/zhike">GitHub Repository</a>
-        <a class="btn en" href="https://github.com/badhope/zhike/blob/main/README.en.md">Read the docs</a>
-        <a class="btn" href="https://github.com/badhope/zhike/blob/main/README.md">中文 README</a>
-        <a class="btn" href="https://github.com/badhope/zhike/blob/main/README.en.md">English README</a>
+        <a class="btn primary" href="https://gitcode.com/badhope/zhike">GitCode Repository</a>
+        <a class="btn en" href="https://gitcode.com/badhope/zhike/blob/main/README.en.md">Read the docs</a>
+        <a class="btn" href="https://gitcode.com/badhope/zhike/blob/main/README.md">中文 README</a>
+        <a class="btn" href="https://gitcode.com/badhope/zhike/blob/main/README.en.md">English README</a>
       </div>
     </div>
   </div>
@@ -198,8 +199,8 @@ cp .env.example .env                    # fill USER_LLM_* / ADMIN_TOKEN as neede
 cd frontend &amp;&amp; npm ci &amp;&amp; npm run build &amp;&amp; cd ..
 CS_AGENT_STATIC_DIR=frontend/dist python -m uvicorn core.main:app --port 8010
 # → http://localhost:8010</code></pre>
-      <p class="sub en" style="margin-top:18px">QQ setup: <a href="https://github.com/badhope/zhike/blob/main/docs/QQ-LOGIN.md">docs/QQ-LOGIN.md</a> · Docker and deployment: <a href="https://github.com/badhope/zhike/blob/main/DEPLOY.md">DEPLOY.md</a></p>
-      <p class="sub zh" style="margin-top:18px">QQ 接入见 <a href="https://github.com/badhope/zhike/blob/main/docs/QQ-LOGIN.md">docs/QQ-LOGIN.md</a>，Docker / 反代 / 免费部署见 <a href="https://github.com/badhope/zhike/blob/main/DEPLOY.md">DEPLOY.md</a></p>
+      <p class="sub en" style="margin-top:18px">QQ setup: <a href="https://gitcode.com/badhope/zhike/blob/main/docs/QQ-LOGIN.md">docs/QQ-LOGIN.md</a> · Docker and deployment: <a href="https://gitcode.com/badhope/zhike/blob/main/DEPLOY.md">DEPLOY.md</a></p>
+      <p class="sub zh" style="margin-top:18px">QQ 接入见 <a href="https://gitcode.com/badhope/zhike/blob/main/docs/QQ-LOGIN.md">docs/QQ-LOGIN.md</a>，Docker / 反代 / 免费部署见 <a href="https://gitcode.com/badhope/zhike/blob/main/DEPLOY.md">DEPLOY.md</a></p>
     </div>
   </section>
 
@@ -213,6 +214,10 @@ CS_AGENT_STATIC_DIR=frontend/dist python -m uvicorn core.main:app --port 8010
         <figure><img src="screenshots/sessions.png" alt="Zhike conversations console" loading="lazy" /><figcaption>Conversations / 会话中心</figcaption></figure>
         <figure><img src="screenshots/operator.png" alt="Zhike operator desk" loading="lazy" /><figcaption>Operator desk / 协作台</figcaption></figure>
         <figure><img src="screenshots/en-dashboard.png" alt="Zhike console in English" loading="lazy" /><figcaption>English UI / 英文界面</figcaption></figure>
+        <figure><img src="screenshots/kb.png" alt="Zhike knowledge base console" loading="lazy" /><figcaption>Knowledge base / 知识库</figcaption></figure>
+        <figure><img src="screenshots/emotes.png" alt="Zhike emote library with vision tags" loading="lazy" /><figcaption>Emote library / 表情包库</figcaption></figure>
+        <figure><img src="screenshots/reminders.png" alt="Zhike reminders" loading="lazy" /><figcaption>Reminders / 提醒待办</figcaption></figure>
+        <figure><img src="screenshots/persona.png" alt="Zhike persona presets" loading="lazy" /><figcaption>Personas / 秘书人设</figcaption></figure>
       </div>
     </div>
   </section>
@@ -223,11 +228,11 @@ CS_AGENT_STATIC_DIR=frontend/dist python -m uvicorn core.main:app --port 8010
       <p class="sub en">The same tree, published to five repositories. Pick whichever is fastest for you.</p>
       <p class="sub zh">同一套代码同步到五个公开仓库，哪个快用哪个。</p>
       <div class="mirrors">
-        <a class="mirror" href="https://github.com/badhope/zhike"><span>GitHub · badhope/zhike</span><span>→</span></a>
+        <a class="mirror" href="https://gitcode.com/badhope/zhike"><span>GitCode · badhope/zhike（主站）</span><span>→</span></a>
         <a class="mirror" href="https://github.com/X33834/zhike"><span>GitHub · X33834/zhike</span><span>→</span></a>
         <a class="mirror" href="https://github.com/Morningstar202604/zhike"><span>GitHub · Morningstar202604/zhike</span><span>→</span></a>
         <a class="mirror" href="https://gitee.com/badhope/zhike"><span>Gitee · badhope/zhike</span><span>→</span></a>
-        <a class="mirror" href="https://gitcode.com/badhope/zhike"><span>GitCode · badhope/zhike</span><span>→</span></a>
+        <a class="mirror" href="https://github.com/badhope/zhike"><span>GitHub · badhope/zhike</span><span>→</span></a>
       </div>
     </div>
   </section>
@@ -237,7 +242,7 @@ CS_AGENT_STATIC_DIR=frontend/dist python -m uvicorn core.main:app --port 8010
   <div class="wrap">
     <p class="en">Zhike is MIT licensed. NapCat is an unofficial protocol client under its own non-commercial license — review it and Tencent's risk-control policy before commercial use.</p>
     <p class="zh">知客采用 MIT 许可。NapCat 为自定义非商用许可的非官方协议端，商用前请自行复核其 LICENSE 与腾讯风控政策。</p>
-    <p>© 2026 badhope · <a href="https://github.com/badhope/zhike">GitHub</a> · <a href="https://gitee.com/badhope/zhike">Gitee</a> · <a href="https://gitcode.com/badhope/zhike">GitCode</a></p>
+    <p>© 2026 badhope · <a href="https://gitcode.com/badhope/zhike">GitCode</a> · <a href="https://gitee.com/badhope/zhike">Gitee</a> · <a href="https://github.com/badhope/zhike">GitHub</a></p>
   </div>
 </footer>
 

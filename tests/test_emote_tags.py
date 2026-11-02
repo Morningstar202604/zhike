@@ -80,3 +80,41 @@ def test_expand_keywords_keeps_original_first():
     out = _expand_keywords("猫")
     assert out[0] == "猫" and "猫娘" in out
     assert _expand_keywords("") == []
+
+
+def test_admin_emotes_api_exposes_vision_tags(tmp_path, monkeypatch):
+    """管理接口 /api/emotes 必须返回视觉标签。
+
+    回归背景：标签存在独立的 tags.json（按 data 路径索引），不在 index.json 条目里。
+    接口早期直接读 it["tags"]，永远拿到 None，控制台只能回退显示 "image"，
+    按标签搜索也搜不到——打标脚本跑了 285 张，界面上看不出任何效果。
+    """
+    import base64
+    import secrets
+
+    from fastapi.testclient import TestClient
+
+    (tmp_path / "index.json").write_text(json.dumps(
+        [{"kind": "image", "summary": "[动画表情]", "data": "a.gif"},
+         {"kind": "image", "summary": "[动画表情]", "data": "b.gif"}], ensure_ascii=False),
+        encoding="utf-8")
+    (tmp_path / "tags.json").write_text(json.dumps(
+        {"a.gif": "熊猫头，无语", "b.gif": "猫，得意"}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv("GATEWAY_EMOTE_DIR", str(tmp_path))
+    monkeypatch.setenv("ADMIN_TOKEN", base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="))
+
+    from core import security
+    from core.main import create_app
+
+    client = TestClient(create_app())
+    r = client.get("/api/emotes", headers={"X-Admin-Token": security.admin_token()})
+    assert r.status_code == 200, r.text
+    tags = {it["data"]: it["tags"] for it in r.json()["items"]}
+    assert tags["a.gif"] == "熊猫头，无语"
+    assert tags["b.gif"] == "猫，得意"
+
+    # 按标签过滤也必须命中，而不是只在 summary 里找。
+    # 用「得意」而不是「猫」：熊猫头本身含「猫」字，会被子串匹配到，指标不干净。
+    r2 = client.get("/api/emotes", params={"q": "得意"}, headers={"X-Admin-Token": security.admin_token()})
+    assert r2.status_code == 200, r2.text
+    assert [it["data"] for it in r2.json()["items"]] == ["b.gif"]

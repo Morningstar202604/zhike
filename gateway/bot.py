@@ -136,17 +136,68 @@ def _preflight_ws() -> None:
         "  1) NapCat 容器是否在运行：docker ps | grep napcat",
         "  2) QQ 是否已登录：python scripts/qq_login.py（看到「OneBot WS 已就绪」再启动网关）",
         f"  3) NapCat 网络配置里 WS 服务端是否启用且端口为 {port}",
+        "  4) Windows 本机：确认桌面 QQ 没有占着账号（同号互斥，"
+        "桌面端在跑时 NapCat 注入的 QQ 会秒退）",
+        "  5) 确认 NapCat 版本适配当前 QQ 版本：python scripts/napcat_local.py status",
         "  详见 docs/QQ-LOGIN.md",
     ]
     logger.error(chr(10).join(lines))
     sys.exit(2)
 
 
+def _preflight_core() -> None:
+    """启动前确认 core 可达，并且 CHANNEL_TOKEN 与 core 一致。
+
+    为什么必须查：网关能正常连上 NapCat、也能收到群消息，但 ingest 打到错误
+    端口（默认曾写成 8000，而 core 在 8010）或 token 不匹配时，core 一律 503/401，
+    **网关侧没有显眼报错**——用户侧表现就是「群里 @ 了完全没反应」。
+    与其让人去翻两层日志，不如启动时就把话说清楚。
+    GATEWAY_SKIP_PREFLIGHT=1 时一并跳过（演练要用假协议端和假核心）。
+    """
+    if os.environ.get("GATEWAY_SKIP_PREFLIGHT", "").strip().lower() in ("1", "true", "yes"):
+        return
+
+    import httpx
+
+    try:
+        r = httpx.get(f"{CORE_BASE_URL}/healthz", timeout=5)
+    except Exception as e:  # noqa: BLE001 - 任何网络异常都归为"连不上"
+        logger.error(
+            f"核心服务 {CORE_BASE_URL} 连不上（{type(e).__name__}）。\n"
+            "  网关会把消息 POST 到 CORE_BASE_URL/v1/ingest，连不上就等于群里没响应。\n"
+            "  1) core 是否在跑：curl " + CORE_BASE_URL + "/healthz\n"
+            '  2) 端口是否一致：core 默认 8010，用 CORE_BASE_URL 显式指定\n'
+            "  详见 DEPLOY.md"
+        )
+        sys.exit(2)
+    if r.status_code != 200:
+        logger.error(f"核心服务 {CORE_BASE_URL}/healthz 返回 {r.status_code}，请先修好核心再启动网关。")
+        sys.exit(2)
+
+    # token 不匹配时 core 对 ingest 一律 503，网关侧同样没有明显报错
+    try:
+        probe = httpx.post(f"{CORE_BASE_URL}/v1/ingest", json={}, timeout=5)
+        if probe.status_code in (401, 403, 503) and CHANNEL_TOKEN:
+            logger.error(
+                f"核心拒绝网关上报（HTTP {probe.status_code}）：CHANNEL_TOKEN 与 core 不一致。\n"
+                "  两边必须用同一个 CHANNEL_TOKEN（.env 或环境变量）。"
+            )
+            sys.exit(2)
+    except Exception:  # noqa: BLE001 - 探测失败不阻断，正式上报时还会再报
+        pass
+
+    logger.info(f"核心服务可达：{CORE_BASE_URL}（channel token {'已配置' if CHANNEL_TOKEN else '未配置'}）")
+
+
 nonebot.init(**_init_kwargs)
 driver = nonebot.get_driver()
 driver.register_adapter(OneBotV11Adapter)
 
-CORE_BASE_URL = os.environ.get("CORE_BASE_URL", "http://127.0.0.1:8000")
+# 默认必须与 core 实际监听端口一致（8010，见 DEPLOY.md / compose / .env.example）。
+# 早期写成 8000，而 core 一直跑在 8010：网关照样启动、照样连上 NapCat，
+# 但每条消息 POST /v1/ingest 都打到空端口，表现为「QQ 群里 @ 了没反应，
+# 网关日志也没有明显报错」——排查成本极高，所以这里对齐并加启动自检。
+CORE_BASE_URL = os.environ.get("CORE_BASE_URL", "http://127.0.0.1:8010")
 CHANNEL_TOKEN = os.environ.get("CHANNEL_TOKEN", "")
 # 单条消息等待核心的最长时间：LLM ReAct + 工具调用可能到 40s 以上，默认放宽到 90s
 INGEST_TIMEOUT_S = float(os.environ.get("INGEST_TIMEOUT_S", "90"))
@@ -800,5 +851,6 @@ async def handle(event: MessageEvent):
 
 
 if __name__ == "__main__":
+    _preflight_core()
     _preflight_ws()
     nonebot.run()

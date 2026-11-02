@@ -1,6 +1,6 @@
 """伪装 NapCat（OneBot v11 WebSocket 服务端），实测 网关→core→回复 全链路。
 
-用法：core 运行在 :8000 后执行  .venv/Scripts/python scripts/fake_napcat.py
+用法：core 运行在 :8010 后执行  .venv/Scripts/python scripts/fake_napcat.py
 自动拉起 gateway/bot.py 子进程，模拟群友 @机器人 发问，捕获机器人的 send_group_msg 回复。
 """
 import asyncio
@@ -62,7 +62,7 @@ async def main():
     log = open(os.path.join(ROOT, "gateway_e2e.log"), "w", encoding="utf-8")
     env = os.environ | {
         "ONEBOT_WS_URL": os.environ.get("ONEBOT_WS_URL", "ws://127.0.0.1:3001"),
-        "CORE_BASE_URL": os.environ.get("CORE_BASE_URL", "http://127.0.0.1:8000"),
+        "CORE_BASE_URL": os.environ.get("CORE_BASE_URL", "http://127.0.0.1:8010"),
         "PORT": "8090",
         "GATEWAY_SKIP_PREFLIGHT": "1",
     }

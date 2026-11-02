@@ -454,7 +454,33 @@ async def _post_chat(base: str, api_key: str, payload: dict) -> str | None:
     if native is not None:
         return json.dumps(native, ensure_ascii=False)
     content = (message.get("content") or "").strip()
-    if not content and choice.get("finish_reason") == "length":
+    truncated = choice.get("finish_reason") == "length"
+    if truncated and content:
+        # 内容非空但被截断：这是最坑的一种情况——用户收到的是一句半截话
+        # （实测「退货怎么弄」只回了「那我把步骤交出来喵」就断了，步骤全丢）。
+        # 早期只在 content 为空时重试，于是「有内容但截断」被当成成功直接返回。
+        # 这里同样加大预算重试一次，避免把半句话发出去。
+        bigger = dict(payload)
+        bigger["max_tokens"] = min(max(int(payload.get("max_tokens") or 512) * 3, 2_048), 16_384)
+        if bigger["max_tokens"] > int(payload.get("max_tokens") or 0):
+            lg.info("llm truncated mid-answer at %s tokens (len=%s), retrying with %s",
+                    payload.get("max_tokens"), len(content), bigger["max_tokens"])
+            try:
+                retry = await client.post(
+                    f"{base}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=bigger,
+                )
+                retry.raise_for_status()
+                rchoice = (retry.json().get("choices") or [{}])[0]
+                rcontent = ((rchoice.get("message") or {}).get("content") or "").strip()
+                # 只在重试结果更长时采用，避免端点给出更差的答案
+                if len(rcontent) > len(content):
+                    content = rcontent
+            except Exception as exc:  # noqa: BLE001 - 重试失败就用已拿到的内容
+                lg.warning("truncation retry failed: %s: %s", type(exc).__name__, str(exc)[:120])
+        return content
+    if not content and truncated:
         # 推理模型把预算花在 reasoning 上：加大预算重试一次（只重试一次，
         # 避免被一个永远截断的端点拖死整条备援链）。
         bigger = dict(payload)

@@ -252,3 +252,61 @@ def test_rule_fallback_has_persona_not_service_tone():
     assert "答不上来" not in reply.text
     assert "喵" in reply.text
     assert not quality.critique(reply.text, "随便说点什么")
+
+
+def test_llm_reply_backfills_citations_from_retrieval():
+    """模型不写 citations 时，必须用检索结果回填。
+
+    回归背景：实测三条真实问答（发票/物流/退货）citations 恒为 []，
+    而 KB 检索明明命中了 KB005/KB001/KB002。提示词没有强制模型输出引用，
+    于是前端「依据 KB005」徽章永远不显示——用户无法判断答案是查过知识库
+    还是模型自己编的，这正是 RAG 最需要证明的一点。
+    """
+    import asyncio
+
+    from core import pipeline
+
+    ctx = {
+        "tools": {},
+        "tools_schema": [],
+        "used": {"kb": {"enabled": True, "hits": ["KB005"]}},
+        "hits": [(0.5, {"id": "KB005", "title": "发票开具", "answer": "48 小时"}),
+                 (0.3, {"id": "KB002", "title": "退款", "answer": "7 天"})],
+        "tool_ctx": None,
+    }
+    reply = asyncio.run(pipeline._make_llm_reply(
+        {"answer": "普票 48 小时内开出。", "citations": [], "confidence": 0.8}, ctx,
+        {"escalation": {"confidence_threshold": 0.6}}))
+    assert reply.citations == ["KB005", "KB002"]
+
+
+def test_llm_reply_keeps_model_citations_when_provided():
+    """模型自己给了引用就尊重它（可能只引用了其中一部分）。"""
+    import asyncio
+
+    from core import pipeline
+
+    ctx = {
+        "tools": {}, "tools_schema": [],
+        "used": {"kb": {"enabled": True, "hits": ["KB001", "KB002"]}},
+        "hits": [(0.5, {"id": "KB001", "title": "物流", "answer": "1-3 天"}),
+                 (0.3, {"id": "KB002", "title": "退款", "answer": "7 天"})],
+        "tool_ctx": None,
+    }
+    reply = asyncio.run(pipeline._make_llm_reply(
+        {"answer": "1-3 天到。", "citations": ["KB001"], "confidence": 0.8}, ctx,
+        {"escalation": {"confidence_threshold": 0.6}}))
+    assert reply.citations == ["KB001"]
+
+
+def test_llm_reply_without_retrieval_has_no_citations():
+    """没有检索命中时不能凭空造引用。"""
+    import asyncio
+
+    from core import pipeline
+
+    ctx = {"tools": {}, "tools_schema": [], "used": {}, "hits": [], "tool_ctx": None}
+    reply = asyncio.run(pipeline._make_llm_reply(
+        {"answer": "你好呀。", "citations": [], "confidence": 0.8}, ctx,
+        {"escalation": {"confidence_threshold": 0.6}}))
+    assert reply.citations == []

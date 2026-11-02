@@ -1,5 +1,6 @@
 """core.llm 多提供商备援链：构建顺序 / 冷却熔断 / 竞速接棒。"""
 import asyncio
+import json
 
 from core import llm
 
@@ -105,3 +106,60 @@ def test_react_end_to_end_failover(monkeypatch):
     data = asyncio.run(llm.react("q", ctx, {"llm": llm_cfg, "multimodal": {}}))
     assert data and data["answer"] == "好"
     llm._COOLDOWN.clear()
+
+
+def test_truncated_mid_answer_retries_and_keeps_longer_reply(monkeypatch):
+    """内容非空但 finish_reason=length 时必须重试，不能把半句话发给用户。
+
+    回归背景：实测「退货怎么弄」只回了「那我把步骤交出来喵」就断了，后面的
+    退货步骤全丢。早期实现只在 content 为空时处理截断，于是「有内容但被截断」
+    被当成正常成功直接返回——用户看到的是半截话，还以为机器人敷衍。
+    """
+    import asyncio
+
+    import httpx
+
+    orig_client = httpx.AsyncClient
+
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        calls.append(body.get("max_tokens"))
+        if len(calls) == 1:
+            return httpx.Response(200, json={"choices": [{
+                "message": {"content": "那我把步骤交出来喵"},
+                "finish_reason": "length"}]})
+        return httpx.Response(200, json={"choices": [{
+            "message": {"content": "那我把步骤交出来喵：签收后 7 天内无理由退货，质量问题 15 天内换货。"},
+            "finish_reason": "stop"}]})
+
+    fake = orig_client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(llm, "get_client", lambda base, timeout=180: fake)
+    out = asyncio.run(llm._post_chat("http://x", "k", {"max_tokens": 512, "messages": []}))
+    assert "签收后 7 天内" in out, f"应当采用补全后的长回复，实际: {out}"
+    assert len(calls) == 2, "应当重试一次"
+    assert calls[1] > calls[0], "重试必须提高 max_tokens"
+
+
+def test_truncated_mid_answer_keeps_original_when_retry_shorter(monkeypatch):
+    """重试结果更短时保留原答案，不能被端点带偏。"""
+    import asyncio
+
+    import httpx
+
+    orig_client = httpx.AsyncClient
+
+    seq = iter([
+        "第一版比较完整的一段话，虽然被截断",
+        "短",
+    ])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{
+            "message": {"content": next(seq)}, "finish_reason": "length"}]})
+
+    fake = orig_client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(llm, "get_client", lambda base, timeout=180: fake)
+    out = asyncio.run(llm._post_chat("http://x", "k", {"max_tokens": 512, "messages": []}))
+    assert out == "第一版比较完整的一段话，虽然被截断"
