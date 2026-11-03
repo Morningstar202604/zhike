@@ -17,6 +17,19 @@ The authoritative version string lives in [`VERSION`](VERSION), mirrored by
 
 ---
 
+## [1.4.1] — 2026-11-03
+
+### Fixed
+
+- **Gateway refused to start whenever CHANNEL_TOKEN was configured.** The startup preflight's
+  token probe posted to `/v1/ingest` **without** the `X-Channel-Token` header; core answers 401 to
+  any unauthenticated request, so the probe read "mismatch" and the gateway exited with code 2 —
+  even with a perfectly correct token on both sides. The probe now sends the configured header;
+  only a 401/403 *with* the token counts as a mismatch. Regression from the QQ self-check commit
+  (019a22c), found while bringing a real gateway back up.
+
+---
+
 ## [Unreleased]
 
 ### Planned

@@ -176,9 +176,12 @@ def _preflight_core() -> None:
         logger.error(f"核心服务 {CORE_BASE_URL}/healthz 返回 {r.status_code}，请先修好核心再启动网关。")
         sys.exit(2)
 
-    # token 不匹配时 core 对 ingest 一律 503，网关侧同样没有明显报错
+    # token 探测必须带上令牌：core 对**无令牌**请求一律 401，裸探测永远 401，
+    # 网关会因此永远判定「令牌不一致」而拒绝启动（真实踩过：带了正确令牌也被裸探测误杀）。
+    # 带上令牌后再 401/403，才真的是两边令牌不一致；503 仍是 core 未配置令牌。
     try:
-        probe = httpx.post(f"{CORE_BASE_URL}/v1/ingest", json={}, timeout=5)
+        probe = httpx.post(f"{CORE_BASE_URL}/v1/ingest", json={}, timeout=5,
+                           headers=_channel_headers())
         if probe.status_code in (401, 403, 503) and CHANNEL_TOKEN:
             logger.error(
                 f"核心拒绝网关上报（HTTP {probe.status_code}）：CHANNEL_TOKEN 与 core 不一致。\n"

@@ -330,3 +330,35 @@ def test_ingest_retry_queue_is_bounded(monkeypatch):
     finally:
         _aio.create_task = orig
     assert called == [], "队列满时不得再创建补投任务"
+
+
+def test_preflight_probe_sends_channel_token(monkeypatch):
+    """启动自检的 token 探测必须带上 X-Channel-Token：
+    core 对无令牌请求一律 401，裸探测会把带着正确令牌的网关也误杀（真实踩过）。"""
+
+    from gateway import bot as gw_bot
+
+    posted = {}
+
+    class R:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+    def fake_get(url, timeout):
+        return R(200)  # healthz 正常
+
+    def fake_post(url, json=None, timeout=None, headers=None, **kw):
+        posted["headers"] = headers or {}
+        return R(422)  # 空载荷校验错误 ≠ 令牌错误
+
+    monkeypatch.setattr(gw_bot.httpx, "get", fake_get)
+    monkeypatch.setattr(gw_bot.httpx, "post", fake_post)
+    monkeypatch.setattr(gw_bot, "CHANNEL_TOKEN", "test-channel-token")
+
+    try:
+        gw_bot._preflight_core()
+    except SystemExit as e:
+        raise AssertionError(f"preflight 不应退出，code={e.code}")
+
+    assert posted["headers"].get("X-Channel-Token") == "test-channel-token", \
+        "探测请求必须带 X-Channel-Token"
