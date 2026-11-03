@@ -1,9 +1,54 @@
 # QQ 登录与联调（NapCat + OneBot v11）
 
+> **先跑一次自检**：`python scripts/qq_doctor.py`。它会直接告诉你这台机器该走哪条路
+> （本机注入 / Docker / 需要先修什么），比对着文档猜快得多。
+
 > **本机部署（Windows，想免扫码、复用已登录的 QQ）**：看 [QQ-LOCAL.md](QQ-LOCAL.md)。
 > 本文是 Docker/服务器路径，首次登录需要扫码一次。
 
 本文记录 **实测过** 的接入路径，不是通用教程。每一步都注明失败时看什么。
+
+## 选哪条路：先看这张表
+
+| 情况 | 走哪条 | 原因 |
+|---|---|---|
+| 机器上没有装桌面版 QQ，或愿意跑容器 | **Docker（本文）** | 容器自带一份 QQ，宿主机 QQ 版本与你无关 |
+| 已登录桌面 QQ，想复用凭据免扫码 | 本机注入（[QQ-LOCAL.md](QQ-LOCAL.md)） | 复用 `Tencent Files` 里的登录态 |
+| 本机注入曾经能用、现在群里不回 | **多半是 QQ 自动升级了**，见下 | 注入是按 QQ 内部结构打补丁的，版本一变就静默失效 |
+
+### 为什么本机注入会「静默失效」
+
+NapCat 的注入包（`qqnt.json`）写死了适配的 QQ 版本。QQ 自动升级后：
+
+- `QQ.exe` 进程能起来，但内存只有约 **20MB**（正常主进程数百 MB）
+- WebUI(6099) 与 OneBot WS(3001) **都不监听**
+- `logs/` 里一个新文件都不产生，`run.log` 却只写 `Process resumed` 看似正常
+
+用户侧看到的就是「QQ 群一直没人回」，而所有日志都"正常"，极难定位。
+`python scripts/qq_doctor.py` 会直接判出这一条（版本不匹配 + 进程内存异常）。
+
+**权威结论：本机注入对 QQ 版本敏感，Docker 不受影响。** 同一台机器上如果本机注入
+反复失效，不要再修版本号——改走容器，问题从根上消失。
+
+## 用 compose 起容器（推荐）
+
+仓库已带一份可直接用的配置：[`docs/napcat-compose.yaml`](napcat-compose.yaml)。
+
+```bash
+docker compose -f docs/napcat-compose.yaml up -d
+docker compose -f docs/napcat-compose.yaml logs -f napcat
+```
+
+然后打开 <http://127.0.0.1:6099/webui> 扫码（令牌默认 `zhike-local`，可用
+`NAPCAT_WEBUI_TOKEN` 覆盖）。
+
+三个数据目录会落到 `docs/data/`（QQ 凭据 / NapCat 配置 / 插件），备份它就能迁移；
+删掉 `docs/data/qq` 就要重新扫码。
+
+> 用 compose 的前提是本机 Docker 引擎真的在跑。Windows 上如果 `docker info` 报
+> `cannot find the file specified`，通常是 **Docker Desktop 未启动**，或
+> **WSL / VirtualMachinePlatform 未启用**。后者需要管理员权限启用并重启系统。
+> `python scripts/qq_doctor.py` 会把这两项分开报出来。
 
 ## 0. 前置
 

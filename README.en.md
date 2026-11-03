@@ -103,11 +103,27 @@ useful for validating the pipeline before you commit to a provider.
 
 ### Connect QQ
 
+Run the doctor first — it tells you which path this machine should take:
+
 ```bash
+python scripts/qq_doctor.py
+```
+
+Two paths, pick one:
+
+```bash
+# A. Container (recommended): bundles its own QQ, so your host QQ version is irrelevant
+docker compose -f docs/napcat-compose.yaml up -d
+
+# B. Local injection: reuses your desktop QQ credentials (no QR scan), but requires a
+#    QQ version that matches NapCat's injection package
 python scripts/napcat_local.py start --qq <your-account>
 ```
 
-Full walkthrough: [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md) · local setup notes: [docs/QQ-LOCAL.md](docs/QQ-LOCAL.md)
+> Local injection is version-sensitive: after a QQ auto-update it fails **silently** — the
+> process is alive but no ports listen and the log only says `Process resumed`. To users it
+> looks like "the bot never answers in the group". If this keeps happening, switch to the
+> container path. Details: [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md) · [docs/QQ-LOCAL.md](docs/QQ-LOCAL.md)
 
 ### Docker
 

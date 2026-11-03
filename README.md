@@ -100,11 +100,25 @@ QQ 渠道还需要 `CHANNEL_TOKEN` 以及运行中的 NapCat/OneBot 网关。
 
 ### 接入 QQ
 
+先跑一次自检，它会判断你这台机器该走哪条路：
+
 ```bash
+python scripts/qq_doctor.py
+```
+
+两条路径，选一条：
+
+```bash
+# A. 容器版（推荐）：容器自带 QQ，宿主机的 QQ 版本与你无关，首次扫码一次
+docker compose -f docs/napcat-compose.yaml up -d
+
+# B. 本机注入：复用桌面 QQ 的登录凭据，免扫码，但要求 QQ 版本与 NapCat 匹配
 python scripts/napcat_local.py start --qq <你的账号>
 ```
 
-完整流程见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md)，本机接入笔记见 [docs/QQ-LOCAL.md](docs/QQ-LOCAL.md)。
+> 本机注入对 QQ 版本敏感：QQ 自动升级后注入会**静默失效**（进程在但端口全不通、
+> 日志只写 `Process resumed`），表现就是「群里一直没人回」。反复遇到就换容器版。
+> 排障细节见 [docs/QQ-LOGIN.md](docs/QQ-LOGIN.md) 与 [docs/QQ-LOCAL.md](docs/QQ-LOCAL.md)。
 
 ### Docker
 

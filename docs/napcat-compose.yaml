@@ -1,0 +1,55 @@
+# NapCat Docker —— 在本机跑 QQ 机器人而不碰宿主机的 QQ 安装
+#
+# 为什么用它，而不是 scripts/napcat_local.py（本机注入）：
+#   本机注入要求 QQ 版本与 NapCat 的注入包严格匹配。QQ 一旦自动升级，注入会
+#   **静默失败**——QQ 进程起来但只有 20MB，3001/6099 都不监听，logs 一个新文件
+#   都没有，run.log 却只写 `Process resumed` 看似正常。用户侧表现是「QQ 群一直
+#   没人回」，排查成本极高（本项目实际踩过：NapCat 4.18.42 适配 9.9.22-40990，
+#   机器上被升到 9.9.36-53644）。
+#
+#   容器版自带一份 QQ，宿主机装的是哪个版本都不影响，这个坑从根上消失。
+#   代价：首次要扫码登录（容器没有宿主机的登录凭据），之后凭据存在数据卷里复用。
+#
+# 用法：
+#   docker compose -f docs/napcat-compose.yaml up -d
+#   docker compose -f docs/napcat-compose.yaml logs -f napcat
+#   然后 open http://127.0.0.1:6099/webui 扫码（令牌见下方 WEBUI_TOKEN）
+#
+# 关于数据目录位置：`./data` 相对于**本 compose 文件所在目录**解析，
+# 即落盘到 docs/data/。若希望与项目其它运行数据放在一起，把下面三个
+# volumes 的 `./data` 换成 `../.local/napcat-docker`（仍是相对本文件）。
+# 两种都行，但要先定好再启动——中途换目录等于换了个新容器，得重新扫码。
+#
+# 与网关对接：NapCat 在 3001 起正向 WebSocket，网关的 ONEBOT_WS_URL 默认就是这个，
+# 无需额外配置。启动网关：python gateway/bot.py
+#
+# 注意：同一 QQ 号不能同时登录桌面客户端与容器。跑机器人前先退出桌面 QQ。
+
+services:
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: zk-napcat
+    restart: unless-stopped
+    environment:
+      # MODE=ws 让 NapCat 监听 3001（正向 WS）。
+      # 默认模板是 nonebot（主动外连协议端），方向相反，网关会连不上。
+      MODE: ws
+      WEBUI_TOKEN: ${NAPCAT_WEBUI_TOKEN:-zhike-local}
+    ports:
+      # 只绑 127.0.0.1：WebUI 与 OneBot 都不该暴露到公网。
+      - "127.0.0.1:6099:6099"
+      - "127.0.0.1:3001:3001"
+    volumes:
+      # 三个目录必须持久化：QQ 登录凭据、NapCat 配置、插件。
+      # 删了 ./data/qq 就要重新扫码；把整个 data 目录备份起来即可迁移。
+      - ./data/qq:/app/.config/QQ
+      - ./data/config:/app/napcat/config
+      - ./data/plugins:/app/napcat/plugins
+    healthcheck:
+      # 只看端口是否监听不够（未登录时端口也会监听但握手不回），
+      # 这里要求 WebUI HTTP 真的有响应。
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:6099/webui >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
