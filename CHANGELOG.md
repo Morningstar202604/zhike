@@ -28,6 +28,30 @@ The authoritative version string lives in [`VERSION`](VERSION), mirrored by
 
 ---
 
+## [1.4.0] — 2026-11-03
+
+QQ QR-code login from the console: link the bot's QQ account without ever opening the NapCat
+WebUI or a terminal.
+
+### Added
+
+- **Console QR login** (`core/api/qq_login.py` + dashboard). The「渠道连接」card's QQ row gets a
+  「扫码登录」 button: core proxies the NapCat WebUI login endpoints (`/api/auth/login` with the
+  `SHA256(token + ".napcat")` handshake, `CheckLoginStatus`, `GetQQLoginQrcode` /
+  `RefreshQRcode`), the frontend renders the returned URL as a QR and polls status every 3s.
+  Scan with the phone → the dialog flips to "logged in" with the account name; the gateway
+  reconnects on its own.
+- Credential handling stays server-side: the WebUI token never reaches the browser, cached
+  `Credential` auto re-logins once on 401/403, and business errors wrapped in HTTP 200
+  (`{"code": 非0}`) are surfaced as text instead of pretending the QR works. QR auto-refreshes
+  at ~110s (NapCat expires them at ~2min).
+- New config keys (see `.env.example`): `NAPCAT_WEBUI_URL` (default `http://127.0.0.1:6099`),
+  `NAPCAT_WEBUI_TOKEN`. Unconfigured → the dialog says so honestly and points at the old paths.
+- `tests/test_qq_login_api.py` — auth handshake hash, token never in responses, 200-wrapped
+  business errors surfaced, credential expiry re-login and replay, status shape.
+
+---
+
 ## [1.3.1] — 2026-11-03
 
 Gateway resilience pass: no more silently dropped messages during short core outages, and HTTP

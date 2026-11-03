@@ -30,6 +30,21 @@ NapCat 的注入包（`qqnt.json`）写死了适配的 QQ 版本。QQ 自动升�
 **权威结论：本机注入对 QQ 版本敏感，Docker 不受影响。** 同一台机器上如果本机注入
 反复失效，不要再修版本号——改走容器，问题从根上消失。
 
+## 首选：控制台里直接扫码（不用开 NapCat WebUI）
+
+在 `.env` 里配好 NapCat WebUI 地址与令牌后，控制台「运行总览 → 渠道连接」的 QQ 行
+会出现「扫码登录」按钮，点开弹窗直接用手机 QQ 扫码，成功后显示已登录账号：
+
+```env
+NAPCAT_WEBUI_URL=http://127.0.0.1:6099
+NAPCAT_WEBUI_TOKEN=<NapCat 启动日志里的 token，或 compose 里自设的值>
+```
+
+- 令牌只存在核心进程内，浏览器永远拿不到；二维码约 2 分钟自动换新
+- 它代理的是 NapCat WebUI 的**内部接口**，NapCat 大版本升级后若失效，
+  控制台会明说拿不到二维码，此时仍走下面的 WebUI / 终端脚本路径
+- 扫码成功后网关自动连上，无需重启
+
 ## 用 compose 起容器（推荐）
 
 仓库已带一份可直接用的配置：[`docs/napcat-compose.yaml`](napcat-compose.yaml)。

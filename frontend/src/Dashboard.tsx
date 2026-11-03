@@ -1,11 +1,13 @@
 import { Link } from 'react-router-dom'
-import { lazy, Suspense, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { EChartsOption } from './lib/echarts'
 import {
   Inbox, MessageSquare, FileText, Users, BookOpen, ShieldAlert, Activity,
   Bot, Zap, Headset, Lock, RefreshCw, LayoutDashboard, CheckCircle2, AlertTriangle,
-  Radio, ScrollText, MessagesSquare, BarChart3,
+  Radio, ScrollText, MessagesSquare, BarChart3, QrCode, Loader2,
 } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
+import { http } from './lib/queries'
 import { useAdminOverview, useAdminStats, useAdminReport, useAgentHealth, useAdminChannels, useConfig, useUpdateConfig, useFeedbackSummary, useChannelAdapters } from './lib/queries'
 import { isAuthError } from './lib/queries'
 import TokenGate from './components/TokenGate'
@@ -299,6 +301,7 @@ export default function Dashboard() {
                         {caps.map((cap) => <span key={cap} className="badge muted" style={{ fontSize: 10 }}>{cap}</span>)}
                       </span>
                     )}
+                    {c.channel === 'onebot_v11' && <QQScanLogin onLoggedIn={refreshAll} />}
                   </div>
                   )
                 })}
@@ -360,6 +363,7 @@ export default function Dashboard() {
                         {caps.map((cap) => <span key={cap} className="badge muted" style={{ fontSize: 10 }}>{cap}</span>)}
                       </span>
                     )}
+                    {c.channel === 'onebot_v11' && <QQScanLogin onLoggedIn={refreshAll} />}
                   </div>
                   )
                 })}
@@ -383,6 +387,144 @@ export default function Dashboard() {
 function HealthChip({ ok, on }: { ok: boolean; on: string }) {
   return (
     <span className={`badge ${ok ? 'muted' : 'warn'} text-[11px]`}>{on}</span>
+  )
+}
+
+/* ============ QQ 扫码登录：经核心代理 NapCat WebUI，token 只留在服务端 ============ */
+interface QQLoginStatus {
+  configured: boolean
+  reachable?: boolean
+  is_login?: boolean
+  is_offline?: boolean
+  core_ready?: boolean
+  login_phase?: number | null
+  uin?: string
+  nick?: string
+  error?: string
+}
+
+const QR_TTL_S = 110 // NapCat 二维码约 2 分钟过期，提前 10 秒主动换新
+
+function QQScanLogin({ onLoggedIn }: { onLoggedIn?: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [qr, setQr] = useState<{ url?: string; error?: string } | null>(null)
+  const [status, setStatus] = useState<QQLoginStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const secsRef = useRef(0)
+  const openRef = useRef(false)
+  openRef.current = open
+
+  const loadQr = async (refresh: boolean) => {
+    try {
+      const r = await http.get<{ configured: boolean; qrcode_url?: string; error?: string }>(
+        `/api/channel/qq/qr${refresh ? '?refresh=1' : ''}`)
+      setQr({ url: r.qrcode_url, error: r.error })
+      secsRef.current = 0
+    } catch (e) {
+      setQr({ error: (e as Error).message })
+    }
+  }
+
+  // 打开弹窗：先查状态（可能已经登录着），未登录才拉二维码 + 启动轮询
+  const openDialog = () => {
+    setOpen(true)
+    setBusy(true)
+    http.get<QQLoginStatus>('/api/channel/qq/login-status')
+      .then((s) => { if (openRef.current) setStatus(s) })
+      .catch((e) => { if (openRef.current) setStatus({ configured: true, reachable: false, error: (e as Error).message }) })
+      .finally(() => setBusy(false))
+    if (!status?.is_login) void loadQr(false)
+  }
+
+  // 1s 计数（二维码到期自动换新）+ 3s 轮询登录状态，弹窗关了全部停
+  useEffect(() => {
+    if (!open) return
+    const tick = setInterval(() => {
+      secsRef.current += 1
+      if (qr?.url && secsRef.current >= QR_TTL_S) void loadQr(true)
+    }, 1000)
+    const poll = setInterval(() => {
+      http.get<QQLoginStatus>('/api/channel/qq/login-status')
+        .then((s) => { if (openRef.current) setStatus(s) })
+        .catch(() => { /* 网络抖动等下一轮 */ })
+    }, 3000)
+    return () => { clearInterval(tick); clearInterval(poll) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, qr?.url])
+
+  const loggedIn = !!status?.is_login
+  const close = () => { setOpen(false); setQr(null); if (loggedIn) onLoggedIn?.() }
+
+  return (
+    <>
+      <button
+        className="btn secondary sm"
+        style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 10px' }}
+        onClick={(e) => { e.stopPropagation(); openDialog() }}
+        title={t('不出控制台直接扫码登录 QQ（NapCat WebUI 令牌由服务端保管）')}
+      >
+        <QrCode size={12} /> {t('扫码登录')}
+      </button>
+      {open && (
+        <div className="dlg-mask" onClick={close}>
+          <div className="dlg" style={{ width: 'min(380px, 100%)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="dlg-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>{t('QQ 扫码登录')}</span>
+              <button className="btn ghost sm" onClick={close}>{t('关闭')}</button>
+            </div>
+
+            {busy && <div className="bp-hint"><Loader2 size={13} className="animate-spin inline-block" /> {t('连接 NapCat…')}</div>}
+
+            {loggedIn && (
+              <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                <CheckCircle2 size={40} style={{ color: 'var(--ok, #16a34a)' }} />
+                <p className="dlg-msg" style={{ marginTop: 8 }}>
+                  {t('已登录')}{status?.nick || status?.uin ? `：${status?.nick || ''}${status?.uin ? ` (${status?.uin})` : ''}` : ''}
+                </p>
+                <p className="bp-hint">{t('网关会自动连上 NapCat，无需重启；回到「渠道连接」看心跳。')}</p>
+              </div>
+            )}
+
+            {!busy && !loggedIn && status && status.configured === false && (
+              <div>
+                <p className="dlg-msg">{t('还没有配置 NapCat WebUI 令牌，控制台拿不到二维码。')}</p>
+                <p className="bp-hint">
+                  {t('在 .env 里设置 NAPCAT_WEBUI_TOKEN（NapCat 启动日志里 grep token，或 docs/napcat-compose.yaml 的 NAPCAT_WEBUI_TOKEN），重启核心后再来。')}
+                </p>
+              </div>
+            )}
+
+            {!busy && !loggedIn && status && status.configured === true && status.reachable === false && (
+              <div>
+                <p className="dlg-msg">{t('连不上 NapCat WebUI（默认 http://127.0.0.1:6099）。')}</p>
+                <p className="bp-hint">{status.error}{t('；确认 NapCat 在跑、6099 端口可达、令牌正确。')}</p>
+              </div>
+            )}
+
+            {!busy && !loggedIn && qr?.url && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                <div style={{ background: '#fff', padding: 12, borderRadius: 10, lineHeight: 0 }}>
+                  <QRCodeSVG value={qr.url} size={200} />
+                </div>
+                <p className="bp-hint" style={{ marginTop: 0 }}>
+                  {t('用手机 QQ「扫一扫」扫这个码，扫码后这里会自动变成已登录。')}
+                </p>
+                <button className="btn secondary sm" onClick={() => void loadQr(true)}>
+                  <RefreshCw size={12} /> {t('刷新二维码')}
+                </button>
+              </div>
+            )}
+
+            {!busy && !loggedIn && qr?.error && status?.reachable !== false && (
+              <div>
+                <p className="dlg-msg">{qr.error}</p>
+                <p className="bp-hint">{t('拿不到二维码时，仍可用老办法：打开 NapCat WebUI（http://127.0.0.1:6099）或运行 scripts/qq_login.py。')}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
