@@ -943,15 +943,21 @@ async def _gate_output(reply, query: str, cfg: dict) -> None:
 
     与 `_maybe_critique` 分工：那边只统计「格式类」高频毛病，这边管「人设硬伤」——
     自称 AI、把已有能力说死、承诺转人工，这些出现在群里一次就够丢人。
+    角色卡在位时，另用 `character_guard` 的卡片判据（客服腔/身份漂移/禁忌/口癖）
+    过一遍——通用判据管"像不像助手"，卡片判据管"像不像这个角色"。
     """
     from core import quality
 
+    persona_text = str((cfg.get("context") or {}).get("persona") or "")
     try:
         issues = quality.critique(reply.text or "", query,
                                   channel=str(cfg.get("_channel") or ""),
-                                  persona=str((cfg.get("context") or {}).get("persona") or ""))
+                                  persona=persona_text)
     except Exception:  # 判别器故障绝不影响回复
         return
+    card_issues = _character_issues(reply.text or "", persona_text)
+    if card_issues:
+        issues = list(issues) + card_issues
     if not issues:
         return
     if quality.needs_rewrite(issues):
@@ -964,20 +970,44 @@ async def _gate_output(reply, query: str, cfg: dict) -> None:
                 issues = [i for i in issues if i.get("code") != "json_leak"]
         if quality.needs_rewrite(issues):
             new_text = await quality.rewrite(
-                reply.text or "", issues, query=query,
-                persona=str((cfg.get("context") or {}).get("persona") or ""))
+                reply.text or "", issues, query=query, persona=persona_text)
             if new_text:
                 reply.text = new_text
+            elif all(str(i.get("code") or "").startswith("card_") for i in issues):
+                # 只有卡片判据违规而重写又没成功：保留原文。
+                # 轻微口癖丢失/个别措辞不该用兜底句顶替——兜底句是另一个角色的口吻，
+                # 发出去比原文伤害大；通用硬伤（自称 AI 等）才走 _fallback_for。
+                pass
             else:
                 # 重写没成功（模型也答不出来）：至少不能把底层模型自述/英文过滤报错发出去。
-                # 这里给的是"人设兜底"而不是客服话术——宁可用一句短的猫话，也不露馅。
-                reply.text = _fallback_for(issues)
+                # 这里给的是"人设兜底"而不是客服话术——宁可用一句短的，也不露馅。
+                reply.text = _fallback_for(issues, persona_text)
                 reply.mode = "llm_react_guarded"
     try:
         store.critique_add("quality", len(reply.text or ""),
                            [f"[{i['severity']}] {i['detail']}" for i in issues])
     except Exception:
         pass
+
+
+def _character_issues(text: str, persona: str) -> list[dict]:
+    """当前提示词能反查到角色卡时，用卡片判据查一致性；查不到返回空。
+
+    返回 quality 风格的 issue dict（severity=high，触发重写路径），
+    这样重写提示词能直接复用 detail 里的具体修正要求。
+    任何异常都吞掉——守卫是增强，不是依赖。
+    """
+    try:
+        from core import character as character_mod, character_guard, quality
+
+        card = character_mod.card_for_persona(persona)
+        if card is None:
+            return []
+        result = character_guard.check_reply(text or "", card)
+        return [{"code": f"card_{v.kind}", "severity": quality.SEV_HIGH,
+                 "detail": v.detail} for v in result.violations]
+    except Exception:  # aqg: 守卫故障不影响回复
+        return []
 
 
 def _strip_json_tail(text: str) -> str:
@@ -1008,17 +1038,36 @@ def _strip_json_tail(text: str) -> str:
     return head
 
 
-def _fallback_for(issues: list[dict]) -> str:
+def _fallback_for(issues: list[dict], persona: str = "") -> str:
+    """重写也失败时的兜底短句。判据要跟当前角色走：
+    猫娘角色用猫话兜底，其它角色用中性说法——给「老陈」发「本喵」等于二次穿帮。
+    判定复用 quality._identity_anchors（只认自我描述里的身份词）：
+    tech 卡叙述里「拨号上网的猫」是调制解调器，按字面找「猫」字会误判。"""
     codes = {i.get("code") for i in issues}
-    if "identity_no_cat" in codes:
-        return "本喵叫零，一只猫，喵～ 问这么多干嘛，先说说你是谁。"
+    p = persona or ""
+    try:
+        from core.quality import _identity_anchors
+        is_cat = any("猫" in a for a in _identity_anchors(p))
+    except Exception:  # 锚点推断失败就保守回退到显式自述
+        is_cat = False
+    # 锚点规则只认「你是…猫」一句话内的自述；「你是「零」。一只猫娘。」这种
+    # 断句抓不到，补三个无歧义的猫自称信号（tech 卡里的「拨号上网的猫」
+    # 是调制解调器，不能按字面算）。
+    is_cat = is_cat or "猫娘" in p or "一只猫" in p or "本喵" in p[:1200]
+    miao = "，喵～" if is_cat else "。"
+    if "identity_missing" in codes or "identity_no_cat" in codes:
+        if is_cat:
+            return "本喵叫零，一只猫，喵～ 问这么多干嘛，先说说你是谁。"
+        return "先说说你是谁、要办什么事，答非所问就浪费彼此时间了。"
     if "filter_leak" in codes:
-        return "这话我接不住，换个说法，喵～"
+        return "这话我接不住，换个说法" + miao
     if "ai_self" in codes or "model_leak" in codes:
-        return "我是零，一只猫。别的身份？你猜，猜对了也不告诉你，喵～"
+        if is_cat:
+            return "我是零，一只猫。别的身份？你猜，猜对了也不告诉你，喵～"
+        return "我是谁不重要，你要办的事说清楚就行。"
     if "capability_refusal" in codes:
-        return "能发，你要什么直接说，喵～"
-    return "这话我说不利索，换个问法，喵～"
+        return "能发，你要什么直接说" + miao
+    return "这话我说不利索，换个问法" + miao
 
 
 async def run(message: ChannelMessage, history: list[dict], visitor_key: str) -> AgentReply:

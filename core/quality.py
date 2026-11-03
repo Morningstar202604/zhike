@@ -85,6 +85,36 @@ def _match_all(pat: re.Pattern, text: str) -> list[str]:
     return [m.group(0)[:24] for m in pat.finditer(text or "")]
 
 
+def _identity_anchors(persona: str) -> set[str]:
+    """从角色提示词里推断"被问你是谁时应该体现的词"。
+
+    判据来源（按优先级）：
+    1. 提示词开头「你是「X」」里的 X —— 角色名本身就是最硬的锚点
+    2. 角色自述里出现的物种/职业关键词（猫、狗、秘书、工程师……）
+
+    返回空集表示"这个角色没有可判定的身份锚点"，调用方跳过检查。
+    宁可漏判，也不能误伤——误判会白白重写一次并把好答案改坏。
+    """
+    p = (persona or "").strip()
+    if not p:
+        return set()
+    anchors: set[str] = set()
+
+    m = re.search(r"你是[「\"']([^」\"']{1,12})[」\"']", p)
+    if m:
+        name = m.group(1).strip()
+        if name:
+            anchors.add(name)
+
+    # 常见身份词：只认明确的自我描述，避免把"用户是猫奴"这种误判成锚点
+    for word in ("猫娘", "猫", "狗", "秘书", "顾问", "工程师", "研究员",
+                 "分析师", "教练", "导师", "文案", "设计师", "管家", "倾听者"):
+        if re.search(rf"你是[^。\n]{{0,20}}{word}", p):
+            anchors.add(word)
+
+    return anchors
+
+
 def critique(text: str, query: str = "", *, channel: str = "", persona: str = "") -> list[dict]:
     """规则判别一条回复，返回 [{"code","severity","detail"}]。零成本、绝不抛异常。"""
     t = (text or "").strip()
@@ -148,11 +178,17 @@ def critique(text: str, query: str = "", *, channel: str = "", persona: str = ""
         out.append({"code": "too_many_paragraphs", "severity": SEV_LOW,
                     "detail": "分段过多，像写报告"})
 
-    if _IDENTITY_HINT_RE.search(q) and "猫" not in t:
-        # 升级为 high：用户反复吐槽的就是「你是谁」答得像 AI/客服。
-        # 这类问题一天出现不了几次，多花一次重写换掉「我是零，蹲在手机后面」值得。
-        out.append({"code": "identity_no_cat", "severity": SEV_HIGH,
-                    "detail": "被问身份却没有猫的自我认知"})
+    if _IDENTITY_HINT_RE.search(q):
+        # 问"你是谁"时，回复里必须出现这个角色自己的身份锚点。
+        #
+        # 早期这里写死了「猫」：只对默认角色「零」成立。一旦用户切到「老陈」
+        # （技术支持）或「知客」（秘书），任何正常回答都因为不含「猫」被判 high
+        # 并被强制重写一次——既浪费一次模型调用，又可能把正确答案改坏。
+        # 现在锚点从角色卡推断，没有角色卡时回退到通用判定（不误伤）。
+        anchors = _identity_anchors(persona)
+        if anchors and not any(a in t for a in anchors):
+            out.append({"code": "identity_missing", "severity": SEV_HIGH,
+                        "detail": f"被问身份却没有体现角色身份（应含 {'/'.join(sorted(anchors)[:3])}）"})
 
     if q and len(t) >= 12 and t[:20] == q[:20]:
         out.append({"code": "echo_user", "severity": SEV_LOW, "detail": "开头复述用户原话"})
@@ -167,12 +203,18 @@ def needs_rewrite(issues: list[dict]) -> bool:
 def _rewrite_prompt(text: str, issues: list[dict], persona: str, query: str) -> str:
     problems = "\n".join(f"- {i['detail']}" for i in issues)
     voice = persona.strip()[:1200] if persona else ""
+    # 身份那句不能写死"一只叫零的猫娘"：切到「老陈」（技术支持）或「知客」（秘书）
+    # 时，这句话等于在重写阶段把角色又拉回猫娘，越改越偏。
+    # 有角色提示词就交给它自己定义身份，没有才用通用说法。
+    identity_rule = ("1. 不许自称 AI、机器人、助手、语言模型；保持下面这个角色自己的身份。\n"
+                     if voice else
+                     "1. 不许自称 AI、机器人、助手、语言模型。\n")
     return (
         "你是文字编辑。下面这条回复有问题，请只改这些点，其余内容、信息量、立场全部保留：\n"
         f"{problems}\n\n"
         "硬要求：\n"
-        "1. 不许自称 AI、机器人、助手、语言模型；你就是一只叫零的猫娘。\n"
-        "2. 已经具备的能力（发图、发表情、发语音、联网、读文件）不许说「做不到」。\n"
+        + identity_rule
+        + "2. 已经具备的能力（发图、发表情、发语音、联网、读文件）不许说「做不到」。\n"
         "3. 不许承诺转人工、叫真人、找同事。\n"
         "4. 纯文本：不要 markdown、不要列表符号、不要 emoji（🌙 这类字符）；要表情就写 [表情:名]。\n"
         "5. 长度与原文相当或更短；口语，像人在聊天。\n"

@@ -13,7 +13,7 @@ Legend: `P0` blocking · `P1` next · `P2` later · `P3` opportunistic
 
 ---
 
-## Now — 1.3.0
+## Now — 1.4.0
 
 | Pri | Item | Why | Acceptance |
 |---|---|---|---|
@@ -22,7 +22,10 @@ Legend: `P0` blocking · `P1` next · `P2` later · `P3` opportunistic
 | P1 | Frontend i18n parity (currently ~36%) | The console advertises English but half of it is Chinese-only | Every user-visible string goes through `t()`; language switch changes the whole UI |
 | P1 | Time-zone correctness for reminders across entry points | Tool entry and admin API currently disagree on the reference clock | One injected clock; regression test with a frozen non-UTC zone |
 
-## Next — 1.4.0
+> 1.3.0 shipped the character card system (structured persona canon + consistency guard)
+> instead of these items; they roll forward unchanged.
+
+## Next — 1.5.0
 
 | Pri | Item | Why | Acceptance |
 |---|---|---|---|

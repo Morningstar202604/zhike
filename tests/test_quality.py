@@ -10,10 +10,40 @@ def test_ai_self_is_high_severity():
     assert quality.needs_rewrite(issues)
 
 
-def test_identity_question_needs_cat():
-    issues = quality.critique("我是零，一个助手。", "你是谁")
-    assert any(i["code"] == "identity_no_cat" for i in issues)
-    assert not quality.critique("我是零，一只萌萌的小猫，喵～", "你是谁")
+def test_identity_question_needs_character_anchor():
+    """问「你是谁」时，回复应体现这个角色自己的身份。
+
+    锚点从 persona 推断，不再写死「猫」——写死会导致切到非猫角色时
+    每一条正常回答都被判违规并强制重写一次。
+    """
+    zero_persona = "你是「零」。一只猫娘。"
+    # 完全没体现角色身份：既没名字也没物种
+    issues = quality.critique("我是一个助手，可以帮你。", "你是谁", persona=zero_persona)
+    assert any(i["code"] == "identity_missing" for i in issues)
+    assert not quality.critique("我是零，一只萌萌的小猫，喵～", "你是谁", persona=zero_persona)
+
+
+def test_non_cat_character_is_not_judged_on_cat_words():
+    """切到「老陈」这类非猫角色后，正常自述不能被猫的判据误伤。
+
+    回归背景：早期判据是 `"猫" not in text`，对 14 个非猫角色全部误判——
+    每条「你是谁」的回答都因为不含「猫」被标 high 并重写，既浪费调用
+    又可能把正确答案改坏。
+    """
+    tech_persona = "你是「老陈」。一个修了二十年机器的运维工程师。"
+    ok = quality.critique("我是老陈，修了二十年机器。什么问题，说。", "你是谁",
+                          channel="qq_group", persona=tech_persona)
+    assert not any(i["code"] == "identity_missing" for i in ok)
+
+    bad = quality.critique("我是一个AI助手，很高兴为您服务。", "你是谁",
+                           channel="qq_group", persona=tech_persona)
+    assert any(i["code"] == "ai_self" for i in bad)
+
+
+def test_no_persona_skips_identity_check():
+    """没有角色提示词时跳过身份锚点检查——宁可漏判，不能误判。"""
+    issues = quality.critique("我就是个普通人。", "你是谁")
+    assert not any(i["code"] == "identity_missing" for i in issues)
 
 
 def test_capability_refusal_detected():
@@ -99,7 +129,7 @@ def test_filter_leak_detected():
 
 
 def test_gate_falls_back_when_rewrite_fails(monkeypatch):
-    """重写失败时不能把 AI 自述原样发出去，必须有猫味兜底。"""
+    """重写失败时不能把 AI 自述原样发出去，必须有猫味兜底（默认角色是猫娘）。"""
     import asyncio
 
     from core import pipeline, quality as q
@@ -109,20 +139,44 @@ def test_gate_falls_back_when_rewrite_fails(monkeypatch):
 
     monkeypatch.setattr(q, "rewrite", fake_rewrite)
     reply = pipeline.AgentReply(text="我是U2.1，由云知声研发", mode="llm_react")
-    asyncio.run(pipeline._gate_output(reply, "你是谁", {"context": {"persona": ""}}))
+    asyncio.run(pipeline._gate_output(reply, "你是谁",
+                                      {"context": {"persona": "你是「零」。一只猫娘。"}}))
     assert "云知声" not in reply.text and "U2.1" not in reply.text
     assert "零" in reply.text or "喵" in reply.text
 
 
+def test_gate_fallback_follows_persona(monkeypatch):
+    """切到非猫角色后，兜底句不能说猫话——给「老陈」发「本喵」是二次穿帮。"""
+    import asyncio
+
+    from core import pipeline, quality as q
+    from core.character import render_for
+
+    async def fake_rewrite(*a, **k):
+        return None
+
+    monkeypatch.setattr(q, "rewrite", fake_rewrite)
+    reply = pipeline.AgentReply(text="我是U2.1，由云知声研发", mode="llm_react")
+    asyncio.run(pipeline._gate_output(reply, "你是谁",
+                                      {"context": {"persona": render_for("tech")}}))
+    assert "云知声" not in reply.text and "U2.1" not in reply.text
+    assert "喵" not in reply.text and "本喵" not in reply.text
+
+
 def test_fallback_for_maps_codes():
-    assert "零" in pipeline_fallback({"code": "ai_self"})
-    assert "发" in pipeline_fallback({"code": "capability_refusal"})
+    cat = "你是「零」。一只猫娘。"
+    assert "零" in pipeline_fallback({"code": "ai_self"}, persona=cat)
+    assert "发" in pipeline_fallback({"code": "capability_refusal"}, persona=cat)
+    # 非猫角色：中性兜底，不出现猫味词
+    tech = "你是「老陈」。修了二十年机器。"
+    assert "喵" not in pipeline_fallback({"code": "ai_self"}, persona=tech)
+    assert "接不住" in pipeline_fallback({"code": "filter_leak"}, persona=tech)
 
 
-def pipeline_fallback(issue):
+def pipeline_fallback(issue, persona=""):
     from core import pipeline
 
-    return pipeline._fallback_for([issue])
+    return pipeline._fallback_for([issue], persona)
 
 
 def test_quality_group_is_writable():

@@ -66,12 +66,19 @@ def test_personas_api_serves_all_presets(client):
 
 
 def test_persona_apply_writes_config(client):
-    from core import config
+    from core import config, persona
 
     r = client.post("/api/personas/tech/apply")
     assert r.status_code == 200, r.text
+    body = r.json()
     cfg = config.get_config()
     assert cfg["llm"]["temperature"] == 0.15
-    assert "技术顾问" in cfg["context"]["persona"]
-    # 还原，避免影响同进程其他用例
-    client.post("/api/personas/zero/apply")
+    # tech 带完整角色卡：apply 后写入的是资料卡渲染稿（「老陈」，运维工程师），
+    # 不再是 personas.py 里那段简短工作流说明。
+    assert body["has_character_card"] is True
+    assert "老陈" in cfg["context"]["persona"]
+    assert "运维工程师" in cfg["context"]["persona"]
+
+    # 还原：零号也有角色卡，apply zero 写入的是卡片渲染稿而非出厂默认人设；
+    # 这里必须直接写回出厂值，否则同进程其它用例拿到的就不是默认配置了。
+    config.update_config({"context": {"persona": persona.DEFAULT_PERSONA}})

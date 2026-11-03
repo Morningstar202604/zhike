@@ -28,6 +28,56 @@ The authoritative version string lives in [`VERSION`](VERSION), mirrored by
 
 ---
 
+## [1.3.0] — 2026-11-03
+
+Character cards: every persona preset ships with a structured, maintainable fact sheet instead of
+a single blob of prompt text, and replies are checked against it before they leave the pipeline.
+
+### Added
+
+- **Character card system** (`core/character.py`). A persona is now two layers: structured
+  *canon* (fields, narrative sections, voice samples, taboos, unknown-topic policy) stored as
+  `core/data/characters/<id>.json`, and a fixed-order *renderer* that assembles the system
+  prompt. All 15 built-in presets have cards. Cards with the same fact stated once stop the
+  model from inventing an age, an address or a backstory mid-conversation.
+- **Character consistency guard** (`core/character_guard.py`) wired into the reply pipeline.
+  After the generic quality gate, the active persona's card is looked up by rendering-equality
+  (`core/character.card_for_persona`) and the reply is checked for assistant-speak, identity
+  drift, taboo phrases and lost catchphrases. Violations trigger one rewrite; if the rewrite
+  fails on card-only issues the original text is kept rather than a fallback line in someone
+  else's voice. Personas edited away from any card render are skipped — never judged against a
+  card that does not match.
+- `/api/personas` now reports `has_card` and a `card_summary` per preset; `GET
+  /api/personas/{id}/card` returns the structured card. The console persona page shows a
+  「设定」 badge on presets that have a card and opens a viewer with facts, narrative sections,
+  voice samples and boundaries.
+- `scripts/character_harness.py` — offline character regression (static mode is CI-safe, no
+  model calls): every preset must render completely, pass drift checks, and stay distinct from
+  the other presets (similarity floor 0.72).
+- `tests/test_character_guard.py`, `tests/test_tools_uncovered.py` — card rendering, drift
+  detection, pipeline integration, plus coverage for four previously untested tools
+  (`initiate_refund`, `list_files`, `qq_friends`, `qq_groups`).
+
+### Fixed
+
+- **Identity rewrite criteria were hard-coded to the cat persona.** The gate demanded the word
+  「猫」 in any reply to "who are you", so switching to 老陈 (tech support) or 知客 (secretary)
+  forced a pointless rewrite of every correct answer. Anchors are now inferred from the persona
+  itself (`quality._identity_anchors`), and rewrite prompts no longer re-assert the cat persona.
+- **Fallback lines spoke in the wrong character's voice.** When a rewrite fails, the fallback
+  short line follows the active persona (cat-flavored for the cat, neutral for everyone else).
+  Detection ignores the modem sense of 猫 (「拨号上网的猫」 in the tech card is a dial-up modem,
+  not the persona).
+- `test_persona_apply_writes_config` asserted the old short preset text; persona apply now
+  writes the card render and reports `has_character_card`.
+
+### Changed
+
+- `POST /api/personas/{id}/apply` prefers the character card render over the short preset
+  blurb and records `source: character_card | preset` in the audit entry.
+
+---
+
 ## [1.2.1] — 2026-11-03
 
 Fixes found by running the whole stack against a real model, a real database and a real QQ

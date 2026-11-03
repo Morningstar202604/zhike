@@ -404,6 +404,18 @@ body {
 .bp-preset-check { color: var(--brand); }
 .bp-preset-desc { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
 
+/* 角色卡徽标：预设右下角的「设定」入口，点开看结构化资料卡 */
+.bp-card-badge {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; font-weight: 600;
+  color: var(--brand); background: var(--brand-soft);
+  border: 1px solid transparent; border-radius: 999px;
+  padding: 2px 9px; cursor: pointer; user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.bp-card-badge:hover { border-color: var(--brand); }
+
 /* 提示词编辑器 */
 .bp-editor {
   width: 100%; resize: vertical; min-height: 150px;

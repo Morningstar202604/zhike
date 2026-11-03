@@ -40,7 +40,7 @@ infrastructure instead:
 | **Memory** | Long-term preferences, session notes, opt-out respected and persisted |
 | **Reminders** | Natural Chinese time expressions (`十分钟后`, `每天八点`, `每月三十一号`) plus absolute ISO times, recurring rules, channel delivery |
 | **Voice** | Speech-to-text via faster-whisper, text-to-speech via edge-tts — both optional |
-| **Personas** | 15 presets across 6 categories, single backend source of truth, per-session application |
+| **Personas** | 15 presets across 6 categories, each backed by a structured character card (facts, narrative, voice samples, unknown-topic policy); replies pass a consistency guard |
 | **Console** | Dashboard, sessions, reminders, personas, annotations, agent runs, action audit, emotes, logs, settings |
 | **Operations** | Prometheus metrics, request IDs, `/healthz` and `/readyz`, Docker multi-stage image, non-root runtime |
 | **Integration** | MCP server exposing context-free tools to Claude Desktop, Cursor and other MCP clients |

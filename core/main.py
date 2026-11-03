@@ -671,10 +671,45 @@ def create_app() -> FastAPI:
 
     @app.get("/api/personas", dependencies=[Depends(require_admin)])
     def personas_list():
-        """预设角色列表。with_persona=false 时只返回元信息（列表页省流量）。"""
-        from core import personas
+        """预设角色列表。with_persona=false 时只返回元信息（列表页省流量）。
 
-        return personas.list_public(with_persona=True)
+        额外返回 ``has_card`` 与 ``card_summary``：控制台要能让用户看见
+        "这个角色有没有完整设定"，而不是点进去才发现只有两行字。
+        """
+        from core import personas
+        from core.character import load_all
+
+        data = personas.list_public(with_persona=True)
+        cards = load_all()
+        for item in data["presets"]:
+            card = cards.get(item["id"])
+            item["has_card"] = card is not None
+            if card is not None:
+                item["card_summary"] = {
+                    "tagline": card.tagline,
+                    "facts": len(card.fields),
+                    "sections": len([v for v in card.narrative.values() if str(v).strip()]),
+                    "voice_samples": len(card.voice_samples),
+                    "rendered_chars": len(card.render()),
+                }
+        return data
+
+    @app.get("/api/personas/{preset_id}/card", dependencies=[Depends(require_admin)])
+    def persona_card(preset_id: str):
+        """取某个角色的完整设定资料（控制台「查看设定」用）。
+
+        资料是结构化的：fields 是确定事实，narrative 是成段描述，
+        voice_samples 是语气样本，unknown_policy 是资料没覆盖时的处理方式。
+        """
+        from core import personas
+        from core.character import load_all
+
+        if personas.get(preset_id) is None:
+            raise HTTPException(404, f"没有这个预设角色：{preset_id}")
+        card = load_all().get(preset_id)
+        if card is None:
+            raise HTTPException(404, f"角色「{preset_id}」还没有设定资料卡")
+        return card.as_dict()
 
     @app.get("/api/personas/{preset_id}", dependencies=[Depends(require_admin)])
     def persona_detail(preset_id: str):
@@ -691,16 +726,28 @@ def create_app() -> FastAPI:
 
         走 update_config 而不是直接写库：这样配置版本号会递增，
         缓存与多 worker 都能立刻看到新值（手写 UPDATE 会漏掉这一步）。
+
+        角色卡优先：如果这个角色带结构化设定资料（core/data/characters/<id>.json），
+        就用资料渲染出的提示词，而不是 personas.py 里那段简短的工作流说明。
+        资料版包含来历、癖好、关系、语料、未知处理策略——这正是"角色不像活人"
+        的根因所在：短提示词只能描述工作方式，描述不了"这个人是谁"。
+        没有资料卡时自动回退到原 persona，不影响既有角色。
         """
         from core import personas
+        from core.character import render_for
 
         p = personas.get(preset_id)
         if p is None:
             raise HTTPException(404, f"没有这个预设角色：{preset_id}")
-        config.update_config({"context": {"persona": p.persona},
+        persona_text = render_for(p.id) or p.persona
+        config.update_config({"context": {"persona": persona_text},
                               "llm": {"temperature": p.temperature}})
-        store.append_audit("admin", "persona.applied", {"preset": p.id})
-        return {"ok": True, "preset": p.as_dict(with_persona=False)}
+        store.append_audit("admin", "persona.applied", {
+            "preset": p.id,
+            "source": "character_card" if persona_text != p.persona else "preset",
+        })
+        return {"ok": True, "preset": p.as_dict(with_persona=False),
+                "has_character_card": persona_text != p.persona}
 
     # ---- 角色卡（SillyTavern chara_card 对标）：卡片 CRUD + ST V2 导入 + 按会话绑定 ----
 

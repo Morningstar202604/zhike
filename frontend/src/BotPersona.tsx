@@ -4,6 +4,7 @@ import {
   Wrench, Heart, MessageCircle, Check, Loader2, FlaskConical,
   Trash2, Download, Upload, Briefcase, BarChart3, GraduationCap,
   CalendarCheck, UserCheck, Lightbulb, PenLine, CalendarClock, HeartHandshake,
+  BookOpen,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useConfig, useUpdateConfig, http, isAuthError } from './lib/queries'
@@ -27,8 +28,120 @@ interface PersonaPreset {
   tags: string[]
   persona_chars: number
   persona: string
+  // 完整设定资料卡（core/data/characters/<id>.json）：有卡的预设可「查看设定」
+  has_card?: boolean
+  card_summary?: {
+    tagline: string
+    facts: number
+    sections: number
+    voice_samples: number
+    rendered_chars: number
+  }
 }
 interface PersonaPayload { categories: string[]; presets: PersonaPreset[]; default_id: string }
+
+/* 设定卡弹层里的叙述小节标题（与后端渲染顺序 core/character.py 对齐） */
+const NARRATIVE_TITLES: Record<string, string> = {
+  identity: '身份',
+  background: '来历',
+  world: '所处的世界',
+  appearance: '外形',
+  personality: '性格',
+  habits: '习惯与癖好',
+  relationships: '关系',
+  speech: '说话方式',
+  quirks: '小动作与口癖',
+  boundaries: '分寸与红线',
+}
+
+interface CharacterCardData {
+  id: string
+  name: string
+  tagline: string
+  fields: Record<string, string>
+  narrative: Record<string, string>
+  unknown_policy: string
+  taboos: string[]
+  voice_samples: string[]
+}
+
+/* ============ 「查看设定」弹层：读 /api/personas/{id}/card 的结构化资料 ============ */
+function CardViewer({ preset, onClose }: { preset: { id: string; name: string }; onClose: () => void }) {
+  const [card, setCard] = useState<CharacterCardData | null>(null)
+  const [err, setErr] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    http.get<CharacterCardData>(`/api/personas/${preset.id}/card`)
+      .then((data) => { if (alive) setCard(data) })
+      .catch((e) => { if (alive) setErr((e as Error).message || '加载失败') })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [preset.id])
+
+  return (
+    <div className="dlg-mask" onClick={onClose}>
+      <div className="dlg" style={{ width: 'min(680px, 100%)', maxHeight: '84dvh', overflow: 'auto' }}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="dlg-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>{preset.name} · 设定资料</span>
+          <button className="btn ghost sm" onClick={onClose}>关闭</button>
+        </div>
+        {loading && <div className="bp-hint"><Loader2 size={13} className="animate-spin inline-block" /> 加载中…</div>}
+        {err && <div className="bp-hint">{err}</div>}
+        {card && (
+          <>
+            {card.tagline && <p className="dlg-msg" style={{ fontStyle: 'italic' }}>{card.tagline}</p>}
+            {Object.keys(card.fields || {}).length > 0 && (
+              <div>
+                <b style={{ fontSize: 12.5 }}>设定事实</b>
+                <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.8, color: 'var(--ink-2)' }}>
+                  {Object.entries(card.fields).map(([k, v]) => (
+                    <li key={k}><b>{k}</b>：{String(v)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {(Object.keys(NARRATIVE_TITLES) as Array<keyof typeof NARRATIVE_TITLES>).map((key) => {
+              const body = String(card.narrative?.[key] || '').trim()
+              if (!body) return null
+              return (
+                <div key={key}>
+                  <b style={{ fontSize: 12.5 }}>{NARRATIVE_TITLES[key]}</b>
+                  <p className="dlg-msg" style={{ marginTop: 4 }}>{body}</p>
+                </div>
+              )
+            })}
+            {card.voice_samples?.length > 0 && (
+              <div>
+                <b style={{ fontSize: 12.5 }}>参考语气</b>
+                <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.8, color: 'var(--ink-2)' }}>
+                  {card.voice_samples.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              </div>
+            )}
+            {card.taboos?.length > 0 && (
+              <div>
+                <b style={{ fontSize: 12.5 }}>不许做的事</b>
+                <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.8, color: 'var(--ink-2)' }}>
+                  {card.taboos.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              </div>
+            )}
+            {card.unknown_policy && (
+              <div>
+                <b style={{ fontSize: 12.5 }}>资料没有的事</b>
+                <p className="dlg-msg" style={{ marginTop: 4 }}>{card.unknown_policy}</p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
 
 const PRESET_ICONS: Record<string, React.ReactNode> = {
   Zap: <Zap size={16} />,
@@ -275,6 +388,9 @@ export default function BotPersona() {
     return presets.find((p) => p.persona === draft.context.persona) ?? null
   }, [draft, presets])
 
+  // 「查看设定」弹层：只挂一个，内容按需拉取
+  const [cardView, setCardView] = useState<{ id: string; name: string } | null>(null)
+
   if (isLoading || (cfg && !draft)) return <Spinner full label={t('加载机器人配置…')} />
   if (error && isAuthError(error)) return <TokenGate error={error} onAuthed={() => refetch()} />
   if (error) return <div className="p-8 text-sm text-[#c93034]">加载失败：{(error as Error).message}</div>
@@ -319,7 +435,7 @@ export default function BotPersona() {
                   <button
                     key={p.id}
                     className={`bp-preset ${on ? 'on' : ''}`}
-                    title={`${p.description}\n推荐温度 ${p.temperature} · ${p.persona_chars} 字`}
+                    title={`${p.description}\n推荐温度 ${p.temperature} · ${p.persona_chars} 字${p.has_card ? '\n带完整设定资料卡' : ''}`}
                     onClick={() =>
                       patch((d) => {
                         d.context.persona = p.persona
@@ -333,6 +449,25 @@ export default function BotPersona() {
                       {on && <Check size={13} className="bp-preset-check" />}
                     </span>
                     <span className="bp-preset-desc">{p.description}</span>
+                    {p.has_card && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        className="bp-card-badge"
+                        title={p.card_summary
+                          ? `设定事实 ${p.card_summary.facts} 条 · 语料 ${p.card_summary.voice_samples} 段 · 点击查看`
+                          : '查看完整设定'}
+                        onClick={(e) => { e.stopPropagation(); setCardView({ id: p.id, name: p.name }) }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault(); e.stopPropagation()
+                            setCardView({ id: p.id, name: p.name })
+                          }
+                        }}
+                      >
+                        <BookOpen size={11} /> 设定
+                      </span>
+                    )}
                   </button>
                 )
               })}
@@ -406,8 +541,7 @@ export default function BotPersona() {
       <div className="bp-cols">
         {/* 引擎与参数 */}
         <section className="bp-sec">
-          <div className="bp-sec-head"><h2>{t('引擎模式')}</h2></div>
-          <div className="mod-row">
+          <div className="bp-sec-head"><h2>{t('引擎模式')}</h2></div>          <div className="mod-row">
             {(['auto', 'llm', 'rule'] as const).map((m) => (
               <button
                 key={m}
@@ -439,6 +573,9 @@ export default function BotPersona() {
         {/* 即时试问 */}
         <TryPanel />
       </div>
+
+      {/* 「查看设定」资料卡弹层 */}
+      {cardView && <CardViewer preset={cardView} onClose={() => setCardView(null)} />}
     </div>
   )
 }
