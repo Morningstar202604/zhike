@@ -25,6 +25,8 @@ _load_env()
 
 import httpx
 
+from core import http_pool
+
 import nonebot
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter, MessageEvent
@@ -287,11 +289,11 @@ async def _download_emote(url: str, group: str, summary: str) -> None:
         return
     try:
         async with _EMOTE_DL_SEM:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
-                resp = await client.get(safe)
-                if resp.status_code != 200 or len(resp.content) > 800 * 1024:
-                    return
-                _EMOTE_DL_TIMES.append(time.time())
+            client = http_pool.get_client(timeout=15)
+            resp = await client.get(safe)
+            if resp.status_code != 200 or len(resp.content) > 800 * 1024:
+                return
+            _EMOTE_DL_TIMES.append(time.time())
             ext = ".gif" if resp.content[:3] == b"GIF" else \
                   ".png" if resp.content[:4] == b"\x89PNG" else ".jpg"
             fname = f"e{int(time.time()*1000)}{ext}"
@@ -378,17 +380,17 @@ async def _handle_command(msg, text: str) -> bool:
                 "发 /帮助 看我能干啥"
             )
         elif action == "reset":
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    f"{CORE_BASE_URL}/v1/channel/reset",
-                    json={
-                        "channel_type": msg.channel,
-                        "channel_user_id": msg.sender_id,
-                        "group_id": msg.chat_id if msg.is_group else None,
-                    },
-                    headers=_channel_headers(),
-                )
-                resp.raise_for_status()
+            client = http_pool.get_client(timeout=15)
+            resp = await client.post(
+                f"{CORE_BASE_URL}/v1/channel/reset",
+                json={
+                    "channel_type": msg.channel,
+                    "channel_user_id": msg.sender_id,
+                    "group_id": msg.chat_id if msg.is_group else None,
+                },
+                headers=_channel_headers(),
+            )
+            resp.raise_for_status()
             reply = "行，翻篇了。刚才聊的我不提了，你记的事还留着。"
         else:
             return False
@@ -534,16 +536,16 @@ async def _fetch_image_b64(url: str) -> str:
     except Exception:
         return ""
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
-            async with client.stream("GET", safe) as resp:
-                resp.raise_for_status()
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in resp.aiter_bytes():
-                    total += len(chunk)
-                    if total > 8 * 1024 * 1024:
-                        break
-                    chunks.append(chunk)
+        client = http_pool.get_client(timeout=15)
+        async with client.stream("GET", safe) as resp:
+            resp.raise_for_status()
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in resp.aiter_bytes():
+                total += len(chunk)
+                if total > 8 * 1024 * 1024:
+                    break
+                chunks.append(chunk)
         return base64.b64encode(b"".join(chunks)[: 8 * 1024 * 1024]).decode()
     except Exception:  # aqg: top-level boundary
         return ""
@@ -558,16 +560,16 @@ async def _fetch_bytes(url: str, limit: int = 8 * 1024 * 1024) -> bytes:
     except Exception:
         return b""
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
-            async with client.stream("GET", safe) as resp:
-                resp.raise_for_status()
-                chunks: list[bytes] = []
-                total = 0
-                async for chunk in resp.aiter_bytes():
-                    total += len(chunk)
-                    if total > limit:
-                        break
-                    chunks.append(chunk)
+        client = http_pool.get_client(timeout=20)
+        async with client.stream("GET", safe) as resp:
+            resp.raise_for_status()
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in resp.aiter_bytes():
+                total += len(chunk)
+                if total > limit:
+                    break
+                chunks.append(chunk)
         return b"".join(chunks)[:limit]
     except Exception:  # aqg: top-level boundary
         return b""
@@ -582,21 +584,21 @@ async def _heartbeat_loop():
     consecutive_failures = 0
     while True:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(
-                    f"{CORE_BASE_URL}/v1/gateway/heartbeat",
-                    json={
-                        "gateway": "onebot_v11",
-                        "status": "online",
-                        "detail": {
-                            "adapter": "nonebot2+onebot_v11",
-                            "self_id": _pick_bot().self_id if _pick_bot() else "",
-                            "capabilities": sorted(adapter.capabilities()),
-                        },
+            client = http_pool.get_client(timeout=10)
+            resp = await client.post(
+                f"{CORE_BASE_URL}/v1/gateway/heartbeat",
+                json={
+                    "gateway": "onebot_v11",
+                    "status": "online",
+                    "detail": {
+                        "adapter": "nonebot2+onebot_v11",
+                        "self_id": _pick_bot().self_id if _pick_bot() else "",
+                        "capabilities": sorted(adapter.capabilities()),
                     },
-                    headers=_channel_headers(),
-                )
-                resp.raise_for_status()
+                },
+                headers=_channel_headers(),
+            )
+            resp.raise_for_status()
             if consecutive_failures:
                 logger.info("heartbeat recovered after %d failures", consecutive_failures)
                 consecutive_failures = 0
@@ -632,6 +634,12 @@ async def _stop_heartbeat():
         except asyncio.CancelledError:
             pass
     _heartbeat_task = None
+
+
+@driver.on_shutdown
+async def _close_http_pool():
+    """退出时关闭共享连接池，不留给 GC 在事件循环死后收拾。"""
+    await http_pool.close_all()
 
 
 def _event_to_raw(event: MessageEvent) -> dict:
@@ -672,18 +680,18 @@ async def _post_ingest(payload: dict) -> str:
     last_exc: Exception | None = None
     for attempt in range(2):
         try:
-            async with httpx.AsyncClient(timeout=INGEST_TIMEOUT_S) as client:
-                resp = await client.post(
-                    f"{CORE_BASE_URL}/v1/ingest", json=payload, headers=_channel_headers()
-                )
-                if resp.status_code >= 500:
-                    raise httpx.HTTPStatusError(
-                        f"core {resp.status_code}", request=resp.request, response=resp)
-                if resp.status_code == 429:
-                    # 核心限流：静默退避。回错误话术也占一次发送频率，不如闭嘴。
-                    return {"mode": "rate_limited", "text": ""}
-                resp.raise_for_status()
-                return resp.json()["reply"]
+            client = http_pool.get_client(timeout=INGEST_TIMEOUT_S)
+            resp = await client.post(
+                f"{CORE_BASE_URL}/v1/ingest", json=payload, headers=_channel_headers()
+            )
+            if resp.status_code >= 500:
+                raise httpx.HTTPStatusError(
+                    f"core {resp.status_code}", request=resp.request, response=resp)
+            if resp.status_code == 429:
+                # 核心限流：静默退避。回错误话术也占一次发送频率，不如闭嘴。
+                return {"mode": "rate_limited", "text": ""}
+            resp.raise_for_status()
+            return resp.json()["reply"]
         except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout,
                 httpx.HTTPStatusError) as e:
             last_exc = e
@@ -770,6 +778,43 @@ async def handle(event: MessageEvent):
     # 引用回复：把用户这条消息的 message_id 交给适配器，first 段带 [CQ:reply]。
     # 群里消息刷得快，不带引用就不知道在回哪一句（用户明确要求）。
     quote_id = msg.message_id if msg.is_group else None
+    await _deliver(payload, msg, quote_id, retry_left=1)
+
+
+# ---------------- 核心掉线补投：短暂不可达时延迟重试一次，不悄悄丢消息 ----------------
+
+_INGEST_RETRY_DELAY_S = _env_f("GATEWAY_INGEST_RETRY_DELAY", 30.0)
+_INGEST_RETRY_MAX_TASKS = 20
+_ingest_retry_tasks = 0
+
+
+def _schedule_retry(payload: dict, msg, quote_id: str | None, retry_left: int) -> None:
+    """核心重启/抖动导致 ingest 彻底失败时，安排一次延迟补投。
+
+    为什么只补一次：掉线几十秒内补上的消息还能正常回答；掉久了补投只会
+    产出「牛头不对马嘴」的延迟回复，比沉默更糟。并发补投有上限，
+    防止核心长时间挂掉时任务数随掉线消息线性膨胀。
+    """
+    global _ingest_retry_tasks
+    if _ingest_retry_tasks >= _INGEST_RETRY_MAX_TASKS:
+        logger.warning("ingest retry queue full, message dropped (chat=%s)", msg.chat_id)
+        return
+    _ingest_retry_tasks += 1
+
+    async def _run():
+        global _ingest_retry_tasks
+        try:
+            await asyncio.sleep(_INGEST_RETRY_DELAY_S)
+            logger.info("retrying ingest after core outage (chat=%s)", msg.chat_id)
+            await _deliver(payload, msg, quote_id, retry_left=retry_left)
+        finally:
+            _ingest_retry_tasks -= 1
+
+    asyncio.create_task(_run())
+
+
+async def _deliver(payload: dict, msg, quote_id: str | None, *, retry_left: int = 1) -> None:
+    """ingest → 渲染 → 拟人节奏 → 发送。掉线补投复用同一条链路，行为一致。"""
     started = time.time()
     reply: dict | None = None
     # 同一会话串行 + 全局并发上限：群里刷屏时既不乱序也不打爆核心。
@@ -783,13 +828,16 @@ async def handle(event: MessageEvent):
             await bus.publish(EV_ACTION_DONE, {
                 "action": "ingest", "duration_ms": int((time.time() - started) * 1000), "ok": True,
             })
-        except Exception as e:  # 核心不可达时给用户明确反馈，而不是沉默
+        except Exception as e:  # 核心不可达时安排补投，而不是沉默丢消息
             logger.warning("ingest failed: %s: %s", type(e).__name__, str(e)[:120])
+            if retry_left > 0:
+                _schedule_retry(payload, msg, quote_id, retry_left - 1)
             reply_text = ""  # 网关自己出问题时不冒泡给用户，只记日志
             await bus.publish(EV_ACTION_DONE, {
                 "action": "ingest", "duration_ms": int((time.time() - started) * 1000),
                 "ok": False, "error": f"{type(e).__name__}",
             })
+            return
 
         # 白名单外的群 / 核心限流 / 没接通模型 / 空回复：静默，不发消息。
         # no_model 是「LLM 未配置或不可用」——此时宁可不说话，也不要用规则话术

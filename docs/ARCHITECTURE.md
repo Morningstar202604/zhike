@@ -86,6 +86,29 @@ core/
 5. 落 agent 消息、写审计、必要时开工单 + WS 广播
 6. 返回 `reply`，网关按模式决定是否发言（`no_model` / `rate_limited` 静默）
 
+### 角色的两层设定（为什么有两套"角色卡"）
+
+项目里存在两套角色资料，职责不同，**不是重复实现**：
+
+- **内置角色卡**（`core/data/characters/<id>.json`，只读）：15 个预设的结构化 canon
+  （设定事实/叙述/语料/未知策略），由 `core/character.py` 固定顺序渲染成提示词，
+  经 `/api/personas/{id}/apply` 写入全局配置；`core/character_guard.py` 按
+  「渲染结果逐字比对」反查当前角色，在输出闸门做一致性校验（客服腔/身份漂移/禁忌/口癖）。
+- **会话绑定卡**（SQLite `character_cards` + `card_bindings`，控制台 CRUD）：
+  用户自建的角色（SillyTavern V2 导入或手写），按会话维度在 `_prepare` 里覆盖
+  `context.persona`。内容是用户自己的文本，不参与一致性守卫——没有对应资料卡，
+  守卫宁可不判，也不拿对不上的卡硬判。
+
+两层的分界线是「谁是事实源」：内置卡的事实由项目维护、可校验；绑定卡的事实由用户
+自己负责。合并成一个体系意味着给用户自建卡也强加结构化 schema，收益不抵复杂度。
+
+### 网关与核心之间的容错
+
+- 网关 → NapCat：NoneBot forward WS 自动重连；消息按 message_id LRU 去重（重连重放）。
+- 网关 → 核心：ingest 网络类错误重试一次；仍失败则安排一次延迟补投
+  （`GATEWAY_INGEST_RETRY_DELAY`，默认 30s，并发上限 20），核心短暂重启期间的消息不再丢。
+- 网关 → 核心：心跳每 30s 上报，恢复时记日志；HTTP 走 `core/http_pool` 共享连接池。
+
 ### 检索路径
 
 ```

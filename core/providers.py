@@ -19,6 +19,8 @@ from typing import Any
 
 import httpx
 
+from core import http_pool
+
 PROTOCOLS = ("openai-compatible", "anthropic-messages", "google-gemini")
 
 PROTOCOL_LABEL = {
@@ -235,15 +237,15 @@ async def discover(req: ProviderRequest) -> dict:
         return {"ok": False, "models": [], "error": str(e)}
     url = _models_url(base, req.protocol, req.api_key)
     try:
-        async with httpx.AsyncClient(timeout=req.timeout_s, follow_redirects=False) as client:
-            resp = await client.get(url, headers=_headers(req.protocol, req.api_key))
-            if resp.status_code == 401:
-                return {"ok": False, "models": [], "error": "鉴权失败（401）：API Key 不正确或已失效"}
-            if resp.status_code == 404:
-                return {"ok": False, "models": [],
-                        "error": "端点没有 /models 接口（404）：可手动填写模型名，或换用支持模型列表的地址"}
-            resp.raise_for_status()
-            payload = resp.json()
+        client = http_pool.get_client(timeout=req.timeout_s)
+        resp = await client.get(url, headers=_headers(req.protocol, req.api_key))
+        if resp.status_code == 401:
+            return {"ok": False, "models": [], "error": "鉴权失败（401）：API Key 不正确或已失效"}
+        if resp.status_code == 404:
+            return {"ok": False, "models": [],
+                    "error": "端点没有 /models 接口（404）：可手动填写模型名，或换用支持模型列表的地址"}
+        resp.raise_for_status()
+        payload = resp.json()
     except httpx.HTTPStatusError as e:
         return {"ok": False, "models": [], "error": f"HTTP {e.response.status_code}"}
     except (httpx.HTTPError, ValueError) as e:
@@ -327,17 +329,17 @@ async def test_connection(req: ProviderRequest) -> dict:
     headers = {**_headers(req.protocol, req.api_key), **extra}
     started = _t.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=req.timeout_s, follow_redirects=False) as client:
-            resp = await client.post(url, headers=headers, json=body)
-            latency = int((_t.monotonic() - started) * 1000)
-            if resp.status_code == 401:
-                return {"ok": False, "reply": "鉴权失败（401）：API Key 不正确", "model": req.model,
-                        "latency_ms": latency}
-            if resp.status_code == 404:
-                return {"ok": False, "reply": f"模型或路径不存在（404）：{req.model}", "model": req.model,
-                        "latency_ms": latency}
-            resp.raise_for_status()
-            text = extract_text(req.protocol, resp.json())
+        client = http_pool.get_client(timeout=req.timeout_s)
+        resp = await client.post(url, headers=headers, json=body)
+        latency = int((_t.monotonic() - started) * 1000)
+        if resp.status_code == 401:
+            return {"ok": False, "reply": "鉴权失败（401）：API Key 不正确", "model": req.model,
+                    "latency_ms": latency}
+        if resp.status_code == 404:
+            return {"ok": False, "reply": f"模型或路径不存在（404）：{req.model}", "model": req.model,
+                    "latency_ms": latency}
+        resp.raise_for_status()
+        text = extract_text(req.protocol, resp.json())
     except httpx.TimeoutException:
         return {"ok": False, "reply": "请求超时", "model": req.model,
                 "latency_ms": int((_t.monotonic() - started) * 1000)}

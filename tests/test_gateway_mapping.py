@@ -255,3 +255,78 @@ def test_empty_message_still_dropped():
         "post_type": "message", "message_type": "private", "self_id": "1000",
         "user_id": "2", "message_id": 11, "message": [{"type": "text", "data": {"text": "  "}}],
     }) is None
+
+
+# ---------------- 连接池复用 / 核心掉线补投 ----------------
+
+def test_gateway_reuses_pooled_http_clients():
+    """同循环 + 同超时要拿到同一个客户端（每请求新建连接是重复造轮子）。"""
+    from gateway import bot as gw_bot
+
+    a = gw_bot.http_pool.get_client(timeout=15)
+    b = gw_bot.http_pool.get_client(timeout=15)
+    c = gw_bot.http_pool.get_client(timeout=90)
+    assert a is b, "同参数必须复用同一个客户端"
+    assert a is not c, "不同超时必须分桶（timeout 在 key 里）"
+
+
+def test_ingest_failure_schedules_exactly_one_retry(monkeypatch):
+    """核心短暂不可达时安排一次延迟补投，而不是把消息悄悄丢掉。"""
+    import asyncio
+    import types
+
+    import httpx
+
+    from gateway import bot as gw_bot
+
+    msg = types.SimpleNamespace(channel="qq_group", chat_id="123",
+                                is_group=True, message_id="m-retry-1")
+
+    async def boom(payload):
+        raise httpx.ConnectError("core down")
+
+    monkeypatch.setattr(gw_bot, "_post_ingest", boom)
+    monkeypatch.setattr(gw_bot, "_INGEST_RETRY_DELAY_S", 0.0)
+
+    created = []
+
+    def fake_create_task(coro):
+        created.append(coro)
+        coro.close()  # 不真正执行，避免测试里等待 30s/触发真实发送
+        return None
+
+    monkeypatch.setattr(asyncio, "create_task", fake_create_task)
+
+    asyncio.run(gw_bot._deliver({"text": "hi"}, msg, "m-retry-1", retry_left=1))
+    assert len(created) == 1, "失败后应安排恰好一次补投"
+
+    created.clear()
+    asyncio.run(gw_bot._deliver({"text": "hi"}, msg, "m-retry-1", retry_left=0))
+    assert created == [], "retry_left=0（补投自身失败）不得再排新任务"
+
+
+def test_ingest_retry_queue_is_bounded(monkeypatch):
+    """补投并发有上限：核心长时间挂掉时任务数不能随掉线消息线性膨胀。"""
+    import types
+
+    from gateway import bot as gw_bot
+
+    msg = types.SimpleNamespace(channel="qq_group", chat_id="cap",
+                                is_group=True, message_id="m-cap")
+    monkeypatch.setattr(gw_bot, "_ingest_retry_tasks", gw_bot._INGEST_RETRY_MAX_TASKS)
+
+    called = []
+
+    def fake_create_task(coro):
+        called.append(coro)
+        coro.close()
+        return None
+
+    import asyncio as _aio
+    orig = _aio.create_task
+    _aio.create_task = fake_create_task
+    try:
+        gw_bot._schedule_retry({"text": "x"}, msg, None, 0)
+    finally:
+        _aio.create_task = orig
+    assert called == [], "队列满时不得再创建补投任务"

@@ -28,6 +28,35 @@ The authoritative version string lives in [`VERSION`](VERSION), mirrored by
 
 ---
 
+## [1.3.1] — 2026-11-03
+
+Gateway resilience pass: no more silently dropped messages during short core outages, and HTTP
+connection reuse across the gateway.
+
+### Added
+
+- **Ingest retry after core outage** (`gateway/bot.py`). When `/v1/ingest` exhausts its inline
+  retry (core restarting, network blip), the gateway now schedules one delayed redelivery
+  (`GATEWAY_INGEST_RETRY_DELAY`, default 30s, concurrent tasks capped at 20) through the same
+  deliver path instead of dropping the user's message with only a log line. Second failure is
+  final — delayed nonsense replies are worse than silence. Disable with
+  `GATEWAY_INGEST_RETRY_DELAY=0`.
+- Regression tests: pool reuse, exactly-one retry on failure, no re-schedule after the redelivery
+  itself fails, bounded retry concurrency.
+
+### Changed
+
+- **Gateway and provider connectivity checks reuse the shared HTTP connection pool**
+  (`core/http_pool`). `gateway/bot.py` created a fresh `httpx.AsyncClient` for every QQ message,
+  every heartbeat tick and every image/audio download — six sites, all now pooled per
+  (event loop, timeout) bucket, exactly like the core side already did. `core/providers.py`
+  model-list and connectivity probes migrated as well. The shutdown hook closes the pool.
+- `docs/ARCHITECTURE.md` documents the two-layer persona design (built-in character cards vs
+  session-bound DB cards) and why they are deliberately not merged, plus the gateway-core fault
+  tolerance paths.
+
+---
+
 ## [1.3.0] — 2026-11-03
 
 Character cards: every persona preset ships with a structured, maintainable fact sheet instead of
