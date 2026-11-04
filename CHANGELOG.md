@@ -30,6 +30,30 @@ The authoritative version string lives in [`VERSION`](VERSION), mirrored by
 
 ---
 
+## [1.5.0] — 2026-11-04
+
+QQ becomes a fully optional, self-contained channel: deploy the protocol end from the console,
+no separate clones or manual installs.
+
+### Added
+
+- **In-console protocol deployment wizard** (`core/qq_deploy.py` + `core/api/qq_deploy.py` +
+  dashboard). The「接入 QQ」dialog now walks the whole path: check → 一键部署 (downloads the
+  latest NapCat Shell release with the strict segmented downloader, progress bar, resume on
+  interruption, config/ preserved) → 启动协议端 (background boot via `scripts/napcat_local.py`)
+  → 扫码登录 (existing QR proxy) → logged in. The dialog states plainly that the agent does not
+  depend on QQ; skipping it costs nothing.
+- `core/napcat_fetch.py` — the strict segmented downloader promoted to an importable module
+  (206-only, per-block length validation, incremental flush, mirror rotation, CRC at the end);
+  `scripts/napcat_fetch_part.py` remains as its CLI wrapper.
+- Endpoints: `GET /api/channel/qq/deploy-status`, `POST /api/channel/qq/deploy`,
+  `POST /api/channel/qq/protocol-start` (bot uin from `AUTHORIZED_QQ`).
+- Windows AV file-lock hardening: zip open/extract retries with backoff.
+- Tests: deploy state machine, config/ never overwritten, honest failure surfacing, single-flight
+  lock, protocol start refuses undeployed binary and spawns with the right args.
+
+---
+
 ## [Unreleased]
 
 ### Planned

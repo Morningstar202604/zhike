@@ -1422,10 +1422,12 @@ def create_app() -> FastAPI:
 
     # ---- 已抽出的 API 路由只在这里挂载，保持旧 URL 不变 ----
     from core.api import kb as kb_api
+    from core.api import qq_deploy as qq_deploy_api
     from core.api import qq_login as qq_login_api
     from core.api import reminders as reminders_api
 
     app.include_router(kb_api.router)
+    app.include_router(qq_deploy_api.router)
     app.include_router(qq_login_api.router)
     app.include_router(reminders_api.router)
 

@@ -18,7 +18,7 @@ from pathlib import Path
 __all__ = ["VERSION", "version_info", "version_tuple"]
 
 #: 语义化版本字符串，例如 ``1.2.0``
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 
 
 def version_tuple(version: str = VERSION) -> tuple[int, int, int]:
